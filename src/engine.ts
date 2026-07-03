@@ -8,7 +8,7 @@
 import { VaultAdapter } from "./core/vault-adapter";
 import { HttpClient } from "./core/http-client";
 import { VaultScanner } from "./indexing/vault-scanner";
-import { IndexManager, RefreshResult } from "./indexing/index-manager";
+import { IndexManager, IndexedChunk, RefreshResult } from "./indexing/index-manager";
 import { LexicalRetriever } from "./retrieval/lexical-retriever";
 import { VectorRetriever } from "./retrieval/vector-retriever";
 import { HybridRetriever } from "./retrieval/hybrid-retriever";
@@ -24,6 +24,8 @@ import {
 } from "./memory/memory-types";
 import { MemoryStore, SessionNote } from "./memory/memory-store";
 import { MemoryWriter } from "./memory/memory-writer";
+import { ParsedInbox, PendingEntry } from "./memory/pending-inbox";
+import { extractiveSummary, splitIntoSentences, SummaryMethod } from "./summarize/extractive";
 import {
   EngramSettings,
   RetrievalMode,
@@ -40,6 +42,19 @@ export interface EngramEngineDeps {
   http?: HttpClient;
 }
 
+/** Result of an extractive note summary. `sentences` are verbatim excerpts. */
+export interface NoteSummary {
+  notePath: string;
+  sentences: string[];
+  method: SummaryMethod;
+  /** Candidate sentence-units the note yielded (before selection). */
+  totalUnits: number;
+  /** How many indexed chunks backed the summary. */
+  chunkCount: number;
+  /** True when the note had more units than the embedding cap and was truncated. */
+  truncated: boolean;
+}
+
 export interface AddMemoryInput {
   type: MemoryEntry["type"];
   content: string;
@@ -50,6 +65,13 @@ export interface AddMemoryInput {
   tags?: string[];
   relatedPaths?: string[];
 }
+
+/** Default sentences returned by summarizeNote when the caller doesn't specify. */
+const SUMMARY_DEFAULT_SENTENCES = 5;
+const SUMMARY_MAX_SENTENCES = 20;
+/** Upper bound on sentence-units embedded for a single summary, so a huge note
+ * can't fan out into an unbounded embedding request. */
+const SUMMARY_MAX_UNITS = 200;
 
 export class EngramEngine {
   private settings: EngramSettings;
@@ -361,6 +383,107 @@ export class EngramEngine {
       chunkCount: idx?.metadata.chunkCount ?? 0,
       builtAt: idx?.metadata.builtAt ?? null,
     };
+  }
+
+  /** The indexed chunks for a single note, in index order (empty if not indexed). */
+  getNoteChunks(notePath: string): IndexedChunk[] {
+    const normalized = normalizeVaultRelativePath(notePath);
+    return this.index.getChunks().filter((c) => c.notePath === normalized);
+  }
+
+  /**
+   * Extractive summary of an indexed note: a selection of the note's OWN
+   * sentences, never generated prose (there is no LLM backend).
+   *
+   * SECURITY / scope: only notes that are IN the index can be summarized. A note
+   * excluded from indexing (excluded folder/tag/path) has no chunks, so this
+   * throws rather than reading it — the summary can never become a side channel
+   * that exfiltrates a note the exclusion filters were meant to keep out.
+   *
+   * When an embedding provider is configured and reachable, sentence vectors
+   * drive centroid + MMR selection; otherwise it degrades to lexical frequency
+   * centrality. A provider error never fails the summary (fails open to lexical).
+   */
+  async summarizeNote(notePath: string, opts: { maxSentences?: number } = {}): Promise<NoteSummary> {
+    const normalized = normalizeVaultRelativePath(notePath);
+    const chunks = this.getNoteChunks(normalized);
+    if (chunks.length === 0) {
+      throw new ConfigError(
+        `Note "${normalized}" is not indexed (it may be excluded or outside the vault). Only indexed notes can be summarized.`,
+      );
+    }
+    const maxSentences = Math.max(
+      1,
+      Math.min(SUMMARY_MAX_SENTENCES, Math.trunc(opts.maxSentences ?? SUMMARY_DEFAULT_SENTENCES)),
+    );
+
+    // Build sentence units from the note's chunk text, de-duplicating the
+    // repeats that overlapping chunks introduce (first occurrence wins so
+    // original order is preserved).
+    const seen = new Set<string>();
+    const units: string[] = [];
+    for (const chunk of chunks) {
+      for (const sentence of splitIntoSentences(chunk.text)) {
+        const key = sentence.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        units.push(sentence);
+      }
+    }
+
+    const truncated = units.length > SUMMARY_MAX_UNITS;
+    const bounded = truncated ? units.slice(0, SUMMARY_MAX_UNITS) : units;
+    if (truncated) {
+      this.logger.info("Summary units capped", { notePath: normalized, total: units.length, cap: SUMMARY_MAX_UNITS });
+    }
+
+    const vectors = await this.embedUnitsForSummary(bounded);
+    const summary = extractiveSummary({ units: bounded, maxSentences, vectors });
+    return {
+      notePath: normalized,
+      sentences: summary.sentences,
+      method: summary.method,
+      totalUnits: bounded.length,
+      chunkCount: chunks.length,
+      truncated,
+    };
+  }
+
+  /**
+   * Embed summary sentence-units when a provider is configured and reachable.
+   * Returns undefined (=> lexical summary) if there is no provider, it's
+   * unavailable, or embedding fails — summarization must never hard-fail on the
+   * network, mirroring search's fail-open behavior.
+   */
+  private async embedUnitsForSummary(units: string[]): Promise<number[][] | undefined> {
+    const provider = this.embeddingProvider;
+    if (!provider || units.length === 0) return undefined;
+    try {
+      if (!(await provider.isAvailable())) return undefined;
+      const vectors = await provider.embed(units);
+      return vectors.length === units.length ? vectors : undefined;
+    } catch (err) {
+      this.logger.warn("Summary embedding failed; using lexical summary", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return undefined;
+    }
+  }
+
+  /** Read + parse the review inbox for the richer per-entry review UI. */
+  async getPendingMemory(): Promise<ParsedInbox> {
+    return this.writer.readInbox();
+  }
+
+  /** Graduate a reviewed inbox entry into its destination memory file, then
+   * drop it from the inbox. Human-in-the-loop; not exposed over the network. */
+  async applyPendingMemory(entry: PendingEntry): Promise<{ destination: string }> {
+    return this.writer.applyPending(entry);
+  }
+
+  /** Remove a reviewed inbox entry without applying it. */
+  async discardPendingMemory(entry: PendingEntry): Promise<void> {
+    await this.writer.discardPending(entry);
   }
 
   /** Propose a memory entry (to the inbox by default; direct write if enabled). */

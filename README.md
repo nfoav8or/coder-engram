@@ -4,7 +4,7 @@ An Obsidian-powered memory and RAG layer for Claude Code.
 
 Claude Code Engram turns your active Obsidian vault into a local-first memory, project-context, and retrieval backend. It indexes your Markdown notes, retrieves relevant chunks for a query, and lets you capture reviewable memory entries — all stored as plain Markdown inside a `Claude Code/` folder in your vault. Nothing is written outside the vault, and no cloud API key is required.
 
-> **Status:** Milestone 3. Local memory + lexical (BM25) retrieval (M1), a local MCP/HTTP server that Claude Code can query and propose memory to (M2), and embedding-based vector + hybrid retrieval (M3) all work today. The server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too: the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. See [docs/ROADMAP.md](docs/ROADMAP.md).
+> **Status:** Milestone 4. Local memory + lexical (BM25) retrieval (M1), a local MCP/HTTP server that Claude Code can query and propose memory to (M2), embedding-based vector + hybrid retrieval (M3), and a richer pending-memory review UI plus an honest extractive `summarize_note` (M4) all work today. The server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too: the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What Claude Code Engram does
 
@@ -47,6 +47,11 @@ Claude Code Engram turns your active Obsidian vault into a local-first memory, p
 - **Vector and hybrid retrieval** behind the existing `Retriever` interface: cosine-similarity `VectorRetriever` and a `HybridRetriever` that fuses lexical and vector rankings with Reciprocal Rank Fusion. A new **Retrieval mode** setting picks `lexical`, `hybrid` (default), or `vector`.
 - **Graceful degradation:** with provider `none`, or when a configured provider is unreachable, retrieval is always lexical. Vectors are never faked, and a vector backend is never on the critical path.
 - Expanded Vitest suite covering the new providers, the HTTP boundary, embedding store, and vector/hybrid retrievers.
+
+## Features (Milestone 4)
+
+- **Richer pending-memory review UI**: the **Review Pending Memory** modal now shows each pending entry as a card with its resolved destination and per-entry **Apply**, **Edit & apply**, and **Discard** buttons, instead of dumping the raw inbox file (the "Open inbox file" escape hatch remains). **Apply promotes** the entry by appending it into the destination memory file (a project's overview/architecture/decisions/tasks/open-questions file, or `Global/preferences.md` / `conventions.md` / `profile.md`) and removes it from the inbox. A single parser/serializer (`src/memory/pending-inbox.ts`) is now the only producer of the on-disk inbox format, so entries round-trip. Promotion is desktop-UI-only (never exposed over the network), always append-only, and validated inside the memory root — see [docs/SECURITY.md](docs/SECURITY.md).
+- **Honest, extractive `summarize_note`**: a new **Summarize Current Note** command and MCP tool that returns a selection of the note's **own sentences** — verbatim, in original order — never generated prose. It ranks sentences by lexical frequency-centrality offline, or by embedding-centroid similarity with Maximal Marginal Relevance (MMR) when an embedding provider is reachable. There is **no LLM/generative backend**; embeddings only improve selection and are not required. It summarizes only notes that are in the index (excluded notes are refused) and fails open to lexical if embedding errors. Default 5 sentences (max 20); the server tool is rate-limited to 30/min.
 
 ## Local server (M2)
 
@@ -146,19 +151,20 @@ The memory root is validated on entry: a value that would escape the vault is re
 
 ## Obsidian usage
 
-The plugin registers eleven commands (command-palette names shown):
+The plugin registers twelve commands (command-palette names shown):
 
 1. **Claude Code Engram: Open Control Panel**
 2. **Claude Code Engram: Reindex Vault**
 3. **Claude Code Engram: Search Memory**
-4. **Claude Code Engram: Add Memory**
-5. **Claude Code Engram: Add Current Note to Project Memory**
-6. **Claude Code Engram: Create Project Memory Folder**
-7. **Claude Code Engram: Show Project Context**
-8. **Claude Code Engram: Review Pending Memory**
-9. **Claude Code Engram: Start Session Note**
-10. **Claude Code Engram: End Session Note**
-11. **Claude Code Engram: Restart Local Server**
+4. **Claude Code Engram: Summarize Current Note**
+5. **Claude Code Engram: Add Memory**
+6. **Claude Code Engram: Add Current Note to Project Memory**
+7. **Claude Code Engram: Create Project Memory Folder**
+8. **Claude Code Engram: Show Project Context**
+9. **Claude Code Engram: Review Pending Memory**
+10. **Claude Code Engram: Start Session Note**
+11. **Claude Code Engram: End Session Note**
+12. **Claude Code Engram: Restart Local Server**
 
 The **Control Panel** (right sidebar, also on the ribbon "brain-circuit" icon) shows the memory root, indexed-note and chunk counts, last-indexed time, and server status, plus quick buttons: Reindex, Search, Add memory, Review inbox, New project, Project context.
 
@@ -211,7 +217,7 @@ Full details: [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Limitations
 
-- **No `summarize_note` tool.** Honest note summarization needs an LLM/embedding backend, so it is deferred rather than shipped as a stub.
+- **`summarize_note` is extractive, not abstractive.** It selects the note's own sentences; there is no LLM/generative backend, so it never rewrites or paraphrases. It also only works on notes that are in the index.
 - **Desktop only.** `isDesktopOnly: true`.
 - Binary attachments are not indexed.
 
@@ -220,7 +226,8 @@ Full details: [docs/SECURITY.md](docs/SECURITY.md).
 - **M1 (done):** local memory + lexical RAG.
 - **M2 (done):** control-panel polish, project creation, local MCP/HTTP server with constant-time token auth and DNS-rebinding guards, curated inbox-first tools, Claude Code integration docs.
 - **M3 (done):** embedding providers (Ollama, OpenAI-compatible) behind an injected HTTP boundary, vector + hybrid retrieval, and a vault-local vector cache.
-- **Future:** richer review UI for the pending-memory inbox and honest note summarization backed by an embedding/LLM provider.
+- **M4 (done):** richer pending-memory review UI with per-entry apply/edit/discard, and an honest extractive `summarize_note` (Summarize Current Note command + MCP tool).
+- **Future:** non-desktop support, indexing of binary attachments, and alternative local vector stores.
 
 Details: [docs/ROADMAP.md](docs/ROADMAP.md).
 

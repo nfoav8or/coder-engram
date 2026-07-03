@@ -43,7 +43,7 @@ The local MCP/HTTP server (`src/server/`) lets external tools such as Claude Cod
 - **Constant-time token auth.** A configured bearer token is required on every request and compared via a SHA-256 digest with `timingSafeEqual`, so timing does not leak the token. Tokens are never logged.
 - **DNS-rebinding protection.** The `Host` header is validated against the bound address, and any `Origin` that is present must be loopback — a malicious web page's cross-origin request is rejected. Only a genuinely absent `Origin` is allowed through; opaque browser origins (`Origin: null`) are rejected.
 - **Request hardening.** POST-only (other methods get 405), `Content-Type: application/json` required (else 415), a 1 MB request-body cap (413 on overflow), and a 32-message cap on JSON-RPC batches (400) so one request can't monopolize the event loop. Malformed JSON and invalid JSON-RPC yield structured errors.
-- **Curated, query-scoped tools.** Only `search_vault_memory`, `add_memory`, `get_project_context`, `get_global_context`, `list_projects`, `get_recent_sessions`, and `reindex_vault` are exposed. There is no generic file read/write tool and no way to enumerate or dump the whole vault.
+- **Curated, query-scoped tools.** Only `search_vault_memory`, `add_memory`, `get_project_context`, `get_global_context`, `list_projects`, `get_recent_sessions`, `reindex_vault`, and `summarize_note` (extractive, in-index notes only) are exposed. There is no generic file read/write tool and no way to enumerate or dump the whole vault, and no tool can promote inbox entries into memory files.
 - **Inbox-first writes over the network.** `add_memory` always appends to the review inbox and never performs a direct write, even when the desktop `allowDirectWrites` setting is on.
 - **Rate limiting.** `reindex_vault` has a 15s cooldown; `search_vault_memory` and `add_memory` have per-minute sliding-window caps to bound sustained flooding (disk fill / CPU abuse).
 - **Serialized lifecycle.** Overlapping enable/disable/restart events are single-flighted, so the server can never bind two listeners or leak a port.
@@ -64,3 +64,23 @@ Vector and hybrid retrieval are optional and off by default: `embeddingProvider`
 - **No cross-model scoring.** The vector cache records the backend identity it was built with (provider + model + hashed endpoint + hashed key). A query is only scored against cached vectors when that identity matches the active provider; after a model/endpoint swap or a stale-on-disk restart, search degrades to lexical until a re-embed catches up, rather than returning plausible-but-wrong rankings from mismatched vectors.
 
 Honest limitation: the API key is stored in plaintext locally, in Obsidian's own `data.json` and in the `Config/plugin-settings-backup.json` settings backup — exactly like the server token. Anyone with read access to those files can read the key. Do not sync `data.json` or the settings backup out of the vault, and treat the key as you would any other stored credential.
+
+## Review UI & summarization (M4)
+
+Milestone 4 adds a richer review UI for the pending-memory inbox and an extractive `summarize_note`. Neither introduces new network egress or a generative backend.
+
+### Applying (promoting) a reviewed entry
+
+The **Review Pending Memory** modal can now **Apply** a pending entry: it is appended into the destination memory file resolved from its type/project (`resolveApplyDestination`) and then removed from the inbox. Apply is the human-in-the-loop counterpart to inbox-first writes, so it is authorized differently from unattended direct writes:
+
+- **UI-only.** Apply/promotion is reachable only from the desktop review modal. The local MCP/HTTP server never exposes an apply or promotion tool — over the network `add_memory` remains inbox-first, and there is no way to promote an entry into a memory file.
+- **Not gated by `allowDirectWrites`.** That setting governs *unattended/tool* direct writes. Promotion is a deliberate, per-entry human action reached only from the review UI, so it is intentionally not blocked by it. It is still constrained by defense-in-depth: the destination is validated inside the memory root (`isInsideRoot`).
+- **Always append.** Promotion only ever appends to the destination file; it never overwrites an existing memory file, regardless of the `appendOnly` setting.
+
+### `summarize_note` (extractive)
+
+`summarize_note` returns a selection of the note's own sentences — verbatim, in original order. It is extractive, never generative: there is no LLM backend. A configured embedding provider, when reachable, only improves which sentences are selected (embedding-centroid similarity with Maximal Marginal Relevance) and is never required (lexical frequency-centrality works offline). Its safety properties:
+
+- **In-scope only.** It summarizes only notes that are in the index. An excluded or unindexed note has no chunks and the request is refused, so a summary can never become a side channel that surfaces a note the exclusion filters were meant to keep out.
+- **Fails open.** An embedding-provider error degrades to lexical selection rather than hard-failing, matching the rest of the retrieval path.
+- **Bounded work.** The note's sentence-units are capped (200) so a single huge note cannot fan out into an unbounded embedding request.

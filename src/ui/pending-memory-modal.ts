@@ -1,13 +1,23 @@
 /**
- * PendingMemoryModal — review the pending-memory inbox. Shows the current
- * inbox contents and offers to open the file for manual editing/applying.
- * (M1 is deliberately review-by-hand; richer per-entry apply/discard is M3.)
+ * PendingMemoryModal — richer per-entry review of the pending-memory inbox (M4).
+ *
+ * Each proposed entry is shown as a card with its destination and controls to
+ * Apply (graduate it into the matching memory file and drop it from the inbox),
+ * Edit & apply (tweak the content first), or Discard. "Open inbox file" remains
+ * as an escape hatch for manual editing. Apply/discard route through the engine
+ * → MemoryWriter, so every write stays inside the memory root.
  */
 
-import { App, Modal, Notice } from "obsidian";
+import { App, Modal, Notice, Setting } from "obsidian";
 import { EngramEngine } from "../engine";
+import { PendingEntry, resolveApplyDestination } from "../memory/pending-inbox";
+import { toMessage } from "../utils/errors";
 
 export class PendingMemoryModal extends Modal {
+  /** Guards against overlapping apply/discard while a mutation is in flight
+   * (defense-in-depth above the writer's own inbox serialization). */
+  private busy = false;
+
   constructor(
     app: App,
     private readonly engine: EngramEngine,
@@ -16,42 +26,175 @@ export class PendingMemoryModal extends Modal {
   }
 
   async onOpen(): Promise<void> {
+    await this.renderList();
+  }
+
+  private async renderList(): Promise<void> {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl("h2", { text: "Review Pending Memory" });
 
     const pendingPath = this.engine.getPaths().pendingMemoryFile;
-    contentEl.createEl("p", { text: pendingPath, cls: "engram-result-path" });
 
-    const file = this.app.vault.getAbstractFileByPath(pendingPath);
-    if (!file) {
+    let entries: PendingEntry[] = [];
+    try {
+      entries = (await this.engine.getPendingMemory()).entries;
+    } catch (err) {
+      new Notice(`Could not read inbox: ${toMessage(err)}`);
+      return;
+    }
+
+    if (entries.length === 0) {
       contentEl.createEl("p", {
-        text: "The inbox is empty — no pending memory has been proposed yet.",
+        text: "The inbox is empty — no pending memory to review.",
         cls: "engram-stat-row",
       });
+      this.renderFooter(pendingPath);
       return;
     }
 
-    let content = "";
+    contentEl.createEl("p", {
+      text: `${entries.length} pending ${entries.length === 1 ? "entry" : "entries"}.`,
+      cls: "engram-stat-row",
+    });
+    for (const entry of entries) this.renderEntry(contentEl, entry);
+    this.renderFooter(pendingPath);
+  }
+
+  private renderEntry(parent: HTMLElement, entry: PendingEntry): void {
+    const card = parent.createDiv({ cls: "engram-pending-entry" });
+
+    const titleParts = [entry.type];
+    if (entry.project) titleParts.push(`· ${entry.project}`);
+    titleParts.push(`· ${entry.timestampLabel}`);
+    card.createEl("h3", { text: titleParts.join(" ") });
+
+    let destination = "(unknown)";
     try {
-      content = await this.app.vault.adapter.read(pendingPath);
-    } catch (err) {
-      new Notice(`Could not read inbox: ${err instanceof Error ? err.message : String(err)}`);
-      return;
+      destination = resolveApplyDestination(entry, this.engine.getPaths());
+    } catch {
+      // A malformed project name can't be routed; Apply will surface the error.
+    }
+    card.createEl("p", { text: `Applies to: ${destination}`, cls: "engram-result-path" });
+
+    card.createEl("pre", { text: entry.content || "(no content)" });
+
+    if (entry.tags.length > 0) {
+      card.createEl("p", {
+        text: `Tags: ${entry.tags.map((t) => `#${t}`).join(" ")}`,
+        cls: "engram-stat-row",
+      });
+    }
+    if (entry.relatedPaths.length > 0) {
+      card.createEl("p", {
+        text: `Related: ${entry.relatedPaths.join(", ")}`,
+        cls: "engram-stat-row",
+      });
     }
 
-    const box = contentEl.createDiv({ cls: "engram-pending-entry" });
-    box.createEl("pre", { text: content });
+    const row = card.createDiv({ cls: "engram-button-row" });
+    this.button(row, "Apply", () => this.apply(entry));
+    this.button(row, "Edit & apply", () => this.editAndApply(entry));
+    this.button(row, "Discard", () => this.discard(entry));
+  }
 
-    const actions = contentEl.createDiv({ cls: "engram-button-row" });
-    const openBtn = actions.createEl("button", { text: "Open inbox file" });
-    openBtn.addEventListener("click", () => {
-      this.app.workspace.openLinkText(pendingPath, "", false);
+  private async apply(entry: PendingEntry): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      const { destination } = await this.engine.applyPendingMemory(entry);
+      new Notice(`Applied to ${destination}.`);
+    } catch (err) {
+      new Notice(`Apply failed: ${toMessage(err)}`);
+    } finally {
+      this.busy = false;
+    }
+    await this.renderList();
+  }
+
+  private editAndApply(entry: PendingEntry): void {
+    new EditContentModal(this.app, entry.content, (edited) => {
+      if (edited === null) return;
+      // Keep the original `raw` so removal still matches; only the applied block
+      // uses the edited content.
+      void this.apply({ ...entry, content: edited });
+    }).open();
+  }
+
+  private async discard(entry: PendingEntry): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      await this.engine.discardPendingMemory(entry);
+      new Notice("Entry discarded.");
+    } catch (err) {
+      new Notice(`Discard failed: ${toMessage(err)}`);
+    } finally {
+      this.busy = false;
+    }
+    await this.renderList();
+  }
+
+  private renderFooter(pendingPath: string): void {
+    const actions = this.contentEl.createDiv({ cls: "engram-button-row" });
+    this.button(actions, "Open inbox file", () => {
+      void this.app.workspace.openLinkText(pendingPath, "", false);
       this.close();
     });
+    this.button(actions, "Refresh", () => this.renderList());
+  }
+
+  private button(parent: HTMLElement, label: string, onClick: () => void | Promise<void>): void {
+    const btn = parent.createEl("button", { text: label });
+    btn.addEventListener("click", () => void onClick());
   }
 
   onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+/** A multi-line content editor used by "Edit & apply". */
+class EditContentModal extends Modal {
+  private value: string;
+  private resolved = false;
+
+  constructor(
+    app: App,
+    initial: string,
+    private readonly onSubmit: (value: string | null) => void,
+  ) {
+    super(app);
+    this.value = initial;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Edit memory content" });
+
+    new Setting(contentEl).addTextArea((t) => {
+      t.setValue(this.value).onChange((v) => (this.value = v));
+      t.inputEl.style.width = "100%";
+      t.inputEl.rows = 10;
+      window.setTimeout(() => t.inputEl.focus(), 0);
+    });
+
+    new Setting(contentEl)
+      .addButton((b) =>
+        b.setButtonText("Apply").setCta().onClick(() => this.submit()),
+      )
+      .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
+  }
+
+  private submit(): void {
+    this.resolved = true;
+    this.onSubmit(this.value.trim() || null);
+    this.close();
+  }
+
+  onClose(): void {
+    if (!this.resolved) this.onSubmit(null);
     this.contentEl.empty();
   }
 }

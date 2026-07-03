@@ -14,6 +14,16 @@
 
 import { VaultAdapter } from "../core/vault-adapter";
 import { MemoryEntry, MemoryPaths } from "./memory-types";
+import {
+  INBOX_HEADER,
+  ParsedInbox,
+  PendingEntry,
+  formatAppliedBlock,
+  parsePendingInbox,
+  removeEntry,
+  renderPendingBlock,
+  resolveApplyDestination,
+} from "./pending-inbox";
 import { isInsideRoot, resolveInVault } from "../utils/paths";
 import { ConfigError, PathSecurityError } from "../utils/errors";
 import { Logger, NULL_LOGGER } from "../utils/logger";
@@ -34,42 +44,24 @@ export function formatTimestamp(ms: number): string {
   );
 }
 
-function formatTags(tags: string[]): string {
-  const base = ["#claude-code-engram"];
-  const extra = tags
-    .map((t) => t.trim().replace(/^#/, ""))
-    .filter(Boolean)
-    .map((t) => `#${t}`);
-  return Array.from(new Set([...base, ...extra])).join(" ");
-}
-
-/** Render a MemoryEntry as a reviewable Markdown block. */
+/**
+ * Render a MemoryEntry as a reviewable Markdown block. Delegates to the shared
+ * {@link renderPendingBlock} so the on-disk inbox format has a single producer
+ * and stays in lock-step with the parser used by the review UI.
+ */
 export function formatMemoryEntry(entry: MemoryEntry): string {
-  const lines: string[] = [];
-  lines.push(`## Pending Memory: ${formatTimestamp(entry.timestamp)}`);
-  lines.push("");
-  lines.push(`Type: ${entry.type}`);
-  if (entry.project) lines.push(`Project: ${entry.project}`);
-  lines.push(`Source: ${entry.source}`);
-  if (entry.originTool) lines.push(`Origin: ${entry.originTool}`);
-  if (entry.confidence) lines.push(`Confidence: ${entry.confidence}`);
-  lines.push(`Tags: ${formatTags(entry.tags)}`);
-  lines.push("");
-  lines.push("Content:");
-  lines.push("");
-  lines.push(entry.content.trim());
-  if (entry.relatedPaths.length > 0) {
-    lines.push("");
-    lines.push("Related files:");
-    lines.push("");
-    for (const p of entry.relatedPaths) lines.push(`* ${p}`);
-  }
-  lines.push("");
-  lines.push("Status: pending");
-  lines.push("");
-  lines.push("---");
-  lines.push("");
-  return lines.join("\n");
+  return renderPendingBlock({
+    timestampLabel: formatTimestamp(entry.timestamp),
+    type: entry.type,
+    project: entry.project,
+    source: entry.source,
+    originTool: entry.originTool,
+    confidence: entry.confidence,
+    tags: entry.tags,
+    content: entry.content,
+    relatedPaths: entry.relatedPaths,
+    status: "pending",
+  });
 }
 
 export class MemoryWriter {
@@ -84,6 +76,26 @@ export class MemoryWriter {
   }
 
   /**
+   * Serializes every inbox read-modify-write (propose / apply / discard) so
+   * overlapping calls — a double-clicked review button, or a server add_memory
+   * landing mid-apply — cannot interleave their read and write and clobber each
+   * other (a lost removal resurrects an entry; a duplicated graduation writes a
+   * block twice).
+   */
+  private inboxChain: Promise<unknown> = Promise.resolve();
+
+  private enqueueInbox<T>(op: () => Promise<T>): Promise<T> {
+    const run = this.inboxChain.then(op, op);
+    // Swallow on the chain so one failed op doesn't reject the next; the caller
+    // still observes this op's own outcome via `run`.
+    this.inboxChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /**
    * Append a reviewable entry to the pending-memory inbox. Always available;
    * this is the safe default for both UI and server writes.
    * @returns the pending-memory file path.
@@ -95,15 +107,15 @@ export class MemoryWriter {
     if (!isInsideRoot(this.paths.root, target)) {
       throw new PathSecurityError("Inbox path escapes the memory root");
     }
-    const exists = await this.adapter.exists(target);
-    if (!exists) {
-      const header = "# Pending Memory Inbox\n\nReviewable memory proposed by Claude Code Engram. Apply or discard entries as you see fit.\n\n---\n\n";
-      await this.adapter.write(target, header + block);
-    } else {
-      await this.adapter.append(target, block);
-    }
-    this.logger.info("Proposed memory to inbox", { type: entry.type, project: entry.project });
-    return target;
+    return this.enqueueInbox(async () => {
+      if (!(await this.adapter.exists(target))) {
+        await this.adapter.write(target, INBOX_HEADER + block);
+      } else {
+        await this.adapter.append(target, block);
+      }
+      this.logger.info("Proposed memory to inbox", { type: entry.type, project: entry.project });
+      return target;
+    });
   }
 
   /**
@@ -132,5 +144,85 @@ export class MemoryWriter {
     }
     this.logger.info("Direct memory write", { target, type: entry.type });
     return target;
+  }
+
+  /**
+   * Read + parse the review inbox. Returns an empty parse (with the standard
+   * header) when the inbox file does not exist yet.
+   */
+  async readInbox(): Promise<ParsedInbox> {
+    const target = this.paths.pendingMemoryFile;
+    if (!(await this.adapter.exists(target))) {
+      return { header: INBOX_HEADER, entries: [] };
+    }
+    const text = await this.adapter.read(target);
+    return parsePendingInbox(text);
+  }
+
+  /**
+   * Graduate a reviewed inbox entry into its destination memory file, then drop
+   * it from the inbox.
+   *
+   * This is the human-in-the-loop counterpart to {@link proposeToInbox}: the
+   * inbox exists so a person reviews proposed memory before it lands, so this
+   * promotion is intentionally NOT gated behind `allowDirectWrites` (which
+   * governs unattended/tool direct writes). It is reachable only from the
+   * desktop review UI — the local server never exposes it. It is still
+   * constrained: the destination is validated inside the memory root and the
+   * write is ALWAYS an append (it never overwrites an existing memory file),
+   * regardless of the `appendOnly` setting.
+   */
+  async applyPending(entry: PendingEntry): Promise<{ destination: string }> {
+    const destination = resolveApplyDestination(entry, this.paths);
+    // Defense-in-depth: resolveApplyDestination already builds paths via
+    // resolveInVault, but never write anywhere that isn't under the root.
+    if (!isInsideRoot(this.paths.root, destination)) {
+      throw new PathSecurityError("Apply destination escapes the memory root");
+    }
+    return this.enqueueInbox(async () => {
+      const target = this.paths.pendingMemoryFile;
+      if (!(await this.adapter.exists(target))) {
+        throw new ConfigError("The pending-memory inbox no longer exists.");
+      }
+      // Compute the inbox-without-this-entry FIRST and bail if the entry is
+      // already gone (e.g. a retry of an apply that actually succeeded). Doing
+      // this BEFORE touching the destination means a retry can never append a
+      // duplicate graduated block.
+      const text = await this.adapter.read(target);
+      const next = removeEntry(text, entry);
+      if (next === null) {
+        throw new ConfigError(
+          "That entry is no longer in the inbox (it may have been applied or removed elsewhere). Refresh and try again.",
+        );
+      }
+      const block = formatAppliedBlock(entry);
+      if (await this.adapter.exists(destination)) {
+        await this.adapter.append(destination, `\n${block}`);
+      } else {
+        await this.adapter.write(destination, block);
+      }
+      await this.adapter.write(target, next);
+      this.logger.info("Applied pending memory", { destination, type: entry.type });
+      return { destination };
+    });
+  }
+
+  /** Remove a reviewed entry from the inbox without writing it anywhere. */
+  async discardPending(entry: PendingEntry): Promise<void> {
+    await this.enqueueInbox(async () => {
+      const target = this.paths.pendingMemoryFile;
+      if (!(await this.adapter.exists(target))) {
+        throw new ConfigError("The pending-memory inbox no longer exists.");
+      }
+      const text = await this.adapter.read(target);
+      const next = removeEntry(text, entry);
+      if (next === null) {
+        throw new ConfigError(
+          "That entry is no longer in the inbox (it may have been edited or removed elsewhere). Refresh and try again.",
+        );
+      }
+      await this.adapter.write(target, next);
+      this.logger.info("Discarded pending memory", { type: entry.type });
+    });
   }
 }

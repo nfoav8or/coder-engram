@@ -1,6 +1,6 @@
 # Roadmap
 
-Claude Code Engram is built in three milestones. Milestones 1, 2, and 3 are complete; further work is tracked under "Deferred / future" below.
+Claude Code Engram is built in four milestones. Milestones 1 through 4 are complete; further work is tracked under "Deferred / future" below.
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -27,8 +27,6 @@ Claude Code Engram is built in three milestones. Milestones 1, 2, and 3 are comp
   - Inbox-first writes over the network by construction; the server never performs direct writes and exposes no generic file access or full-vault dump.
 - Claude Code integration documentation and example MCP configuration (see [CLAUDE_CODE_INTEGRATION.md](CLAUDE_CODE_INTEGRATION.md)).
 
-`summarize_note` (once listed in the spec's tool set) was intentionally deferred: honest summarization needs an LLM/embedding backend, so it moves to M3+ rather than shipping as a stub.
-
 ## Milestone 3 — embeddings + hybrid retrieval (done)
 
 - Real embedding providers behind the existing `EmbeddingProvider` interface: `OllamaEmbeddingProvider` (local Ollama, no API key) and `OpenAiEmbeddingProvider` (any OpenAI-compatible `/embeddings` endpoint). A `createEmbeddingProvider` factory returns `null` (lexical fallback) when config is missing and never throws.
@@ -37,10 +35,14 @@ Claude Code Engram is built in three milestones. Milestones 1, 2, and 3 are comp
 - `VectorRetriever` (cosine) and `HybridRetriever` (Reciprocal Rank Fusion of lexical + vector) behind the existing `Retriever` interface, selected by the new `retrievalMode` setting (default `hybrid`). Settings schema bumped v2 → v3; `EngramEngine.search` became async to embed the query when needed.
 - Degrades to lexical whenever the provider is `none` or unavailable — vectors are never on the critical path.
 
+## Milestone 4 — review UI + honest summarization (done)
+
+- Richer **Review Pending Memory** UI: each pending inbox entry is a card showing its resolved destination with per-entry **Apply**, **Edit & apply**, and **Discard** controls (`src/ui/pending-memory-modal.ts`); the raw "Open inbox file" escape hatch remains. A single pending-block parser/serializer (`src/memory/pending-inbox.ts`) is now the only producer of the on-disk inbox format, so entries round-trip (parse ⇄ render).
+- **Apply promotes** a reviewed entry by appending it into the destination memory file resolved by type/project (`resolveApplyDestination`), then removes it from the inbox. New `MemoryWriter.readInbox`/`applyPending`/`discardPending` and engine `getPendingMemory`/`applyPendingMemory`/`discardPendingMemory`. Promotion is UI-only (never server-exposed), always append-only, and validated inside the memory root; it is deliberately not gated by `allowDirectWrites`. See [SECURITY.md](SECURITY.md).
+- Honest **extractive** `summarize_note` (`src/summarize/extractive.ts`): it selects the note's own sentences (returned verbatim, in original order) via lexical frequency-centrality offline, or embedding-centroid similarity with MMR when an embedding provider is reachable. No LLM/generative backend was added — embeddings only improve selection and are not required. New engine `summarizeNote`/`getNoteChunks`, MCP tool `summarize_note` (default 5, max 20 sentences; rate-limited 30/min), and a **Summarize Current Note** command. It summarizes only in-index notes and fails open to lexical. See [MCP_SERVER.md](MCP_SERVER.md).
+
 ## Deferred / future
 
-- Richer review UI for the pending-memory inbox.
-- Honest note summarization (the deferred `summarize_note` tool), backed by an embedding/LLM provider.
 - Non-desktop support (currently `isDesktopOnly`).
 - Indexing of binary attachments.
 - Alternative local vector stores (SQLite, LanceDB, DuckDB) behind the storage model.

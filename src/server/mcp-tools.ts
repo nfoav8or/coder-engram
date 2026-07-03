@@ -96,6 +96,9 @@ const MS_PER_DAY = 86_400_000;
 const RATE_WINDOW_MS = 60_000;
 const SEARCH_MAX_PER_MINUTE = 120;
 const ADD_MEMORY_MAX_PER_MINUTE = 60;
+const SUMMARIZE_MAX_PER_MINUTE = 30;
+const SUMMARY_DEFAULT_SENTENCES = 5;
+const SUMMARY_MAX_SENTENCES = 20;
 
 const MEMORY_TYPES = [
   "decision",
@@ -307,9 +310,54 @@ const reindexTool: Tool = {
   },
 };
 
+const summarizeNoteTool: Tool = {
+  definition: {
+    name: "summarize_note",
+    description:
+      "Extractive summary of a single INDEXED note: returns a few of the note's " +
+      "OWN sentences (never generated/invented text), chosen by relevance. Only " +
+      "notes present in the index can be summarized — an excluded or unindexed " +
+      "note is refused, so this is not a general file-read.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Vault-relative path of the note to summarize." },
+        maxSentences: {
+          type: "number",
+          description: `Max sentences (1–${SUMMARY_MAX_SENTENCES}, default ${SUMMARY_DEFAULT_SENTENCES}).`,
+        },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  async handler(args, ctx) {
+    ctx.rateLimiter.enforceWindow("summarize_note", SUMMARIZE_MAX_PER_MINUTE, RATE_WINDOW_MS);
+    const obj = requireObject(args, "arguments");
+    const path = requireString(obj, "path", { maxLength: 1000 });
+    const maxSentences = Math.trunc(
+      optionalNumber(obj, "maxSentences", SUMMARY_DEFAULT_SENTENCES, {
+        min: 1,
+        max: SUMMARY_MAX_SENTENCES,
+      }),
+    );
+    const summary = await ctx.engine.summarizeNote(path, { maxSentences });
+    if (summary.sentences.length === 0) {
+      return `No summarizable content found in "${summary.notePath}".`;
+    }
+    const flags = summary.truncated ? " · note truncated for summarization" : "";
+    const header =
+      `Extractive summary of ${summary.notePath} ` +
+      `(${summary.sentences.length} of ${summary.totalUnits} sentences · ${summary.method})${flags}:`;
+    const body = summary.sentences.map((s) => `• ${s}`).join("\n");
+    return `${header}\n\n${body}`;
+  },
+};
+
 const ALL_TOOLS: Tool[] = [
   searchTool,
   addMemoryTool,
+  summarizeNoteTool,
   getProjectContextTool,
   getGlobalContextTool,
   listProjectsTool,

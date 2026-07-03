@@ -69,13 +69,18 @@ Every request is a `POST` with `Content-Type: application/json` and an
 | `list_projects` | Project names under the projects root. | |
 | `get_recent_sessions` | Most recent session notes for a project. | Limit capped at 20. |
 | `reindex_vault` | Rebuild the index from the vault. | **Rate-limited** (15 s cooldown). Refused when indexing is disabled. |
+| `summarize_note` | Extractive summary of an indexed note. | Inputs: `path` (required), `maxSentences` (optional, default 5, max 20). Returns a selection of the note's **own sentences** — verbatim, in original order — never generated prose. **In-scope only**: refused for notes that are not in the index. **Rate-limited** (30/min). |
 
-### Not implemented on purpose
+### On extractive summarization
 
-`summarize_note` was in an early tool sketch. It is **deliberately deferred**:
-honest summarization needs an LLM or embedding backend, which arrives with the
-embedding providers in Milestone 3. Shipping a fake "summary" that just
-truncates text would be misleading, so it is not exposed.
+`summarize_note` (added in Milestone 4) is delivered as **extractive**
+summarization: it selects and returns the note's own sentences, verbatim and in
+original order, never generated prose. There is still **no LLM backend** — a
+configured embedding provider only improves *which* sentences are chosen
+(embedding-centroid similarity with Maximal Marginal Relevance); with no provider
+it uses offline lexical ranking, and it fails open to lexical if embedding
+errors. It refuses notes that are not in the index, so it cannot surface
+excluded content, and it never invents or truncates text into a fake "summary".
 
 ## Security controls
 
@@ -100,8 +105,8 @@ All enforced in code; see [SECURITY.md](SECURITY.md) for the full model.
 - **Inbox-first writes.** `add_memory` never overwrites and never writes
   directly over the network.
 - **Rate-limited operations.** `reindex_vault` has a 15 s cooldown;
-  `search_vault_memory` and `add_memory` have per-minute sliding-window caps to
-  bound sustained flooding.
+  `search_vault_memory` and `add_memory` have per-minute sliding-window caps, and
+  `summarize_note` is capped at 30/min, to bound sustained flooding.
 - **Serialized lifecycle.** Overlapping enable/disable/restart events are
   single-flighted, so the server can never bind two listeners or leak a port.
 - **No secrets in logs.** The token is never logged; auth failures log only a

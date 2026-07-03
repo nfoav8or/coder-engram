@@ -307,6 +307,11 @@ export default class EngramPlugin
       callback: () => this.openPendingReview(),
     });
     this.addCommand({
+      id: "summarize-current-note",
+      name: "Summarize Current Note",
+      callback: () => this.summarizeCurrentNote(),
+    });
+    this.addCommand({
       id: "start-session-note",
       name: "Start Session Note",
       callback: () => this.startSessionNote(),
@@ -342,6 +347,26 @@ export default class EngramPlugin
       content: `Note: [[${file.basename}]]`,
       relatedPaths: [file.path],
     }).open();
+  }
+
+  private summarizeCurrentNote(): void {
+    const file = this.app.workspace.getActiveFile();
+    if (!file) {
+      new Notice("No active note to summarize.");
+      return;
+    }
+    new Notice("Claude Code Engram: summarizing…");
+    void this.engine
+      .summarizeNote(file.path)
+      .then((summary) => {
+        const heading = `Summary of ${file.basename} · ${summary.method} · ` +
+          `${summary.sentences.length}/${summary.totalUnits} sentences`;
+        const body = summary.sentences.length
+          ? summary.sentences.map((s) => `• ${s}`).join("\n\n")
+          : "No summarizable content found.";
+        new TextDisplayModal(this.app, heading, body).open();
+      })
+      .catch((err) => new Notice(`Could not summarize: ${toMessage(err)}`));
   }
 
   private startSessionNote(): void {
