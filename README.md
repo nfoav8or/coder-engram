@@ -4,7 +4,7 @@ An Obsidian-powered memory and RAG layer for Claude Code.
 
 Claude Code Engram turns your active Obsidian vault into a local-first memory, project-context, and retrieval backend. It indexes your Markdown notes, retrieves relevant chunks for a query, and lets you capture reviewable memory entries — all stored as plain Markdown inside a `Claude Code/` folder in your vault. Nothing is written outside the vault, and no cloud API key is required.
 
-> **Status:** Milestone 2. Local memory + lexical (BM25) retrieval (M1) and a local MCP/HTTP server that Claude Code can query and propose memory to (M2) both work today. The server is **disabled by default** and binds to `127.0.0.1`. Embedding-based vector search (Milestone 3) is **not yet implemented**. See [docs/ROADMAP.md](docs/ROADMAP.md).
+> **Status:** Milestone 3. Local memory + lexical (BM25) retrieval (M1), a local MCP/HTTP server that Claude Code can query and propose memory to (M2), and embedding-based vector + hybrid retrieval (M3) all work today. The server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too: the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What Claude Code Engram does
 
@@ -25,7 +25,7 @@ Claude Code Engram turns your active Obsidian vault into a local-first memory, p
 - BM25 lexical retrieval with a heading-match boost and folder/tag/project/recency filters.
 - Search modal, Add Memory command, and pending-memory inbox writer (append-only by default).
 - Project and session memory scaffolding.
-- Deterministic mock embedding provider and an `EmbeddingProvider` interface (vector retrieval deferred to M3).
+- Deterministic mock embedding provider and an `EmbeddingProvider` interface (real providers and vector retrieval landed in M3).
 - Vitest test suite covering chunking, metadata, index build/refresh, lexical retrieval, path safety, settings defaults, and memory writes.
 
 ## Features (Milestone 2)
@@ -39,6 +39,15 @@ Claude Code Engram turns your active Obsidian vault into a local-first memory, p
 - New **Restart Local Server** command; the control panel shows live server status (`running · host:port`).
 - 67 additional Vitest tests for auth, host/origin guards, the tool registry and rate limiter, JSON-RPC dispatch, batch limits, and lifecycle serialization (172 total).
 
+## Features (Milestone 3)
+
+- **Real embedding providers** behind the existing `EmbeddingProvider` interface: `OllamaEmbeddingProvider` (local Ollama, no API key) and `OpenAiEmbeddingProvider` (any OpenAI-compatible `/embeddings` endpoint). Selected via the **Embedding provider** setting; the default `none` keeps search lexical and fully offline.
+- **Outbound HTTP boundary** (`src/core/http-client.ts`): all client networking goes through an injected `HttpClient`, whose production implementation (`ObsidianHttpClient`) wraps Obsidian's `requestUrl` (CORS-free). Providers stay Obsidian-free and unit-testable via a `FakeHttpClient`. This is the only other service file allowed to import `obsidian`, alongside `ObsidianVaultAdapter`.
+- **Vector cache** (`Index/embeddings.json`): the `EmbeddingStore` embeds at index time, reusing vectors whose content hash is unchanged, dropping removed chunks, and recomputing everything when the provider identity changes. Writes go through the `VaultAdapter`, so vectors stay inside the vault.
+- **Vector and hybrid retrieval** behind the existing `Retriever` interface: cosine-similarity `VectorRetriever` and a `HybridRetriever` that fuses lexical and vector rankings with Reciprocal Rank Fusion. A new **Retrieval mode** setting picks `lexical`, `hybrid` (default), or `vector`.
+- **Graceful degradation:** with provider `none`, or when a configured provider is unreachable, retrieval is always lexical. Vectors are never faked, and a vector backend is never on the critical path.
+- Expanded Vitest suite covering the new providers, the HTTP boundary, embedding store, and vector/hybrid retrievers.
+
 ## Local server (M2)
 
 The server is a thin `node:http` shell (`src/server/local-server.ts`) around pure, unit-tested MCP layers. It is **off by default**. To use it:
@@ -48,6 +57,15 @@ The server is a thin `node:http` shell (`src/server/local-server.ts`) around pur
 3. Point Claude Code at `http://127.0.0.1:3999` (default port) with the token as a bearer credential.
 
 Writes proposed over the network **always** go to the review inbox — the server never performs direct writes, even if **Allow direct memory writes** is enabled in the desktop settings. See [docs/MCP_SERVER.md](docs/MCP_SERVER.md) and [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md).
+
+## Embeddings & vector retrieval (M3)
+
+Vector search is opt-in. The **Embedding provider** setting defaults to `none`, and until you change it retrieval is lexical BM25 only — no network calls, no API key. Two providers are available:
+
+- **Ollama** (local): embeds against a local Ollama server (default endpoint `http://127.0.0.1:11434`). No API key, and note text never leaves your machine. Set the **Embedding model** to a model your Ollama has pulled.
+- **OpenAI-compatible**: embeds against any OpenAI-compatible `/embeddings` endpoint (OpenAI, LM Studio, LocalAI, vLLM, …). **This sends your indexed note text to the configured endpoint**, which may be remote — an explicit, opt-in data-egress choice. It requires an endpoint, a model, and an API key (a secret, stored locally and never logged). The settings UI shows a notice when you select it.
+
+Embedding happens at index time (reindex/refresh) and is cached in `Index/embeddings.json` inside the vault; unchanged chunks are reused so re-embedding is incremental. **Retrieval mode** (`lexical`, `hybrid`, or `vector`; default `hybrid`) controls how vectors are used. If the provider is unavailable — unset, unreachable, or erroring — search transparently degrades to lexical rather than failing. Excluded/sensitive notes are never indexed, so they are never embedded or sent anywhere. See [docs/SECURITY.md](docs/SECURITY.md) for the data-egress details.
 
 ## Installation (from a release)
 
@@ -109,8 +127,12 @@ Settings live under **Settings → Claude Code Engram**. Key settings and their 
 | Excluded path patterns | *(empty)* | Glob (`*`, `**`) or substring patterns for sensitive notes. |
 | Auto-index on file change | `false` | Debounced (~2.5s) refresh when notes change. |
 | Default project | *(empty)* | Used by project-context and add-to-project commands. |
-| Embedding provider | `none` | Lexical BM25 always works with `none`. Vector providers arrive in M3. |
-| Embedding model | *(empty)* | Model name for the selected provider (M3). |
+| Embedding provider | `none` | Lexical BM25 always works with `none`. `ollama` and `openai-compatible` enable vector/hybrid retrieval; `mock` is a deterministic dev provider. |
+| Embedding model | *(empty)* | Model name for the selected provider (required for `ollama` and `openai-compatible`). |
+| Retrieval mode | `hybrid` | `lexical`, `hybrid`, or `vector`. Forced to lexical whenever the provider is `none` or unavailable. |
+| Embedding endpoint | *(empty)* | Base URL for the provider. Ollama defaults to `http://127.0.0.1:11434`; OpenAI-compatible needs the full base URL including any version prefix. |
+| Embedding API key | *(empty)* | Secret bearer key for OpenAI-compatible endpoints. Stored locally, sent only in the `Authorization` header, and never logged. |
+| Embedding batch size | `16` | Chunks embedded per request at index time; clamped to 1–512. |
 | Enable local server | `false` | Disabled by default. Localhost MCP/HTTP bridge for Claude Code. |
 | Server host | `127.0.0.1` | Localhost only unless "Allow non-localhost binding" is on. |
 | Server port | `3999` | |
@@ -189,8 +211,7 @@ Full details: [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Limitations
 
-- **Lexical-only retrieval.** Retrieval is BM25 keyword search. Embedding/vector and hybrid retrieval are not implemented yet (M3). The `mock`, `ollama`, and `openai-compatible` provider options appear in settings but do not yet affect retrieval.
-- **No `summarize_note` tool.** Honest note summarization needs an LLM/embedding backend, so it is deferred to M3+ rather than shipped as a stub.
+- **No `summarize_note` tool.** Honest note summarization needs an LLM/embedding backend, so it is deferred rather than shipped as a stub.
 - **Desktop only.** `isDesktopOnly: true`.
 - Binary attachments are not indexed.
 
@@ -198,7 +219,8 @@ Full details: [docs/SECURITY.md](docs/SECURITY.md).
 
 - **M1 (done):** local memory + lexical RAG.
 - **M2 (done):** control-panel polish, project creation, local MCP/HTTP server with constant-time token auth and DNS-rebinding guards, curated inbox-first tools, Claude Code integration docs.
-- **M3:** embedding providers (Ollama, OpenAI-compatible), vector + hybrid retrieval, richer review UI, and honest note summarization.
+- **M3 (done):** embedding providers (Ollama, OpenAI-compatible) behind an injected HTTP boundary, vector + hybrid retrieval, and a vault-local vector cache.
+- **Future:** richer review UI for the pending-memory inbox and honest note summarization backed by an embedding/LLM provider.
 
 Details: [docs/ROADMAP.md](docs/ROADMAP.md).
 

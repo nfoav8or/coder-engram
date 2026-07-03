@@ -34,13 +34,13 @@ export class SearchModal extends Modal {
         text.inputEl.addEventListener("keydown", (evt) => {
           if (evt.key === "Enter") {
             evt.preventDefault();
-            this.runSearch();
+            void this.runSearch();
           }
         });
         window.setTimeout(() => text.inputEl.focus(), 0);
       })
       .addButton((btn) =>
-        btn.setButtonText("Search").setCta().onClick(() => this.runSearch()),
+        btn.setButtonText("Search").setCta().onClick(() => void this.runSearch()),
       );
 
     this.resultsEl = contentEl.createDiv({ cls: "engram-search-results" });
@@ -50,7 +50,7 @@ export class SearchModal extends Modal {
     });
   }
 
-  private runSearch(): void {
+  private async runSearch(): Promise<void> {
     const q = this.query.trim();
     this.resultsEl.empty();
     if (q.length === 0) {
@@ -59,7 +59,7 @@ export class SearchModal extends Modal {
     }
     let results: RetrievalResult[] = [];
     try {
-      results = this.engine.search({ query: q, limit: 15 });
+      results = await this.engine.search({ query: q, limit: 15 });
     } catch (err) {
       new Notice(`Search failed: ${err instanceof Error ? err.message : String(err)}`);
       return;

@@ -1,0 +1,142 @@
+import { describe, it, expect } from "vitest";
+import { InMemoryVaultAdapter } from "../src/core/vault-adapter";
+import { EmbeddingStore, contentHash } from "../src/embeddings/embedding-store";
+import { MockEmbeddingProvider } from "../src/embeddings/mock-embedding-provider";
+import { EmbeddingProvider } from "../src/embeddings/embedding-provider";
+import { NULL_LOGGER } from "../src/utils/logger";
+
+const FILE = "Index/embeddings.json";
+
+function makeChunks(n: number): { id: string; text: string }[] {
+  return Array.from({ length: n }, (_, i) => ({ id: `c${i}`, text: `chunk number ${i} content` }));
+}
+
+/** Wraps a provider to count embed() calls (batch invocations). */
+function counting(provider: EmbeddingProvider): { provider: EmbeddingProvider; calls: () => number } {
+  let calls = 0;
+  const wrapped: EmbeddingProvider = {
+    id: provider.id,
+    model: provider.model,
+    dimensions: provider.dimensions,
+    embed: async (texts) => {
+      calls++;
+      return provider.embed(texts);
+    },
+    isAvailable: () => provider.isAvailable(),
+  };
+  return { provider: wrapped, calls: () => calls };
+}
+
+describe("contentHash", () => {
+  it("is deterministic", () => {
+    expect(contentHash("hello world")).toBe(contentHash("hello world"));
+  });
+  it("differs for different text", () => {
+    expect(contentHash("alpha")).not.toBe(contentHash("beta"));
+  });
+  it("returns a hex string", () => {
+    expect(contentHash("x")).toMatch(/^[0-9a-f]+$/);
+  });
+});
+
+describe("EmbeddingStore.embedIndex", () => {
+  it("embeds all chunks on the first pass and persists the file", async () => {
+    const adapter = new InMemoryVaultAdapter("v");
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    const chunks = makeChunks(3);
+    const result = await store.embedIndex(chunks, new MockEmbeddingProvider());
+    expect(result).toMatchObject({ embedded: 3, reused: 0, removed: 0, skipped: false });
+    expect(store.vectorsMap().size).toBe(3);
+    expect(await adapter.exists(FILE)).toBe(true);
+  });
+
+  it("reuses cached vectors when content + identity are unchanged (fresh store)", async () => {
+    const adapter = new InMemoryVaultAdapter("v");
+    const chunks = makeChunks(3);
+    const first = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await first.load();
+    await first.embedIndex(chunks, new MockEmbeddingProvider());
+
+    const second = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await second.load();
+    const result = await second.embedIndex(chunks, new MockEmbeddingProvider());
+    expect(result).toMatchObject({ embedded: 0, reused: 3, removed: 0 });
+  });
+
+  it("re-embeds only the chunk whose text changed", async () => {
+    const adapter = new InMemoryVaultAdapter("v");
+    const chunks = makeChunks(3);
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    await store.embedIndex(chunks, new MockEmbeddingProvider());
+
+    const edited = [...chunks];
+    edited[1] = { id: "c1", text: "completely different text now" };
+    const result = await store.embedIndex(edited, new MockEmbeddingProvider());
+    expect(result).toMatchObject({ embedded: 1, reused: 2 });
+  });
+
+  it("removes vectors for chunks dropped from the list", async () => {
+    const adapter = new InMemoryVaultAdapter("v");
+    const chunks = makeChunks(3);
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    await store.embedIndex(chunks, new MockEmbeddingProvider());
+
+    const result = await store.embedIndex(chunks.slice(0, 2), new MockEmbeddingProvider());
+    expect(result).toMatchObject({ embedded: 0, reused: 2, removed: 1 });
+    expect(store.vectorsMap().has("c2")).toBe(false);
+    expect(store.vectorsMap().size).toBe(2);
+  });
+
+  it("re-embeds everything when the provider identity changes", async () => {
+    const adapter = new InMemoryVaultAdapter("v");
+    const chunks = makeChunks(3);
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    await store.embedIndex(chunks, new MockEmbeddingProvider());
+
+    // Different `model` string => different identity => full recompute.
+    const altProvider: EmbeddingProvider = {
+      id: "mock",
+      model: "other-model",
+      dimensions: 8,
+      embed: async (texts) => texts.map(() => new Array(8).fill(0.5)),
+      isAvailable: async () => true,
+    };
+    const result = await store.embedIndex(chunks, altProvider);
+    expect(result).toMatchObject({ embedded: 3, reused: 0 });
+  });
+
+  it("respects batchSize=1 by making one embed call per chunk", async () => {
+    const adapter = new InMemoryVaultAdapter("v");
+    const chunks = makeChunks(3);
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    const { provider, calls } = counting(new MockEmbeddingProvider());
+    const result = await store.embedIndex(chunks, provider, { batchSize: 1 });
+    expect(result.embedded).toBe(3);
+    expect(calls()).toBe(3);
+  });
+
+  it("clear() empties the vectors and hasVectors becomes false", async () => {
+    const adapter = new InMemoryVaultAdapter("v");
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    await store.embedIndex(makeChunks(2), new MockEmbeddingProvider());
+    expect(store.hasVectors()).toBe(true);
+    await store.clear();
+    expect(store.hasVectors()).toBe(false);
+    expect(store.vectorsMap().size).toBe(0);
+  });
+
+  it("treats a legacy placeholder shell as empty on load", async () => {
+    const adapter = new InMemoryVaultAdapter("v");
+    await adapter.write(FILE, JSON.stringify({ model: null, dim: 0, vectors: {} }));
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    expect(store.hasVectors()).toBe(false);
+    expect(store.vectorsMap().size).toBe(0);
+  });
+});

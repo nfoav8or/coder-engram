@@ -20,7 +20,7 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
     const stats = await engine.reindex();
     expect(stats.noteCount).toBe(2);
 
-    const results = engine.search({ query: "indexing markdown retrieval" });
+    const results = await engine.search({ query: "indexing markdown retrieval" });
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].chunk.notePath).toBe("Notes/rag.md");
     expect(results[0].snippet.length).toBeGreaterThan(0);
@@ -89,7 +89,7 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
     const changed = engine.updateSettings({ ...DEFAULT_SETTINGS, defaultProject: "Demo" });
     expect(changed).toBe(false);
     expect(engine.getIndexStats().chunkCount).toBe(before); // index NOT wiped
-    expect(engine.search({ query: "alpha" }).length).toBeGreaterThan(0);
+    expect((await engine.search({ query: "alpha" })).length).toBeGreaterThan(0);
   });
 
   it("resets the index when the memory root moves", async () => {

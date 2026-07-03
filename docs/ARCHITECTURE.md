@@ -1,6 +1,6 @@
 # Architecture
 
-Claude Code Engram is a layered TypeScript Obsidian plugin. The guiding rule is that only the UI layer knows about Obsidian; everything below it talks to the vault through a single `VaultAdapter` interface. That keeps the indexing, retrieval, and memory logic Obsidian-agnostic and unit-testable, and it lets the local server (M2) reuse the same `EngramEngine` verbatim.
+Claude Code Engram is a layered TypeScript Obsidian plugin. The guiding rule is that the service and core layers never import `obsidian` directly: they reach the outside world through narrow injected boundaries — `VaultAdapter` for the file system and (from M3) `HttpClient` for outbound requests. Only the UI layer and those two thin adapter shells (`ObsidianVaultAdapter`, `ObsidianHttpClient`) touch a host API. That keeps the indexing, retrieval, and memory logic Obsidian-agnostic and unit-testable, and it lets the local server (M2) reuse the same `EngramEngine` verbatim.
 
 ## Layers
 
@@ -90,8 +90,18 @@ Because the whole service layer depends on this interface rather than on `obsidi
 
 ## Dependency direction
 
-Dependencies point **downward only**: UI → service → core utils → `VaultAdapter`. The service and core layers never import `obsidian`, and lower layers never import upward. The embedding provider (`embeddings/`) is an interface plus a mock, injected where needed; it is off the critical path since retrieval works with no provider.
+Dependencies point **downward only**: UI → service → core utils → `VaultAdapter` / `HttpClient`. The service and core layers never import `obsidian`, and lower layers never import upward. Embedding providers (`embeddings/`) are injected where needed and stay off the critical path — retrieval works with no provider.
 
-## Embeddings (M3-facing)
+## Embeddings & vector retrieval (M3)
 
-`embeddings/embedding-provider.ts` defines the `EmbeddingProvider` interface and a `cosineSimilarity` helper; `embeddings/mock-embedding-provider.ts` is a deterministic hash-based mock for tests. Real providers (Ollama, OpenAI-compatible) and a vector retriever slot in at M3 behind the existing `Retriever` interface without changing callers.
+Milestone 3 adds real embedding providers and vector/hybrid retrieval without disturbing the layering. Two seams make this possible.
+
+**A second adapter shell — the `HttpClient` boundary.** `core/http-client.ts` defines the `HttpClient` interface for all *outbound* client HTTP, mirroring the `VaultAdapter` pattern. The embedding providers depend only on this interface, so they stay Obsidian-free and unit-testable against a `FakeHttpClient` (also in `http-client.ts`). The production implementation, `ObsidianHttpClient` (`core/obsidian-http-client.ts`), wraps Obsidian's `requestUrl` — CORS-free and usable in the Electron renderer. It is the *second* file permitted to import `obsidian`, alongside `ObsidianVaultAdapter`. (The M2 local server is an inbound listener over `node:http` and is unrelated to this outbound path.)
+
+**Providers behind a factory.** `embeddings/embedding-provider.ts` defines the `EmbeddingProvider` interface and a `cosineSimilarity` helper. Implementations: `mock-embedding-provider.ts` (deterministic hash-based, for tests), `ollama-provider.ts` (`OllamaEmbeddingProvider`, local, no API key), and `openai-embedding-provider.ts` (`OpenAiEmbeddingProvider`, any OpenAI-compatible endpoint, bearer-key auth). `provider-factory.ts`'s `createEmbeddingProvider` builds the configured provider or returns `null` when required config is missing — the graceful-degrade signal for lexical fallback; it never throws.
+
+**Vector cache — `EmbeddingStore`.** `embeddings/embedding-store.ts` owns `Index/embeddings.json` with the shape `{version, model, dim, vectors: { <chunkId>: {h: contentHash, v: number[]} }}`. `embedIndex` reuses vectors whose content hash is unchanged, drops removed chunks, and recomputes everything when the provider identity (`<id>:<model>`) changes; it batches embedding calls and persists once at the end. All writes go through the `VaultAdapter`, so the cache never leaves the vault.
+
+**Retrievers behind the existing interface.** `retrieval/vector-retriever.ts` (`VectorRetriever`, cosine similarity over the stored vectors) and `retrieval/hybrid-retriever.ts` (`HybridRetriever`, Reciprocal Rank Fusion with k=60 of the lexical and vector rankings) both implement the M1 `Retriever` interface, so callers are unchanged. The active retriever is chosen by the `retrievalMode` setting (`lexical` | `hybrid` | `vector`); `EngramEngine.effectiveMode()` forces lexical whenever no usable provider exists, so a missing or unreachable backend degrades cleanly.
+
+**The async-search seam.** Vector and hybrid ranking need a query embedding, which requires a network round-trip — so `EngramEngine.search` became `async`. `RetrievalQuery` gained an optional `queryVector`; the engine embeds the query (via `withQueryVector`) only when the effective mode is non-lexical, a provider exists, and vectors are already stored, and it falls back to lexical ranking if that embedding call fails. The retrievers themselves stay synchronous: they receive the pre-computed `queryVector` and never touch the network. Embedding of the *index* happens at reindex/refresh time through `embedIndex`, which first checks `provider.isAvailable()` and otherwise logs and keeps lexical retrieval.

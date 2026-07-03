@@ -23,6 +23,13 @@ export interface RetrievalQuery {
   query: string;
   limit?: number;
   filters?: RetrievalFilters;
+  /**
+   * Pre-computed embedding of `query`, supplied by the engine when a vector or
+   * hybrid retriever is active. Keeping the (async) embedding out here lets
+   * `retrieve` stay synchronous and pure. Lexical retrieval ignores it; vector
+   * retrieval returns nothing without it (so it degrades to lexical in hybrid).
+   */
+  queryVector?: number[];
 }
 
 export interface RetrievalResult {

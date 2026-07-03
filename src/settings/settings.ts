@@ -14,9 +14,25 @@ import { ScanConfig } from "../indexing/vault-scanner";
 import { clamp } from "../utils/validation";
 import { normalizeVaultRelativePath } from "../utils/paths";
 
-export const SETTINGS_SCHEMA_VERSION = 2;
+export const SETTINGS_SCHEMA_VERSION = 3;
 
 export type EmbeddingProviderId = "none" | "mock" | "ollama" | "openai-compatible";
+
+/** How retrieval combines lexical (BM25) and vector (cosine) signals. */
+export type RetrievalMode = "lexical" | "hybrid" | "vector";
+
+export const RETRIEVAL_MODES: RetrievalMode[] = ["lexical", "hybrid", "vector"];
+export const EMBEDDING_PROVIDERS: EmbeddingProviderId[] = [
+  "none",
+  "mock",
+  "ollama",
+  "openai-compatible",
+];
+
+/** Bounds for the embedding batch size (chunks per provider request). */
+const MIN_BATCH_SIZE = 1;
+const MAX_BATCH_SIZE = 512;
+const DEFAULT_BATCH_SIZE = 16;
 
 export interface ServerSettings {
   enabled: boolean;
@@ -43,6 +59,14 @@ export interface EngramSettings {
   autoIndexOnChange: boolean;
   embeddingProvider: EmbeddingProviderId;
   embeddingModel: string;
+  /** Base URL for network providers (Ollama / OpenAI-compatible). */
+  embeddingEndpoint: string;
+  /** Secret API key for the OpenAI-compatible provider. Never logged. */
+  embeddingApiKey: string;
+  /** Chunks per embedding request. Bounds sustained memory/network use. */
+  embeddingBatchSize: number;
+  /** How retrieval combines lexical and vector signals (with a provider set). */
+  retrievalMode: RetrievalMode;
   server: ServerSettings;
   allowDirectWrites: boolean;
   appendOnly: boolean;
@@ -61,6 +85,10 @@ export const DEFAULT_SETTINGS: EngramSettings = {
   autoIndexOnChange: false,
   embeddingProvider: "none",
   embeddingModel: "",
+  embeddingEndpoint: "",
+  embeddingApiKey: "",
+  embeddingBatchSize: DEFAULT_BATCH_SIZE,
+  retrievalMode: "hybrid",
   server: {
     enabled: false,
     host: "127.0.0.1",
@@ -104,9 +132,21 @@ export function migrateSettings(raw: unknown): EngramSettings {
       merged.memoryRoot = DEFAULT_SETTINGS.memoryRoot;
     }
   }
-  if (!["none", "mock", "ollama", "openai-compatible"].includes(merged.embeddingProvider)) {
+  if (!EMBEDDING_PROVIDERS.includes(merged.embeddingProvider)) {
     merged.embeddingProvider = "none";
   }
+  if (!RETRIEVAL_MODES.includes(merged.retrievalMode)) {
+    merged.retrievalMode = DEFAULT_SETTINGS.retrievalMode;
+  }
+  merged.embeddingModel = typeof merged.embeddingModel === "string" ? merged.embeddingModel : "";
+  merged.embeddingEndpoint =
+    typeof merged.embeddingEndpoint === "string" ? merged.embeddingEndpoint : "";
+  merged.embeddingApiKey =
+    typeof merged.embeddingApiKey === "string" ? merged.embeddingApiKey : "";
+  const parsedBatch = Math.trunc(Number(merged.embeddingBatchSize));
+  merged.embeddingBatchSize = Number.isFinite(parsedBatch)
+    ? clamp(parsedBatch, MIN_BATCH_SIZE, MAX_BATCH_SIZE)
+    : DEFAULT_BATCH_SIZE;
   // Repair the persisted port by clamping into the valid range; a non-numeric
   // value falls back to the default. Note the finite check is separate from the
   // clamp so a legitimate 0 is clamped to 1 rather than being treated as absent
@@ -140,6 +180,9 @@ export function migrateSettings(raw: unknown): EngramSettings {
   // v(unknown) -> v1: initial schema; nothing structural to change.
   // v1 -> v2: added server.allowNonLocalhost (defaulted safely above). No data
   //   transform needed — the safe default is applied when the field is absent.
+  // v2 -> v3: added embeddingEndpoint / embeddingApiKey / embeddingBatchSize /
+  //   retrievalMode for M3 vector + hybrid retrieval. All default safely (empty
+  //   config => provider degrades to lexical), so absent fields need no transform.
   merged.schemaVersion = SETTINGS_SCHEMA_VERSION;
   return merged;
 }
@@ -168,6 +211,20 @@ export function toScanConfig(settings: EngramSettings): ScanConfig {
     excludedFolders: settings.excludedFolders,
     excludedTags: settings.excludedTags,
     excludedPathPatterns: settings.excludedPathPatterns,
+  };
+}
+
+export function toEmbeddingConfig(settings: EngramSettings): {
+  provider: EmbeddingProviderId;
+  model: string;
+  endpoint: string;
+  apiKey: string;
+} {
+  return {
+    provider: settings.embeddingProvider,
+    model: settings.embeddingModel,
+    endpoint: settings.embeddingEndpoint,
+    apiKey: settings.embeddingApiKey,
   };
 }
 

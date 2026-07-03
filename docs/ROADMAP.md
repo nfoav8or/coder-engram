@@ -1,6 +1,6 @@
 # Roadmap
 
-Claude Code Engram is built in three milestones. Milestones 1 and 2 are complete; Milestone 3 is planned.
+Claude Code Engram is built in three milestones. Milestones 1, 2, and 3 are complete; further work is tracked under "Deferred / future" below.
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -29,16 +29,18 @@ Claude Code Engram is built in three milestones. Milestones 1 and 2 are complete
 
 `summarize_note` (once listed in the spec's tool set) was intentionally deferred: honest summarization needs an LLM/embedding backend, so it moves to M3+ rather than shipping as a stub.
 
-## Milestone 3 — embeddings + hybrid retrieval
+## Milestone 3 — embeddings + hybrid retrieval (done)
 
-- Real embedding providers behind the existing `EmbeddingProvider` interface: Ollama (local) and OpenAI-compatible.
-- Vector retrieval and hybrid (lexical + vector) ranking behind the existing `Retriever` interface.
-- Populated `embeddings.json` and ranking improvements.
-- Richer review UI for the pending-memory inbox.
-- Honest note summarization (deferred `summarize_note` tool), backed by the embedding/LLM providers.
+- Real embedding providers behind the existing `EmbeddingProvider` interface: `OllamaEmbeddingProvider` (local Ollama, no API key) and `OpenAiEmbeddingProvider` (any OpenAI-compatible `/embeddings` endpoint). A `createEmbeddingProvider` factory returns `null` (lexical fallback) when config is missing and never throws.
+- New `HttpClient` boundary (`core/http-client.ts`) for all outbound client HTTP, with the production `ObsidianHttpClient` wrapping Obsidian's `requestUrl`. Providers stay Obsidian-free and unit-testable; this is the second file (with `ObsidianVaultAdapter`) permitted to import `obsidian`.
+- Populated `Index/embeddings.json` via `EmbeddingStore`: incremental, content-hash-keyed vector cache written through the `VaultAdapter`.
+- `VectorRetriever` (cosine) and `HybridRetriever` (Reciprocal Rank Fusion of lexical + vector) behind the existing `Retriever` interface, selected by the new `retrievalMode` setting (default `hybrid`). Settings schema bumped v2 → v3; `EngramEngine.search` became async to embed the query when needed.
+- Degrades to lexical whenever the provider is `none` or unavailable — vectors are never on the critical path.
 
 ## Deferred / future
 
+- Richer review UI for the pending-memory inbox.
+- Honest note summarization (the deferred `summarize_note` tool), backed by an embedding/LLM provider.
 - Non-desktop support (currently `isDesktopOnly`).
 - Indexing of binary attachments.
 - Alternative local vector stores (SQLite, LanceDB, DuckDB) behind the storage model.

@@ -9,6 +9,7 @@
 import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { EngramEngine } from "./engine";
 import { ObsidianVaultAdapter } from "./core/obsidian-vault-adapter";
+import { ObsidianHttpClient } from "./core/obsidian-http-client";
 import {
   DEFAULT_SETTINGS,
   EngramSettings,
@@ -40,12 +41,16 @@ export default class EngramPlugin
   private engine!: EngramEngine;
   private server!: LocalServer;
   private debouncedRefresh!: Debounced<[]>;
+  private lastEmbeddingSig = "";
 
   async onload(): Promise<void> {
     this.settings = migrateSettings(await this.loadData());
     this.logger = createLogger(() => this.settings.debugLogging, "engram");
     const adapter = new ObsidianVaultAdapter(this.app);
-    this.engine = new EngramEngine(adapter, this.settings, this.logger);
+    this.engine = new EngramEngine(adapter, this.settings, this.logger, undefined, {
+      http: new ObsidianHttpClient(),
+    });
+    this.lastEmbeddingSig = embeddingSignature(this.settings);
     this.server = new LocalServer({
       engine: this.engine,
       logger: this.logger.child("server"),
@@ -105,7 +110,34 @@ export default class EngramPlugin
     }
     // Apply server enable/disable/config changes (start, stop, or restart).
     await this.syncServer();
+
+    // If the embedding provider/model/endpoint/key/mode changed, (re)embed the
+    // current index in the background so switching to a vector provider takes
+    // effect without a manual reindex. Cheap when nothing embedding-related moved.
+    const sig = embeddingSignature(this.settings);
+    if (sig !== this.lastEmbeddingSig) {
+      this.lastEmbeddingSig = sig;
+      void this.syncEmbeddings();
+    }
+
     this.refreshControlPanel();
+  }
+
+  /**
+   * Re-embed the index against the current provider (background, best-effort).
+   * A no-op when the provider is "none". Surfaces a Notice for vector providers
+   * so the user knows retrieval mode may have changed.
+   */
+  private async syncEmbeddings(): Promise<void> {
+    if (this.settings.embeddingProvider === "none") return;
+    try {
+      new Notice("Claude Code Engram: updating embeddings…");
+      await this.engine.syncEmbeddings();
+      new Notice(`Embeddings updated. Retrieval mode: ${this.engine.getRetrievalMode()}.`);
+      this.refreshControlPanel();
+    } catch (err) {
+      this.logger.warn("Embedding sync failed", { error: toMessage(err) });
+    }
   }
 
   /**
@@ -359,6 +391,21 @@ export default class EngramPlugin
       if (view instanceof ControlPanelView) view.render();
     }
   }
+}
+
+/**
+ * Signature of settings that should trigger a re-embed / retriever refresh.
+ * Batch size is deliberately excluded: it changes only how embedding requests
+ * are chunked, never the resulting vectors, so it must not force a re-embed.
+ */
+function embeddingSignature(s: EngramSettings): string {
+  return [
+    s.embeddingProvider,
+    s.embeddingModel,
+    s.embeddingEndpoint,
+    s.embeddingApiKey,
+    s.retrievalMode,
+  ].join(" ");
 }
 
 /** Format a ms timestamp as "YYYY-MM-DD-HHMM" for session filenames. */

@@ -148,7 +148,7 @@ const searchTool: Tool = {
     const sinceDays = optionalNumber(obj, "sinceDays", 0, { min: 0, max: 36_500 });
     const sinceMtime = sinceDays > 0 ? ctx.clock() - sinceDays * MS_PER_DAY : undefined;
 
-    const results = ctx.engine.search({
+    const results = await ctx.engine.search({
       query,
       limit,
       filters: { folder, tag, project, sinceMtime },

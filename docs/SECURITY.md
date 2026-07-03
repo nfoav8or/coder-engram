@@ -50,3 +50,17 @@ The local MCP/HTTP server (`src/server/`) lets external tools such as Claude Cod
 - **Secrets redacted.** Startup and request logs never include the token; the debug logger redacts secret-shaped keys.
 
 Recommendations: set a strong token, enable the server only while you need it, and keep it bound to `127.0.0.1`. See [MCP_SERVER.md](MCP_SERVER.md) for the design and [CLAUDE_CODE_INTEGRATION.md](CLAUDE_CODE_INTEGRATION.md) for the workflow.
+
+## Embedding providers (M3)
+
+Vector and hybrid retrieval are optional and off by default: `embeddingProvider` is `none`, so search is lexical BM25 with no outbound requests. When you opt in, all client HTTP goes through a single boundary — `ObsidianHttpClient`, which wraps Obsidian's `requestUrl` (`src/core/obsidian-http-client.ts`). The embedding providers themselves never import `obsidian`; they depend only on the `HttpClient` interface, so nothing but this one adapter touches the network.
+
+- **Local vs. remote.** The Ollama provider embeds against a local server (default `http://127.0.0.1:11434`) with no API key — note text stays on your machine. The **OpenAI-compatible provider transmits your indexed note text to the configured `/embeddings` endpoint**, which may be remote. That is a genuine data-egress consideration, so it is opt-in: the provider defaults to `none`, and the settings UI shows a notice when you select OpenAI-compatible.
+- **Excluded notes are never sent.** Only chunks that were indexed are embedded, and the vault scanner's excluded folders / tags / path patterns keep sensitive notes out of the index in the first place — so they are never embedded and never leave the vault.
+- **API key is a secret.** The OpenAI-compatible key is sent only in the `Authorization: Bearer` header, never in a URL or a log line. The debug logger's secret-key redaction already covers `apikey`/`api_key`, and provider error messages deliberately omit the response body.
+- **Vectors cached in the vault.** Computed embeddings are written only to `Index/embeddings.json` through the same `VaultAdapter` choke-point as the rest of the index, so the cache cannot escape the vault. It is a rebuildable cache, not a source of truth.
+- **Fails open to offline search.** If a configured provider is unset, unreachable, or errors, retrieval degrades to lexical rather than failing — a down backend never blocks search and never leaks. Vectors are never fabricated.
+- **Bounded requests.** `requestUrl` has no abort, so `ObsidianHttpClient` races each call against a timeout timer (5s liveness, 60s embed). A stalled or black-holed endpoint can never hang a search or block indexing — it degrades to lexical when the timer fires.
+- **No cross-model scoring.** The vector cache records the backend identity it was built with (provider + model + hashed endpoint + hashed key). A query is only scored against cached vectors when that identity matches the active provider; after a model/endpoint swap or a stale-on-disk restart, search degrades to lexical until a re-embed catches up, rather than returning plausible-but-wrong rankings from mismatched vectors.
+
+Honest limitation: the API key is stored in plaintext locally, in Obsidian's own `data.json` and in the `Config/plugin-settings-backup.json` settings backup — exactly like the server token. Anyone with read access to those files can read the key. Do not sync `data.json` or the settings backup out of the vault, and treat the key as you would any other stored credential.

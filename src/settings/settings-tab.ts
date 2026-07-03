@@ -151,35 +151,7 @@ export class EngramSettingTab extends PluginSettingTab {
         }),
       );
 
-    this.section("Retrieval & embeddings");
-
-    new Setting(containerEl)
-      .setName("Embedding provider")
-      .setDesc(
-        "Retrieval currently uses lexical BM25 regardless of this setting. Vector retrieval " +
-          "(Ollama / OpenAI-compatible) arrives in Milestone 3; the choice is saved for then.",
-      )
-      .addDropdown((dd) => {
-        dd.addOption("none", "None (lexical BM25) — active");
-        dd.addOption("mock", "Mock (development)");
-        dd.addOption("ollama", "Ollama (local) — M3");
-        dd.addOption("openai-compatible", "OpenAI-compatible — M3");
-        dd.setValue(this.s.embeddingProvider).onChange(async (v) => {
-          this.s.embeddingProvider = v as EngramSettings["embeddingProvider"];
-          await this.commit();
-        });
-      });
-
-    new Setting(containerEl)
-      .setName("Embedding model")
-      .setDesc("Model name for the selected provider (if applicable).")
-      .addText((t) =>
-        t.setValue(this.s.embeddingModel).onChange(async (v) => {
-          this.s.embeddingModel = v.trim();
-          await this.commit();
-        }),
-      );
-
+    this.renderEmbeddingSection();
     this.renderServerSection();
     this.renderWriteSafetySection();
 
@@ -193,6 +165,115 @@ export class EngramSettingTab extends PluginSettingTab {
           await this.commit();
         }),
       );
+  }
+
+  private renderEmbeddingSection(): void {
+    const { containerEl } = this;
+    this.section("Retrieval & embeddings");
+
+    new Setting(containerEl)
+      .setName("Embedding provider")
+      .setDesc(
+        "None keeps retrieval fully offline (lexical BM25). Mock is deterministic hashing for " +
+          "development. Ollama (local) and OpenAI-compatible enable vector + hybrid retrieval.",
+      )
+      .addDropdown((dd) => {
+        dd.addOption("none", "None (lexical BM25)");
+        dd.addOption("mock", "Mock (development)");
+        dd.addOption("ollama", "Ollama (local)");
+        dd.addOption("openai-compatible", "OpenAI-compatible");
+        dd.setValue(this.s.embeddingProvider).onChange(async (v) => {
+          if (v === "openai-compatible") {
+            new Notice(
+              "OpenAI-compatible sends your indexed note text to the configured endpoint. " +
+                "Use a local endpoint or a provider you trust.",
+            );
+          }
+          this.s.embeddingProvider = v as EngramSettings["embeddingProvider"];
+          await this.commit();
+          this.display(); // show/hide provider-specific fields
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Retrieval mode")
+      .setDesc(
+        "How results are ranked when a provider is set. Hybrid fuses lexical + vector (recommended); " +
+          "Vector is embeddings-only; Lexical ignores embeddings. Always lexical when the provider is None.",
+      )
+      .addDropdown((dd) => {
+        dd.addOption("hybrid", "Hybrid (lexical + vector)");
+        dd.addOption("vector", "Vector only");
+        dd.addOption("lexical", "Lexical only");
+        dd.setValue(this.s.retrievalMode).onChange(async (v) => {
+          this.s.retrievalMode = v as EngramSettings["retrievalMode"];
+          await this.commit();
+        });
+      });
+
+    const provider = this.s.embeddingProvider;
+    const needsEndpoint = provider === "ollama" || provider === "openai-compatible";
+
+    if (needsEndpoint) {
+      new Setting(containerEl)
+        .setName("Embedding model")
+        .setDesc(
+          provider === "ollama"
+            ? "Ollama model name, e.g. nomic-embed-text or mxbai-embed-large."
+            : "Model name, e.g. text-embedding-3-small.",
+        )
+        .addText((t) =>
+          t.setValue(this.s.embeddingModel).onChange(async (v) => {
+            this.s.embeddingModel = v.trim();
+            await this.commit();
+          }),
+        );
+
+      new Setting(containerEl)
+        .setName("Endpoint")
+        .setDesc(
+          provider === "ollama"
+            ? "Base URL of the Ollama server. Default http://127.0.0.1:11434."
+            : "Base URL of the OpenAI-compatible API, including any version prefix (e.g. https://api.openai.com/v1).",
+        )
+        .addText((t) =>
+          t
+            .setPlaceholder(provider === "ollama" ? "http://127.0.0.1:11434" : "https://api.openai.com/v1")
+            .setValue(this.s.embeddingEndpoint)
+            .onChange(async (v) => {
+              this.s.embeddingEndpoint = v.trim();
+              await this.commit();
+            }),
+        );
+    }
+
+    if (provider === "openai-compatible") {
+      new Setting(containerEl)
+        .setName("API key")
+        .setDesc("Bearer token for the endpoint. Stored locally and never logged.")
+        .addText((t) => {
+          t.setPlaceholder("(required)").setValue(this.s.embeddingApiKey).onChange(async (v) => {
+            this.s.embeddingApiKey = v.trim();
+            await this.commit();
+          });
+          t.inputEl.type = "password";
+        });
+    }
+
+    if (needsEndpoint) {
+      new Setting(containerEl)
+        .setName("Batch size")
+        .setDesc("Chunks per embedding request (1–512). Lower this if the provider rejects large batches.")
+        .addText((t) =>
+          t.setValue(String(this.s.embeddingBatchSize)).onChange(async (v) => {
+            const n = Math.trunc(Number(v));
+            if (Number.isFinite(n) && n >= 1 && n <= 512) {
+              this.s.embeddingBatchSize = n;
+              await this.commit();
+            }
+          }),
+        );
+    }
   }
 
   private renderServerSection(): void {
