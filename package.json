@@ -1,0 +1,35 @@
+{
+  "name": "claude-code-engram",
+  "version": "0.1.0",
+  "description": "An Obsidian-powered memory and RAG layer for Claude Code.",
+  "author": "Matt Smith",
+  "license": "MIT",
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "claude",
+    "claude-code",
+    "memory",
+    "rag"
+  ],
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint . --ext .ts",
+    "typecheck": "tsc --noEmit --skipLibCheck"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.25.0",
+    "eslint": "^8.57.0",
+    "obsidian": "^1.5.0",
+    "typescript": "^5.4.0",
+    "vitest": "^3.2.4"
+  }
+}

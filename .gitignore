@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output (bundled plugin artifact — rebuilt from src)
+main.js
+main.js.map
+
+# Secrets / local env — never commit
+.env
+.env.*
+*.pem
+*.key
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+.vitest/

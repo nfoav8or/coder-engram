@@ -1,0 +1,92 @@
+/* Claude Code Engram plugin styles */
+
+.engram-control-panel {
+  padding: 0.5rem 0.75rem;
+}
+
+.engram-control-panel h2 {
+  margin-top: 0;
+  font-size: var(--font-ui-large);
+}
+
+.engram-stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.engram-stat-row .engram-stat-value {
+  color: var(--text-normal);
+  font-variant-numeric: tabular-nums;
+}
+
+.engram-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0.75rem 0;
+}
+
+.engram-search-result {
+  padding: 6px 8px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.engram-search-result:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.engram-search-result .engram-result-path {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-accent);
+}
+
+.engram-search-result .engram-result-heading {
+  font-weight: var(--font-semibold);
+  font-size: var(--font-ui-small);
+}
+
+.engram-search-result .engram-result-snippet {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: normal;
+}
+
+.engram-search-result mark {
+  background-color: var(--text-highlight-bg);
+  color: inherit;
+}
+
+.engram-security-warning {
+  border-left: 3px solid var(--color-red);
+  background-color: var(--background-modifier-error-rgb, rgba(255, 0, 0, 0.06));
+  padding: 8px 12px;
+  border-radius: var(--radius-s);
+  margin: 8px 0;
+  font-size: var(--font-ui-small);
+}
+
+.engram-setting-section-header {
+  margin-top: 1.25rem;
+  font-size: var(--font-ui-medium);
+  color: var(--text-normal);
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 4px;
+}
+
+.engram-pending-entry {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+
+.engram-pending-entry pre {
+  white-space: pre-wrap;
+  font-size: var(--font-ui-smaller);
+}
