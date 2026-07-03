@@ -1,6 +1,6 @@
 # Roadmap
 
-Claude Code Engram is built in three milestones. Milestone 1 is complete; Milestones 2 and 3 are planned.
+Claude Code Engram is built in three milestones. Milestones 1 and 2 are complete; Milestone 3 is planned.
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -15,15 +15,19 @@ Claude Code Engram is built in three milestones. Milestone 1 is complete; Milest
 - `EmbeddingProvider` interface plus a deterministic mock (no real vector retrieval yet).
 - Vitest test suite.
 
-## Milestone 2 — server + integration
+## Milestone 2 — server + integration (done)
 
-- Control-panel polish and project-creation workflow refinements.
-- Local MCP/HTTP server:
+- Control-panel polish and project-creation workflow refinements; live server status (`running · host:port`) and a **Restart Local Server** command.
+- Local MCP/HTTP server (`src/server/`) speaking JSON-RPC 2.0 MCP (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`):
   - Disabled by default, binds to `127.0.0.1`, configurable port.
-  - Optional token authentication with request-payload validation.
-  - Tools including `search_vault_memory` and `add_memory` (see [MCP_SERVER.md](MCP_SERVER.md) for the full planned tool list).
-  - Inbox-first writes; direct writes only when explicitly enabled.
+  - Constant-time bearer-token authentication (SHA-256 digest + `timingSafeEqual`), with request validation.
+  - DNS-rebinding protection (Host/Origin guards), POST-only, JSON content-type required, and a 1 MB body cap.
+  - New `server.allowNonLocalhost` setting (schema v2): binding a non-localhost host requires both this flag and a token.
+  - Tools: `search_vault_memory`, `add_memory`, `get_project_context`, `get_global_context`, `list_projects`, `get_recent_sessions`, `reindex_vault` (rate-limited). See [MCP_SERVER.md](MCP_SERVER.md).
+  - Inbox-first writes over the network by construction; the server never performs direct writes and exposes no generic file access or full-vault dump.
 - Claude Code integration documentation and example MCP configuration (see [CLAUDE_CODE_INTEGRATION.md](CLAUDE_CODE_INTEGRATION.md)).
+
+`summarize_note` (once listed in the spec's tool set) was intentionally deferred: honest summarization needs an LLM/embedding backend, so it moves to M3+ rather than shipping as a stub.
 
 ## Milestone 3 — embeddings + hybrid retrieval
 
@@ -31,6 +35,7 @@ Claude Code Engram is built in three milestones. Milestone 1 is complete; Milest
 - Vector retrieval and hybrid (lexical + vector) ranking behind the existing `Retriever` interface.
 - Populated `embeddings.json` and ranking improvements.
 - Richer review UI for the pending-memory inbox.
+- Honest note summarization (deferred `summarize_note` tool), backed by the embedding/LLM providers.
 
 ## Deferred / future
 

@@ -17,7 +17,8 @@ export interface ControlPanelActions {
   showProjectContext(): void;
   getStats(): { noteCount: number; chunkCount: number; builtAt: number | null };
   getMemoryRoot(): string;
-  isServerEnabled(): boolean;
+  getServerStatus(): { enabled: boolean; running: boolean; address: string | null };
+  restartServer(): Promise<void>;
 }
 
 export class ControlPanelView extends ItemView {
@@ -60,7 +61,8 @@ export class ControlPanelView extends ItemView {
       "Last indexed",
       stats.builtAt ? new Date(stats.builtAt).toLocaleString() : "never",
     );
-    this.stat(root, "Local server", this.actions.isServerEnabled() ? "enabled" : "disabled");
+    const server = this.actions.getServerStatus();
+    this.stat(root, "Local server", this.describeServer(server));
 
     const row = root.createDiv({ cls: "engram-button-row" });
     this.button(row, "Reindex", async () => {
@@ -74,6 +76,20 @@ export class ControlPanelView extends ItemView {
     this.button(row2, "Review inbox", () => this.actions.openPendingReview());
     this.button(row2, "New project", () => this.actions.createProject());
     this.button(row2, "Project context", () => this.actions.showProjectContext());
+
+    if (server.enabled) {
+      const row3 = root.createDiv({ cls: "engram-button-row" });
+      this.button(row3, "Restart server", async () => {
+        await this.actions.restartServer();
+        this.render();
+      });
+    }
+  }
+
+  private describeServer(s: { enabled: boolean; running: boolean; address: string | null }): string {
+    if (!s.enabled) return "disabled";
+    if (s.running && s.address) return `running · ${s.address}`;
+    return "enabled (stopped)";
   }
 
   private stat(parent: HTMLElement, label: string, value: string): void {

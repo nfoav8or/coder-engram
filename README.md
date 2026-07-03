@@ -4,7 +4,7 @@ An Obsidian-powered memory and RAG layer for Claude Code.
 
 Claude Code Engram turns your active Obsidian vault into a local-first memory, project-context, and retrieval backend. It indexes your Markdown notes, retrieves relevant chunks for a query, and lets you capture reviewable memory entries — all stored as plain Markdown inside a `Claude Code/` folder in your vault. Nothing is written outside the vault, and no cloud API key is required.
 
-> **Status:** Milestone 1. Local memory + lexical (BM25) retrieval work today. The local MCP/HTTP server (Milestone 2) and embedding-based vector search (Milestone 3) are **not yet implemented**. See [docs/ROADMAP.md](docs/ROADMAP.md).
+> **Status:** Milestone 2. Local memory + lexical (BM25) retrieval (M1) and a local MCP/HTTP server that Claude Code can query and propose memory to (M2) both work today. The server is **disabled by default** and binds to `127.0.0.1`. Embedding-based vector search (Milestone 3) is **not yet implemented**. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What Claude Code Engram does
 
@@ -13,6 +13,7 @@ Claude Code Engram turns your active Obsidian vault into a local-first memory, p
 - Retrieves the most relevant chunks for a query using local BM25 lexical search — no API keys, fully offline.
 - Stores structured memory (global, project, and session notes) as Markdown under `Claude Code/`.
 - Captures proposed memory into a reviewable inbox (`pending-memory.md`) by default, so nothing overwrites your notes without review.
+- Exposes an optional, off-by-default local MCP/HTTP server (M2) so Claude Code can search memory, propose entries (inbox-first), and read project/global context — all over localhost with constant-time token auth.
 
 ## Features (Milestone 1)
 
@@ -26,6 +27,27 @@ Claude Code Engram turns your active Obsidian vault into a local-first memory, p
 - Project and session memory scaffolding.
 - Deterministic mock embedding provider and an `EmbeddingProvider` interface (vector retrieval deferred to M3).
 - Vitest test suite covering chunking, metadata, index build/refresh, lexical retrieval, path safety, settings defaults, and memory writes.
+
+## Features (Milestone 2)
+
+- **Local MCP/HTTP server** (`src/server/`) that speaks JSON-RPC 2.0 MCP (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`). Disabled by default; binds to `127.0.0.1`.
+- **Constant-time token auth**: bearer tokens compared via a SHA-256 digest and `timingSafeEqual`. Tokens are never logged.
+- **DNS-rebinding protection**: validates the `Host` header against the bound address and rejects any non-loopback `Origin`.
+- **Request hardening**: POST-only, `Content-Type: application/json` required, and a 1 MB request-body cap.
+- **Network safety**: refuses to bind a non-localhost host unless you both enable "Allow non-localhost binding" **and** set a token.
+- **Curated tools** (no generic file access, no full-vault dump): `search_vault_memory`, `add_memory` (always inbox-first over the network), `get_project_context`, `get_global_context`, `list_projects`, `get_recent_sessions`, and `reindex_vault` (rate-limited, 15s cooldown).
+- New **Restart Local Server** command; the control panel shows live server status (`running · host:port`).
+- 67 additional Vitest tests for auth, host/origin guards, the tool registry and rate limiter, JSON-RPC dispatch, batch limits, and lifecycle serialization (172 total).
+
+## Local server (M2)
+
+The server is a thin `node:http` shell (`src/server/local-server.ts`) around pure, unit-tested MCP layers. It is **off by default**. To use it:
+
+1. Set a strong **Server token** in settings.
+2. Enable **Enable local server**.
+3. Point Claude Code at `http://127.0.0.1:3999` (default port) with the token as a bearer credential.
+
+Writes proposed over the network **always** go to the review inbox — the server never performs direct writes, even if **Allow direct memory writes** is enabled in the desktop settings. See [docs/MCP_SERVER.md](docs/MCP_SERVER.md) and [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md).
 
 ## Installation (from a release)
 
@@ -89,10 +111,11 @@ Settings live under **Settings → Claude Code Engram**. Key settings and their 
 | Default project | *(empty)* | Used by project-context and add-to-project commands. |
 | Embedding provider | `none` | Lexical BM25 always works with `none`. Vector providers arrive in M3. |
 | Embedding model | *(empty)* | Model name for the selected provider (M3). |
-| Enable local server | `false` | Disabled by default. Localhost bridge arrives in M2. |
-| Server host | `127.0.0.1` | Localhost only. |
+| Enable local server | `false` | Disabled by default. Localhost MCP/HTTP bridge for Claude Code. |
+| Server host | `127.0.0.1` | Localhost only unless "Allow non-localhost binding" is on. |
 | Server port | `3999` | |
-| Server token | *(empty)* | Auth token for server requests (M2). |
+| Server token | *(empty)* | Bearer token for server requests; compared in constant time. Required to bind a non-localhost host. |
+| Allow non-localhost binding | `false` | Off by default. Binding a non-localhost host also requires a token. Exposes memory to your network — not recommended. |
 | Allow direct memory writes | `false` | When off, all writes go to the review inbox. |
 | Append-only writes | `true` | Writes only append, never overwrite. |
 | Debug logging | `false` | Logs to the developer console; secrets are always redacted. |
@@ -101,7 +124,7 @@ The memory root is validated on entry: a value that would escape the vault is re
 
 ## Obsidian usage
 
-The plugin registers ten commands (command-palette names shown):
+The plugin registers eleven commands (command-palette names shown):
 
 1. **Claude Code Engram: Open Control Panel**
 2. **Claude Code Engram: Reindex Vault**
@@ -113,14 +136,15 @@ The plugin registers ten commands (command-palette names shown):
 8. **Claude Code Engram: Review Pending Memory**
 9. **Claude Code Engram: Start Session Note**
 10. **Claude Code Engram: End Session Note**
+11. **Claude Code Engram: Restart Local Server**
 
 The **Control Panel** (right sidebar, also on the ribbon "brain-circuit" icon) shows the memory root, indexed-note and chunk counts, last-indexed time, and server status, plus quick buttons: Reindex, Search, Add memory, Review inbox, New project, Project context.
 
 ## Claude Code usage
 
-Programmatic access from Claude Code depends on the local MCP/HTTP server, which is **planned for Milestone 2 and not yet implemented**. Today you use the plugin through Obsidian commands and read/write the Markdown memory folder yourself.
+Programmatic access from Claude Code runs over the local MCP/HTTP server (M2), which is **disabled by default**. Once you set a token and enable it, Claude Code can search memory, propose entries (inbox-first), and read project/global context. You can still use the plugin entirely through Obsidian commands and by reading/writing the Markdown memory folder yourself.
 
-See [docs/MCP_SERVER.md](docs/MCP_SERVER.md) for the planned server design and [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md) for the current workflow and a forward-looking MCP config example.
+See [docs/MCP_SERVER.md](docs/MCP_SERVER.md) for the server design and [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md) for the workflow and an MCP config example.
 
 ## Memory folder structure
 
@@ -158,23 +182,23 @@ Markdown files are the durable source of truth; the JSON files under `Index/` ar
 
 - Everything the plugin reads or writes stays inside the vault. `resolveInVault` is the single path choke-point and rejects absolute paths and `..` traversal.
 - Proposed memory goes to the append-only review inbox by default. Direct writes to memory files are double-gated (require an explicit setting and stay inside the memory root).
-- The local server is disabled by default, binds to `127.0.0.1`, and will use token auth (M2).
+- The local server is disabled by default, binds to `127.0.0.1`, uses constant-time bearer-token auth, and applies DNS-rebinding (Host/Origin) guards. It refuses to bind a non-localhost host unless you both allow it and set a token. Server writes are always inbox-first, and no generic file access or full-vault dump is exposed.
 - Debug logging is off by default and redacts secrets when on.
 
 Full details: [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Limitations
 
-- **Lexical-only retrieval in M1.** Retrieval is BM25 keyword search. Embedding/vector and hybrid retrieval are not implemented yet (M3). The `mock`, `ollama`, and `openai-compatible` provider options appear in settings but do not yet affect retrieval.
-- **No server yet.** There is no MCP/HTTP endpoint; Claude Code cannot connect programmatically until M2.
+- **Lexical-only retrieval.** Retrieval is BM25 keyword search. Embedding/vector and hybrid retrieval are not implemented yet (M3). The `mock`, `ollama`, and `openai-compatible` provider options appear in settings but do not yet affect retrieval.
+- **No `summarize_note` tool.** Honest note summarization needs an LLM/embedding backend, so it is deferred to M3+ rather than shipped as a stub.
 - **Desktop only.** `isDesktopOnly: true`.
 - Binary attachments are not indexed.
 
 ## Roadmap
 
 - **M1 (done):** local memory + lexical RAG.
-- **M2:** control-panel polish, project creation, local MCP/HTTP server with token auth, Claude Code integration docs.
-- **M3:** embedding providers (Ollama, OpenAI-compatible), vector + hybrid retrieval, richer review UI.
+- **M2 (done):** control-panel polish, project creation, local MCP/HTTP server with constant-time token auth and DNS-rebinding guards, curated inbox-first tools, Claude Code integration docs.
+- **M3:** embedding providers (Ollama, OpenAI-compatible), vector + hybrid retrieval, richer review UI, and honest note summarization.
 
 Details: [docs/ROADMAP.md](docs/ROADMAP.md).
 

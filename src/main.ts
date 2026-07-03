@@ -24,6 +24,7 @@ import { SearchModal } from "./ui/search-modal";
 import { AddMemoryModal } from "./ui/add-memory-modal";
 import { PendingMemoryModal } from "./ui/pending-memory-modal";
 import { PromptModal, TextDisplayModal } from "./ui/simple-modals";
+import { LocalServer } from "./server/local-server";
 import { createLogger, Logger } from "./utils/logger";
 import { debounce, Debounced } from "./utils/debounce";
 import { toMessage } from "./utils/errors";
@@ -37,6 +38,7 @@ export default class EngramPlugin
   settings: EngramSettings = { ...DEFAULT_SETTINGS };
   private logger!: Logger;
   private engine!: EngramEngine;
+  private server!: LocalServer;
   private debouncedRefresh!: Debounced<[]>;
 
   async onload(): Promise<void> {
@@ -44,6 +46,11 @@ export default class EngramPlugin
     this.logger = createLogger(() => this.settings.debugLogging, "engram");
     const adapter = new ObsidianVaultAdapter(this.app);
     this.engine = new EngramEngine(adapter, this.settings, this.logger);
+    this.server = new LocalServer({
+      engine: this.engine,
+      logger: this.logger.child("server"),
+      serverInfo: { name: this.manifest.id, version: this.manifest.version },
+    });
 
     this.debouncedRefresh = debounce(() => {
       void this.autoRefresh();
@@ -67,6 +74,8 @@ export default class EngramPlugin
       void this.engine.loadIndex().then((loaded) => {
         if (loaded) this.refreshControlPanel();
       });
+      // Start the local server only if the user has explicitly enabled it.
+      void this.syncServer();
     });
 
     this.logger.info("Plugin loaded", { memoryRoot: this.settings.memoryRoot });
@@ -74,6 +83,7 @@ export default class EngramPlugin
 
   onunload(): void {
     this.debouncedRefresh?.cancel();
+    void this.server?.stop();
   }
 
   // --- SettingsHost ---
@@ -93,8 +103,32 @@ export default class EngramPlugin
     } catch (err) {
       this.logger.warn("Settings backup failed", { error: toMessage(err) });
     }
+    // Apply server enable/disable/config changes (start, stop, or restart).
+    await this.syncServer();
     this.refreshControlPanel();
-    // NOTE: the local server (start/stop on settings change) arrives in M2.
+  }
+
+  /**
+   * Reconcile the running server with the current settings: start it when
+   * enabled, stop it when disabled, and restart it to pick up host/port/token
+   * changes. Failures surface as a Notice and never throw into a settings save.
+   */
+  private async syncServer(): Promise<void> {
+    try {
+      if (this.settings.server.enabled) {
+        const addr = await this.server.start(this.settings);
+        new Notice(`Claude Code Engram server listening on ${addr.host}:${addr.port}.`);
+      } else if (this.server.isRunning()) {
+        await this.server.stop();
+        new Notice("Claude Code Engram server stopped.");
+      }
+    } catch (err) {
+      // A bad config (e.g. non-localhost without opt-in, port in use) must not
+      // leave a half-open listener; ensure it is stopped and tell the user.
+      await this.server.stop().catch(() => {});
+      new Notice(`Server not started: ${toMessage(err)}`);
+      this.logger.error("Server sync failed", { error: toMessage(err) });
+    }
   }
 
   async rebuildIndex(): Promise<void> {
@@ -164,8 +198,17 @@ export default class EngramPlugin
     return this.settings.memoryRoot;
   }
 
-  isServerEnabled(): boolean {
-    return this.settings.server.enabled;
+  getServerStatus(): { enabled: boolean; running: boolean; address: string | null } {
+    const addr = this.server?.getAddress() ?? null;
+    return {
+      enabled: this.settings.server.enabled,
+      running: this.server?.isRunning() ?? false,
+      address: addr ? `${addr.host}:${addr.port}` : null,
+    };
+  }
+
+  async restartServer(): Promise<void> {
+    await this.syncServer();
   }
 
   // --- internals ---
@@ -240,6 +283,11 @@ export default class EngramPlugin
       id: "end-session-note",
       name: "End Session Note",
       callback: () => this.endSessionNote(),
+    });
+    this.addCommand({
+      id: "restart-server",
+      name: "Restart Local Server",
+      callback: () => void this.restartServer(),
     });
   }
 

@@ -1,6 +1,6 @@
 # Architecture
 
-Claude Code Engram is a layered TypeScript Obsidian plugin. The guiding rule is that only the UI layer knows about Obsidian; everything below it talks to the vault through a single `VaultAdapter` interface. That keeps the indexing, retrieval, and memory logic Obsidian-agnostic and unit-testable, and it lets the future local server (M2) reuse the same engine verbatim.
+Claude Code Engram is a layered TypeScript Obsidian plugin. The guiding rule is that only the UI layer knows about Obsidian; everything below it talks to the vault through a single `VaultAdapter` interface. That keeps the indexing, retrieval, and memory logic Obsidian-agnostic and unit-testable, and it lets the local server (M2) reuse the same `EngramEngine` verbatim.
 
 ## Layers
 
@@ -32,11 +32,23 @@ Claude Code Engram is a layered TypeScript Obsidian plugin. The guiding rule is 
 └─────────────────────────────────────────────────────────────┘
 ```
 
-The **server layer** (`server/`) from the spec is deferred to Milestone 2. When it lands, it sits beside the UI layer and drives the same `EngramEngine`.
+The **server layer** (`server/`, added in Milestone 2) sits beside the UI layer: it drives the same `EngramEngine` through a local, token-authenticated MCP/HTTP endpoint. Like the UI layer, only its thin socket shell (`local-server.ts`) imports a host API — in its case `node:http`, not `obsidian`.
+
+## Server layer (M2)
+
+An optional, off-by-default local server that exposes a curated MCP tool set to Claude Code. It mirrors the "thin shell + pure core" discipline of the `VaultAdapter` boundary — everything security-relevant is testable without a socket:
+
+- `server/local-server.ts` — the only file importing `node:http`. Owns binding (localhost by default; non-loopback refused without an explicit opt-in **and** a token), request hardening (POST-only, JSON content-type, 1 MB body cap), DNS-rebinding guards, auth, and the start/stop lifecycle.
+- `server/mcp-protocol.ts` — pure JSON-RPC 2.0 dispatch for the MCP methods (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`).
+- `server/mcp-tools.ts` — the tool registry and handlers over `EngramEngine`, argument validation, and a `RateLimiter`. Network writes are inbox-only.
+- `server/auth.ts` — bearer-token extraction and constant-time comparison.
+- `server/net.ts` — loopback detection and Host/Origin validation.
+
+The plugin (`main.ts`) reconciles the server with settings on load, on settings change, and on unload. See [MCP_SERVER.md](MCP_SERVER.md) and [SECURITY.md](SECURITY.md).
 
 ## UI layer
 
-- `main.ts` (`EngramPlugin`) — the Obsidian `Plugin` subclass. It loads/migrates settings, constructs an `ObsidianVaultAdapter` and an `EngramEngine`, registers the ten commands, the control-panel view, the ribbon icon, the settings tab, and debounced file-change watchers. It implements the `SettingsHost` and `ControlPanelActions` interfaces so the settings tab and control panel stay decoupled (no import cycles).
+- `main.ts` (`EngramPlugin`) — the Obsidian `Plugin` subclass. It loads/migrates settings, constructs an `ObsidianVaultAdapter` and an `EngramEngine`, registers the commands, the control-panel view, the ribbon icon, the settings tab, debounced file-change watchers, and (in M2) reconciles the local server on load/settings-change/unload. It implements the `SettingsHost` and `ControlPanelActions` interfaces so the settings tab and control panel stay decoupled (no import cycles).
 - `settings/settings-tab.ts` — renders the settings UI, validates the memory root on entry, and carries the server security warning.
 - `ui/control-panel-view.ts` — a right-sidebar `ItemView` showing index stats and quick-action buttons. It talks to `main.ts` only through the `ControlPanelActions` interface.
 - `ui/*-modal.ts` — `SearchModal`, `AddMemoryModal`, `PendingMemoryModal`, and the small `PromptModal` / `TextDisplayModal` helpers.

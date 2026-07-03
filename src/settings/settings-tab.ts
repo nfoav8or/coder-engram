@@ -231,6 +231,20 @@ export class EngramSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Allow non-localhost binding")
+      .setDesc(
+        "Off by default. Required (together with a token) before the server will bind to any " +
+          "address other than localhost. Leave OFF unless you fully understand the risk.",
+      )
+      .addToggle((t) =>
+        t.setValue(this.s.server.allowNonLocalhost).onChange(async (v) => {
+          if (v) new Notice("Non-localhost binding allowed. The server can now expose memory to your network.");
+          this.s.server.allowNonLocalhost = v;
+          await this.commit();
+        }),
+      );
+
+    new Setting(containerEl)
       .setName("Port")
       .addText((t) =>
         t.setValue(String(this.s.server.port)).onChange(async (v) => {
@@ -244,14 +258,22 @@ export class EngramSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Token")
-      .setDesc("Required auth token for server requests. Strongly recommended.")
+      .setDesc("Required auth token for server requests. Strongly recommended; mandatory for non-localhost.")
       .addText((t) => {
         t.setPlaceholder("(set a strong token)").setValue(this.s.server.token).onChange(async (v) => {
           this.s.server.token = v.trim();
           await this.commit();
         });
         t.inputEl.type = "password";
-      });
+      })
+      .addButton((b) =>
+        b.setButtonText("Generate").onClick(async () => {
+          this.s.server.token = generateToken();
+          await this.commit();
+          this.display(); // re-render to show the new token value
+          new Notice("Generated a new server token.");
+        }),
+      );
   }
 
   private renderWriteSafetySection(): void {
@@ -283,4 +305,11 @@ export class EngramSettingTab extends PluginSettingTab {
   private section(title: string): void {
     this.containerEl.createEl("h3", { text: title, cls: "engram-setting-section-header" });
   }
+}
+
+/** Generate a 256-bit random token as hex, using the platform CSPRNG. */
+function generateToken(): string {
+  const bytes = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }

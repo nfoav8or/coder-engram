@@ -28,7 +28,11 @@ const context = await esbuild.context({
     "@lezer/common",
     "@lezer/highlight",
     "@lezer/lr",
+    // Node builtins are provided by the Electron host. `builtin-modules` lists
+    // bare names ("http"); we also externalize the "node:"-prefixed forms the
+    // server layer imports (e.g. "node:http", "node:crypto").
     ...builtins,
+    ...builtins.map((m) => `node:${m}`),
   ],
   format: "cjs",
   target: "es2020",

@@ -14,7 +14,7 @@ import { ScanConfig } from "../indexing/vault-scanner";
 import { clamp } from "../utils/validation";
 import { normalizeVaultRelativePath } from "../utils/paths";
 
-export const SETTINGS_SCHEMA_VERSION = 1;
+export const SETTINGS_SCHEMA_VERSION = 2;
 
 export type EmbeddingProviderId = "none" | "mock" | "ollama" | "openai-compatible";
 
@@ -23,6 +23,12 @@ export interface ServerSettings {
   host: string;
   port: number;
   token: string;
+  /**
+   * Explicit opt-in to bind a non-loopback host. Off by default: the server
+   * REFUSES to start on a non-localhost address unless this is true AND a token
+   * is set, so memory is never exposed to the network by accident.
+   */
+  allowNonLocalhost: boolean;
 }
 
 export interface EngramSettings {
@@ -60,6 +66,7 @@ export const DEFAULT_SETTINGS: EngramSettings = {
     host: "127.0.0.1",
     port: 3999,
     token: "",
+    allowNonLocalhost: false,
   },
   allowDirectWrites: false,
   appendOnly: true,
@@ -100,7 +107,16 @@ export function migrateSettings(raw: unknown): EngramSettings {
   if (!["none", "mock", "ollama", "openai-compatible"].includes(merged.embeddingProvider)) {
     merged.embeddingProvider = "none";
   }
-  merged.server.port = clamp(Math.trunc(Number(merged.server.port) || DEFAULT_SETTINGS.server.port), 1, 65535);
+  // Repair the persisted port by clamping into the valid range; a non-numeric
+  // value falls back to the default. Note the finite check is separate from the
+  // clamp so a legitimate 0 is clamped to 1 rather than being treated as absent
+  // (the old `Number(port) || DEFAULT` idiom mishandled 0). Port 0 as
+  // "OS-assigned" is a runtime/test affordance passed straight to the server,
+  // not a persistable setting.
+  const parsedPort = Math.trunc(Number(merged.server.port));
+  merged.server.port = Number.isFinite(parsedPort)
+    ? clamp(parsedPort, 1, 65535)
+    : DEFAULT_SETTINGS.server.port;
   if (typeof merged.server.host !== "string" || merged.server.host.trim() === "") {
     merged.server.host = DEFAULT_SETTINGS.server.host;
   }
@@ -115,9 +131,15 @@ export function migrateSettings(raw: unknown): EngramSettings {
   merged.appendOnly = coerceBool(data.appendOnly, DEFAULT_SETTINGS.appendOnly);
   merged.debugLogging = coerceBool(data.debugLogging, DEFAULT_SETTINGS.debugLogging);
   merged.server.enabled = coerceBool(data.server?.enabled, DEFAULT_SETTINGS.server.enabled);
+  merged.server.allowNonLocalhost = coerceBool(
+    data.server?.allowNonLocalhost,
+    DEFAULT_SETTINGS.server.allowNonLocalhost,
+  );
 
   // --- migration ladder (future versions add cases here) ---
-  // v(unknown) -> v1: nothing structural to change; just stamp the version.
+  // v(unknown) -> v1: initial schema; nothing structural to change.
+  // v1 -> v2: added server.allowNonLocalhost (defaulted safely above). No data
+  //   transform needed — the safe default is applied when the field is absent.
   merged.schemaVersion = SETTINGS_SCHEMA_VERSION;
   return merged;
 }
