@@ -65,4 +65,23 @@ describe("LexicalRetriever", () => {
     const results = lexicalSearch("indexing", corpus, { limit: 1 });
     expect(results.length).toBe(1);
   });
+
+  it("does not let one long note flood the page and bury another relevant note", () => {
+    const flooded: IndexedChunk[] = [
+      chunk({ id: "a1", notePath: "Notes/long.md", text: "indexing pipeline detail one" }),
+      chunk({ id: "a2", notePath: "Notes/long.md", text: "indexing pipeline detail two" }),
+      chunk({ id: "a3", notePath: "Notes/long.md", text: "indexing pipeline detail three" }),
+      chunk({ id: "a4", notePath: "Notes/long.md", text: "indexing pipeline detail four" }),
+      chunk({ id: "a5", notePath: "Notes/long.md", text: "indexing pipeline detail five" }),
+      chunk({ id: "b1", notePath: "Notes/other.md", text: "indexing is also discussed here" }),
+    ];
+    const results = lexicalSearch("indexing", flooded, { limit: 4 });
+    const notes = results.map((r) => r.chunk.notePath);
+    // The other note must surface rather than being buried under long.md's chunks,
+    // and long.md must not occupy every slot.
+    expect(notes).toContain("Notes/other.md");
+    expect(notes.filter((n) => n === "Notes/long.md").length).toBeLessThan(4);
+    // The page is still filled to the requested limit (backfill from the surplus).
+    expect(results.length).toBe(4);
+  });
 });

@@ -132,3 +132,43 @@ export function buildSnippet(text: string, queryTerms: string[], window = 220): 
   const suffix = end < flat.length ? "…" : "";
   return prefix + flat.slice(bestStart, end).trim() + suffix;
 }
+
+/** Per-note cap for a result page of `limit` (default `ceil(limit/3)`, floor 2). */
+export function maxPerNoteFor(limit: number): number {
+  return Math.max(2, Math.ceil(limit / 3));
+}
+
+/**
+ * Limit how many chunks any single note contributes to a result page, so one
+ * long note can't flood the top results and bury other relevant notes. Walks the
+ * already-ranked list in order, admitting a chunk only while its note is under
+ * `maxPerNote`; over-cap chunks are deferred and backfill the page (still in rank
+ * order) if the cap would otherwise leave it short of `limit`. The page is never
+ * smaller than a plain `slice(0, limit)` would produce — a query matching only
+ * one note still fills up from that note.
+ */
+export function diversifyByNote<T extends { chunk: IndexedChunk }>(
+  ranked: T[],
+  limit: number,
+  maxPerNote: number = maxPerNoteFor(limit),
+): T[] {
+  if (limit <= 0) return [];
+  const perNote = new Map<string, number>();
+  const selected: T[] = [];
+  const deferred: T[] = [];
+  for (const item of ranked) {
+    if (selected.length >= limit) break;
+    const count = perNote.get(item.chunk.notePath) ?? 0;
+    if (count < maxPerNote) {
+      perNote.set(item.chunk.notePath, count + 1);
+      selected.push(item);
+    } else {
+      deferred.push(item);
+    }
+  }
+  for (const item of deferred) {
+    if (selected.length >= limit) break;
+    selected.push(item);
+  }
+  return selected;
+}

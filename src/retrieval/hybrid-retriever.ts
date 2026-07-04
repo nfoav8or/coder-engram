@@ -21,6 +21,7 @@ import {
 } from "./retriever";
 import { LexicalRetriever } from "./lexical-retriever";
 import { VectorRetriever } from "./vector-retriever";
+import { diversifyByNote } from "./ranking";
 
 /** RRF dampening constant; 60 is the value from the original RRF paper. */
 const RRF_K = 60;
@@ -76,9 +77,13 @@ export class HybridRetriever implements Retriever {
     fold(vecResults, false);
     fold(lexResults, true);
 
-    return Array.from(fused.values())
+    // Diversify the fused ranking so one long note can't flood the page. This is
+    // the binding pass for hybrid mode: the sub-retrievers diversify their deep
+    // candidate lists too, but at a loose cap (scaled to `candidates`), so this
+    // final cap on the fused order is what the user sees.
+    const ranked = Array.from(fused.values())
       .sort((a, b) => b.score - a.score)
-      .slice(0, limit)
       .map((entry) => ({ ...entry.result, score: entry.score }));
+    return diversifyByNote(ranked, limit);
   }
 }

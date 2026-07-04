@@ -17,7 +17,7 @@ import {
   RetrievalResult,
   DEFAULT_LIMIT,
 } from "./retriever";
-import { tokenize, tokenizeChunk, applyFilters, buildSnippet } from "./ranking";
+import { tokenize, tokenizeChunk, applyFilters, buildSnippet, diversifyByNote } from "./ranking";
 
 export interface VectorRetrieverOptions {
   vectors: Map<string, number[]>;
@@ -47,11 +47,12 @@ export class VectorRetriever implements Retriever {
       scored.push({ chunk, score });
     }
 
-    // Snippet and matched-term work is deferred to the survivors: tokenizing
-    // every scored chunk's text just to compute highlighting for results that
-    // get sliced away is wasted (cosine scores nearly every chunk > 0).
+    // Rank, then diversify so a single long note can't flood the page. Snippet
+    // and matched-term work is deferred to the survivors: tokenizing every scored
+    // chunk's text just to compute highlighting for results that get dropped is
+    // wasted (cosine scores nearly every chunk > 0).
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit).map((s) => {
+    return diversifyByNote(scored, limit).map((s) => {
       const chunkTerms = new Set(tokenizeChunk(s.chunk));
       return {
         chunk: s.chunk,

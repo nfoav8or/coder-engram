@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { findTermMatches, buildSnippet, tokenize, tokenizeChunk } from "../src/retrieval/ranking";
+import {
+  findTermMatches,
+  buildSnippet,
+  tokenize,
+  tokenizeChunk,
+  diversifyByNote,
+  maxPerNoteFor,
+} from "../src/retrieval/ranking";
 import { IndexedChunk } from "../src/indexing/index-manager";
 
 describe("findTermMatches", () => {
@@ -57,6 +64,81 @@ describe("tokenizeChunk", () => {
     const c = chunk("hybrid retrieval fuses lexical and vector scores");
     const first = tokenizeChunk(c);
     expect(tokenizeChunk(c)).toBe(first);
+  });
+});
+
+describe("diversifyByNote", () => {
+  // Minimal ranked item: only notePath is read by the diversifier.
+  function item(id: string, notePath: string): { chunk: IndexedChunk } {
+    return {
+      chunk: {
+        id,
+        notePath,
+        heading: "",
+        headingPath: [],
+        startLine: 0,
+        endLine: 0,
+        tags: [],
+        aliases: [],
+        links: [],
+        mtime: 1000,
+        text: "",
+      },
+    };
+  }
+
+  it("caps how many chunks a single note contributes, promoting other notes", () => {
+    const ranked = [
+      item("a1", "A.md"),
+      item("a2", "A.md"),
+      item("a3", "A.md"),
+      item("a4", "A.md"),
+      item("b1", "B.md"),
+    ];
+    // maxPerNote 2, limit 3: A fills 2 slots, B is promoted above A's surplus.
+    const out = diversifyByNote(ranked, 3, 2);
+    expect(out.map((r) => r.chunk.id)).toEqual(["a1", "a2", "b1"]);
+  });
+
+  it("backfills from deferred chunks so the page is never short of the limit", () => {
+    const ranked = [
+      item("a1", "A.md"),
+      item("a2", "A.md"),
+      item("a3", "A.md"),
+      item("a4", "A.md"),
+    ];
+    // Only one note exists; the cap must not shrink the page below the limit.
+    const out = diversifyByNote(ranked, 3, 2);
+    expect(out.map((r) => r.chunk.id)).toEqual(["a1", "a2", "a3"]);
+  });
+
+  it("backfills in rank order, keeping the promoted note ahead of the surplus", () => {
+    const ranked = [
+      item("a1", "A.md"),
+      item("a2", "A.md"),
+      item("a3", "A.md"),
+      item("b1", "B.md"),
+    ];
+    const out = diversifyByNote(ranked, 4, 2);
+    // A: a1,a2 admitted; b1 promoted; a3 backfills last.
+    expect(out.map((r) => r.chunk.id)).toEqual(["a1", "a2", "b1", "a3"]);
+  });
+
+  it("is a no-op when the ranking is already diverse", () => {
+    const ranked = [item("a", "A.md"), item("b", "B.md"), item("c", "C.md")];
+    const out = diversifyByNote(ranked, 8, 2);
+    expect(out.map((r) => r.chunk.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("returns an empty page for a non-positive limit", () => {
+    expect(diversifyByNote([item("a", "A.md")], 0)).toEqual([]);
+  });
+
+  it("derives a per-note cap that scales with the limit (floor 2)", () => {
+    expect(maxPerNoteFor(1)).toBe(2);
+    expect(maxPerNoteFor(3)).toBe(2);
+    expect(maxPerNoteFor(8)).toBe(3);
+    expect(maxPerNoteFor(30)).toBe(10);
   });
 });
 

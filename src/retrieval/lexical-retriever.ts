@@ -15,7 +15,7 @@ import {
   RetrievalFilters,
   DEFAULT_LIMIT,
 } from "./retriever";
-import { tokenize, tokenizeChunk, applyFilters, buildSnippet } from "./ranking";
+import { tokenize, tokenizeChunk, applyFilters, buildSnippet, diversifyByNote } from "./ranking";
 
 const K1 = 1.5;
 const B = 0.75;
@@ -78,11 +78,12 @@ export class LexicalRetriever implements Retriever {
       if (score > 0) scored.push({ chunk: filtered[i], score, matched });
     }
 
-    // Build snippets only for the results that survive the limit — snippet text
-    // has no effect on score or ordering, so building it for every scoring chunk
-    // (broad queries can match thousands) is wasted work.
+    // Rank, then diversify so a single long note can't flood the page, then
+    // build snippets only for the survivors — snippet text has no effect on score
+    // or ordering, so building it for every scoring chunk (broad queries can match
+    // thousands) is wasted work.
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit).map((s) => ({
+    return diversifyByNote(scored, limit).map((s) => ({
       chunk: s.chunk,
       score: s.score,
       snippet: buildSnippet(s.chunk.text, uniqueQueryTerms),
