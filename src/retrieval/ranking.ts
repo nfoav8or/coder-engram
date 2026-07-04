@@ -55,25 +55,63 @@ export function applyFilters(
   });
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** A [start, end) span of a term match within a text. */
+export interface TermMatch {
+  start: number;
+  end: number;
+}
+
 /**
- * Build a plain-text snippet centered on the first query-term match.
- * Returns up to `window` characters. Falls back to the head of the text.
+ * Find case-insensitive, whole-token matches of any `terms` in `text`, in order
+ * and non-overlapping. "Whole token" uses the same alphanumeric boundaries as
+ * {@link tokenize} (via lookarounds), so a query term `art` matches the word
+ * "art" but not the "art" inside "start" — keeping snippet selection and UI
+ * highlighting consistent with what BM25 actually scored.
+ */
+export function findTermMatches(text: string, terms: string[]): TermMatch[] {
+  const clean = [...new Set(terms.map((t) => t.toLowerCase()).filter((t) => t.length > 0))];
+  if (clean.length === 0) return [];
+  const pattern = new RegExp(`(?<![a-z0-9])(?:${clean.map(escapeRegExp).join("|")})(?![a-z0-9])`, "gi");
+  const matches: TermMatch[] = [];
+  for (const m of text.matchAll(pattern)) {
+    const start = m.index ?? 0;
+    matches.push({ start, end: start + m[0].length });
+  }
+  return matches;
+}
+
+/**
+ * Build a plain-text snippet. Rather than centering on the first match, it picks
+ * the `window`-sized slice that covers the MOST query-term matches (densest
+ * context), anchoring so a match sits ~1/3 in; ties go to the earliest window.
+ * Falls back to the head of the text when nothing matches.
  */
 export function buildSnippet(text: string, queryTerms: string[], window = 220): string {
   const flat = text.replace(/\s+/g, " ").trim();
   if (flat.length <= window) return flat;
 
-  const lower = flat.toLowerCase();
-  let matchIdx = -1;
-  for (const term of queryTerms) {
-    const idx = lower.indexOf(term);
-    if (idx !== -1 && (matchIdx === -1 || idx < matchIdx)) matchIdx = idx;
-  }
-  if (matchIdx === -1) return flat.slice(0, window).trimEnd() + "…";
+  const matches = findTermMatches(flat, queryTerms);
+  if (matches.length === 0) return flat.slice(0, window).trimEnd() + "…";
 
-  const start = Math.max(0, matchIdx - Math.floor(window / 3));
-  const end = Math.min(flat.length, start + window);
-  const prefix = start > 0 ? "…" : "";
+  const lead = Math.floor(window / 3);
+  let bestStart = 0;
+  let bestCount = -1;
+  for (const m of matches) {
+    const start = Math.max(0, Math.min(m.start - lead, flat.length - window));
+    const end = start + window;
+    let count = 0;
+    for (const x of matches) if (x.start >= start && x.end <= end) count++;
+    if (count > bestCount) {
+      bestCount = count;
+      bestStart = start;
+    }
+  }
+  const end = Math.min(flat.length, bestStart + window);
+  const prefix = bestStart > 0 ? "…" : "";
   const suffix = end < flat.length ? "…" : "";
-  return prefix + flat.slice(start, end).trim() + suffix;
+  return prefix + flat.slice(bestStart, end).trim() + suffix;
 }

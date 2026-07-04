@@ -6,6 +6,7 @@
 import { App, Modal, Notice, Setting } from "obsidian";
 import { EngramEngine } from "../engine";
 import { RetrievalResult } from "../retrieval/retriever";
+import { findTermMatches } from "../retrieval/ranking";
 
 export class SearchModal extends Modal {
   private query = "";
@@ -93,17 +94,16 @@ export class SearchModal extends Modal {
 
   /** Render a snippet with matched terms wrapped in <mark>, without using innerHTML. */
   private renderHighlighted(container: HTMLElement, snippet: string, terms: string[]): void {
-    if (terms.length === 0) {
+    const matches = findTermMatches(snippet, terms);
+    if (matches.length === 0) {
       container.setText(snippet);
       return;
     }
-    const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "ig");
     let lastIndex = 0;
-    for (const match of snippet.matchAll(pattern)) {
-      const idx = match.index ?? 0;
-      if (idx > lastIndex) container.appendText(snippet.slice(lastIndex, idx));
-      container.createEl("mark", { text: match[0] });
-      lastIndex = idx + match[0].length;
+    for (const { start, end } of matches) {
+      if (start > lastIndex) container.appendText(snippet.slice(lastIndex, start));
+      container.createEl("mark", { text: snippet.slice(start, end) });
+      lastIndex = end;
     }
     if (lastIndex < snippet.length) container.appendText(snippet.slice(lastIndex));
   }
@@ -111,8 +111,4 @@ export class SearchModal extends Modal {
   onClose(): void {
     this.contentEl.empty();
   }
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
