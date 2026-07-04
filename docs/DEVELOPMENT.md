@@ -31,10 +31,37 @@ Copy or symlink `main.js`, `manifest.json`, and `styles.css` there, then enable 
 | `npm run build` | `tsc --noEmit` typecheck, then a production esbuild bundle. |
 | `npm run test` | Run the Vitest suite once. |
 | `npm run test:watch` | Vitest in watch mode. |
+| `npm run test:e2e` | Local-only UI smoke test in real Obsidian (see below). |
 | `npm run lint` | ESLint over `.ts` sources. |
 | `npm run typecheck` | `tsc --noEmit --skipLibCheck`. |
 
 Before committing, run `npm run typecheck`, `npm run test`, and `npm run build`.
+
+## End-to-end UI test (`npm run test:e2e`)
+
+`tests/e2e/run.mjs` drives the **real plugin inside a real Obsidian** with
+Playwright, asserting on rendered DOM (e.g. that search snippets highlight
+whole-word matches). It complements the Vitest suite, which covers the pure core
+but never renders the Obsidian UI.
+
+It is **local-only and deliberately excluded from `npm test` and CI**: it needs
+Obsidian installed and a display, which CI runners don't have. Run it after a
+build:
+
+```bash
+npm run build && npm run test:e2e
+```
+
+- It self-provisions a throwaway vault + isolated `--user-data-dir` in a temp
+  folder (never touching your real Obsidian config), installs the built plugin,
+  enables it past Restricted Mode via the API, and cleans up afterward.
+- Obsidian is located via `$OBSIDIAN_BIN`, then common paths, then `$PATH`. If
+  Obsidian or a display is missing, the script **skips** (exit 0), so it is safe
+  to run anywhere.
+- Mechanism: Obsidian is a packaged Electron app that ignores Playwright's
+  auto-launch attach, so the harness launches it with `--remote-debugging-port`
+  and connects via `chromium.connectOverCDP` (`playwright-core`, no browser
+  download).
 
 ## Project layout
 
