@@ -74,6 +74,12 @@ fs.writeFileSync(
   path.join(vault, "Notes", "embeddings.md"),
   "# Embeddings\n\nHybrid retrieval fuses lexical and vector scores. Ollama provides embeddings.\n",
 );
+// The "Bravo" section's heading is line 4 (0-based), so open-at-line must land
+// the cursor at 4 — proving it uses the chunk's line span, not the file top.
+fs.writeFileSync(
+  path.join(vault, "Notes", "lines.md"),
+  "# Alpha\n\nalpha section body about ranking.\n\n## Bravo\n\nuniqueword marker lives in the bravo section only.\n",
+);
 const vaultId = Math.random().toString(16).slice(2) + Date.now().toString(16);
 fs.writeFileSync(
   path.join(udd, "obsidian.json"),
@@ -161,6 +167,26 @@ try {
     "word-boundary: 'restart' is not split by a mark",
     /restart/i.test(art) && !/rest<mark>/i.test(art),
   );
+
+  // Line-span surfacing + open-at-line.
+  await page.evaluate(() => window.app.commands.executeCommandById("claude-code-engram:search-memory"));
+  const uInput = page.locator(".modal input[type=text]").first();
+  await uInput.waitFor({ timeout: 10000 });
+  await uInput.fill("uniqueword");
+  await uInput.press("Enter");
+  await page.waitForSelector(".engram-search-result", { timeout: 10000 });
+  const lineLabel = await page.locator(".engram-result-lines").first().innerText();
+  check("result shows a line range", /Lines?\s*\d+/.test(lineLabel), lineLabel);
+
+  await page.locator(".engram-search-result").first().click();
+  await page.waitForTimeout(800);
+  const opened = await page.evaluate(() => {
+    const f = window.app.workspace.getActiveFile();
+    const ed = window.app.workspace.activeEditor?.editor;
+    return { path: f?.path ?? null, line: ed ? ed.getCursor().line : null };
+  });
+  check("clicking opens the matched note", !!opened.path && opened.path.endsWith("lines.md"), opened.path);
+  check("cursor lands at the chunk's start line (not the file top)", opened.line === 4, `cursor line ${opened.line}`);
 
   await page.screenshot({ path: path.join(tmp, "search.png") });
 } catch (e) {

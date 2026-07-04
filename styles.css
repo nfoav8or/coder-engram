@@ -50,6 +50,11 @@
   font-size: var(--font-ui-small);
 }
 
+.engram-search-result .engram-result-lines {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
 .engram-search-result .engram-result-snippet {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);

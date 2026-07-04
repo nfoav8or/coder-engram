@@ -3,10 +3,11 @@
  * heading and a highlighted snippet. Clicking a result opens the note.
  */
 
-import { App, Modal, Notice, Setting } from "obsidian";
+import { App, MarkdownView, Modal, Notice, Setting, TFile } from "obsidian";
 import { EngramEngine } from "../engine";
 import { RetrievalResult } from "../retrieval/retriever";
 import { findTermMatches } from "../retrieval/ranking";
+import { formatLineRange } from "./format";
 
 export class SearchModal extends Modal {
   private query = "";
@@ -78,18 +79,39 @@ export class SearchModal extends Modal {
   }
 
   private renderResult(result: RetrievalResult): void {
+    const { chunk } = result;
     const el = this.resultsEl.createDiv({ cls: "engram-search-result" });
-    el.createDiv({ cls: "engram-result-path", text: result.chunk.notePath });
-    if (result.chunk.heading) {
-      el.createDiv({ cls: "engram-result-heading", text: result.chunk.heading });
+    el.createDiv({ cls: "engram-result-path", text: chunk.notePath });
+    if (chunk.heading) {
+      el.createDiv({ cls: "engram-result-heading", text: chunk.heading });
     }
+    el.createDiv({ cls: "engram-result-lines", text: formatLineRange(chunk.startLine, chunk.endLine) });
     const snippetEl = el.createDiv({ cls: "engram-result-snippet" });
     this.renderHighlighted(snippetEl, result.snippet, result.matchedTerms);
 
     el.addEventListener("click", () => {
-      this.app.workspace.openLinkText(result.chunk.notePath, "", false);
+      void this.openAtLine(chunk.notePath, chunk.startLine);
       this.close();
     });
+  }
+
+  /** Open a note and land the cursor at the retrieved chunk's start line. */
+  private async openAtLine(notePath: string, line: number): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(notePath);
+    if (!(file instanceof TFile)) {
+      // Fall back to a plain link open if the path no longer resolves to a file.
+      void this.app.workspace.openLinkText(notePath, "", false);
+      return;
+    }
+    try {
+      const leaf = this.app.workspace.getLeaf(false);
+      await leaf.openFile(file, { eState: { line } });
+      if (leaf.view instanceof MarkdownView) {
+        leaf.view.editor.setCursor({ line, ch: 0 });
+      }
+    } catch (err) {
+      new Notice(`Could not open note: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   /** Render a snippet with matched terms wrapped in <mark>, without using innerHTML. */
