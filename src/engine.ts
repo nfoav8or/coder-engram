@@ -555,5 +555,5 @@ function embeddingKey(s: EngramSettings): string {
     s.embeddingEndpoint,
     s.embeddingApiKey,
     s.retrievalMode,
-  ].join(" ");
+  ].join(" ");
 }

@@ -7,12 +7,7 @@
  */
 
 import { VaultAdapter } from "../core/vault-adapter";
-import {
-  MemoryPaths,
-  ProjectPaths,
-  resolveProjectPaths,
-  sanitizeProjectName,
-} from "./memory-types";
+import { MemoryPaths, ProjectPaths, resolveProjectPaths } from "./memory-types";
 import { joinVaultPath } from "../utils/paths";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 
@@ -48,11 +43,6 @@ export class ProjectMemory {
       }
     }
     return Array.from(names).sort();
-  }
-
-  async projectExists(name: string): Promise<boolean> {
-    const projects = await this.listProjects();
-    return projects.includes(sanitizeProjectName(name));
   }
 
   /** Create a project's folder structure, writing only missing template files. */

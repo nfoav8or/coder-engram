@@ -24,12 +24,6 @@ export class ConfigError extends EngramError {}
 /** A request payload (e.g. server tool call) failed validation. */
 export class ValidationError extends EngramError {}
 
-/** An embedding/index/retrieval operation failed but is recoverable. */
-export class RetrievalError extends EngramError {}
-
-/** Authentication/authorization failure at the local server layer. */
-export class AuthError extends EngramError {}
-
 /** Wrap an unknown thrown value into a readable message without leaking internals. */
 export function toMessage(err: unknown): string {
   if (err instanceof Error) return err.message;

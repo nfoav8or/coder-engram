@@ -122,10 +122,3 @@ export function resolveInVault(root: string, subpath: string): string {
   }
   return combined;
 }
-
-/** Return the parent directory of a vault-relative path, or "" if top-level. */
-export function parentPath(path: string): string {
-  const normalized = normalizeVaultRelativePath(path);
-  const idx = normalized.lastIndexOf("/");
-  return idx === -1 ? "" : normalized.slice(0, idx);
-}

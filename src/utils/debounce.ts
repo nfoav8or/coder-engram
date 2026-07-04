@@ -1,5 +1,5 @@
 /**
- * A minimal trailing-edge debounce with a `flush` and `cancel`.
+ * A minimal trailing-edge debounce with a `cancel`.
  * Used to batch file-change reindex requests so a burst of edits triggers a
  * single index refresh instead of one per keystroke.
  */
@@ -7,7 +7,6 @@
 export interface Debounced<A extends unknown[]> {
   (...args: A): void;
   cancel(): void;
-  flush(): void;
 }
 
 export function debounce<A extends unknown[]>(
@@ -38,12 +37,6 @@ export function debounce<A extends unknown[]>(
     if (timer) clearTimeout(timer);
     timer = null;
     pendingArgs = null;
-  };
-
-  debounced.flush = (): void => {
-    if (timer) clearTimeout(timer);
-    timer = null;
-    invoke();
   };
 
   return debounced;
