@@ -15,7 +15,7 @@ import {
   RetrievalFilters,
   DEFAULT_LIMIT,
 } from "./retriever";
-import { tokenize, applyFilters, buildSnippet } from "./ranking";
+import { tokenize, tokenizeChunk, applyFilters, buildSnippet } from "./ranking";
 
 const K1 = 1.5;
 const B = 0.75;
@@ -36,8 +36,10 @@ export class LexicalRetriever implements Retriever {
     const filtered = applyFilters(chunks, query.filters, this.options.projectRootResolver);
     if (queryTerms.length === 0 || filtered.length === 0) return [];
 
-    // Precompute tokenized docs, lengths, and document frequencies.
-    const docs = filtered.map((chunk) => tokenize(chunk.text));
+    // Precompute tokenized docs, lengths, and document frequencies. Chunk-text
+    // tokenization is memoized by chunk identity, so unchanged chunks are not
+    // re-tokenized on every query.
+    const docs = filtered.map((chunk) => tokenizeChunk(chunk));
     const docLengths = docs.map((d) => d.length);
     const avgdl = docLengths.reduce((a, b) => a + b, 0) / (docs.length || 1);
 
@@ -51,7 +53,7 @@ export class LexicalRetriever implements Retriever {
     const N = docs.length;
     const uniqueQueryTerms = Array.from(new Set(queryTerms));
 
-    const scored: RetrievalResult[] = [];
+    const scored: Array<{ chunk: IndexedChunk; score: number; matched: string[] }> = [];
     for (let i = 0; i < filtered.length; i++) {
       const doc = docs[i];
       if (doc.length === 0) continue;
@@ -73,18 +75,19 @@ export class LexicalRetriever implements Retriever {
         score += termScore;
       }
 
-      if (score > 0) {
-        scored.push({
-          chunk: filtered[i],
-          score,
-          snippet: buildSnippet(filtered[i].text, uniqueQueryTerms),
-          matchedTerms: matched,
-        });
-      }
+      if (score > 0) scored.push({ chunk: filtered[i], score, matched });
     }
 
+    // Build snippets only for the results that survive the limit — snippet text
+    // has no effect on score or ordering, so building it for every scoring chunk
+    // (broad queries can match thousands) is wasted work.
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit);
+    return scored.slice(0, limit).map((s) => ({
+      chunk: s.chunk,
+      score: s.score,
+      snippet: buildSnippet(s.chunk.text, uniqueQueryTerms),
+      matchedTerms: s.matched,
+    }));
   }
 }
 

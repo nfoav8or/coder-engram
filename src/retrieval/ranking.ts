@@ -18,6 +18,23 @@ export function tokenize(text: string): string[] {
     .filter((t) => t.length >= 2 && !STOPWORDS.has(t));
 }
 
+/**
+ * Tokenize a chunk's text, memoized by chunk identity. `IndexManager` keeps the
+ * same `IndexedChunk` object for a note whose content is unchanged across
+ * reindexes, so BM25 scoring reuses the token array across queries instead of
+ * re-tokenizing the whole corpus on every search. The `WeakMap` self-evicts when
+ * a chunk object is replaced (content changed) or removed.
+ */
+const chunkTokenCache = new WeakMap<IndexedChunk, string[]>();
+export function tokenizeChunk(chunk: IndexedChunk): string[] {
+  let tokens = chunkTokenCache.get(chunk);
+  if (!tokens) {
+    tokens = tokenize(chunk.text);
+    chunkTokenCache.set(chunk, tokens);
+  }
+  return tokens;
+}
+
 function normalizeFolder(folder: string): string {
   return folder.trim().replace(/^\/+|\/+$/g, "");
 }

@@ -17,7 +17,7 @@ import {
   RetrievalResult,
   DEFAULT_LIMIT,
 } from "./retriever";
-import { tokenize, applyFilters, buildSnippet } from "./ranking";
+import { tokenize, tokenizeChunk, applyFilters, buildSnippet } from "./ranking";
 
 export interface VectorRetrieverOptions {
   vectors: Map<string, number[]>;
@@ -38,22 +38,27 @@ export class VectorRetriever implements Retriever {
     if (filtered.length === 0) return [];
 
     const queryTerms = Array.from(new Set(tokenize(query.query)));
-    const scored: RetrievalResult[] = [];
+    const scored: Array<{ chunk: IndexedChunk; score: number }> = [];
     for (const chunk of filtered) {
       const vec = this.options.vectors.get(chunk.id);
       if (!vec) continue;
       const score = cosineSimilarity(qv, vec);
       if (score <= 0) continue;
-      const chunkTerms = new Set(tokenize(chunk.text));
-      scored.push({
-        chunk,
-        score,
-        snippet: buildSnippet(chunk.text, queryTerms),
-        matchedTerms: queryTerms.filter((t) => chunkTerms.has(t)),
-      });
+      scored.push({ chunk, score });
     }
 
+    // Snippet and matched-term work is deferred to the survivors: tokenizing
+    // every scored chunk's text just to compute highlighting for results that
+    // get sliced away is wasted (cosine scores nearly every chunk > 0).
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit);
+    return scored.slice(0, limit).map((s) => {
+      const chunkTerms = new Set(tokenizeChunk(s.chunk));
+      return {
+        chunk: s.chunk,
+        score: s.score,
+        snippet: buildSnippet(s.chunk.text, queryTerms),
+        matchedTerms: queryTerms.filter((t) => chunkTerms.has(t)),
+      };
+    });
   }
 }

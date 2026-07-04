@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { findTermMatches, buildSnippet } from "../src/retrieval/ranking";
+import { findTermMatches, buildSnippet, tokenize, tokenizeChunk } from "../src/retrieval/ranking";
+import { IndexedChunk } from "../src/indexing/index-manager";
 
 describe("findTermMatches", () => {
   it("matches whole tokens case-insensitively", () => {
@@ -27,6 +28,35 @@ describe("findTermMatches", () => {
   it("returns nothing for empty terms", () => {
     expect(findTermMatches("hello world", [])).toEqual([]);
     expect(findTermMatches("hello world", [""])).toEqual([]);
+  });
+});
+
+describe("tokenizeChunk", () => {
+  function chunk(text: string): IndexedChunk {
+    return {
+      id: "c1",
+      notePath: "n.md",
+      heading: "",
+      headingPath: [],
+      startLine: 0,
+      endLine: 0,
+      tags: [],
+      aliases: [],
+      links: [],
+      mtime: 1000,
+      text,
+    };
+  }
+
+  it("returns the same tokens as tokenize(chunk.text)", () => {
+    const c = chunk("The Ollama server runs embeddings locally.");
+    expect(tokenizeChunk(c)).toEqual(tokenize(c.text));
+  });
+
+  it("memoizes by chunk identity (same array reference on repeat calls)", () => {
+    const c = chunk("hybrid retrieval fuses lexical and vector scores");
+    const first = tokenizeChunk(c);
+    expect(tokenizeChunk(c)).toBe(first);
   });
 });
 
