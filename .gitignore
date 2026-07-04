@@ -15,6 +15,9 @@ main.js.map
 *.log
 npm-debug.log*
 
+# Agent guidance (committed once; ignored so local edits don't churn status)
+CLAUDE.md
+
 # Editor / OS
 .DS_Store
 .idea/
