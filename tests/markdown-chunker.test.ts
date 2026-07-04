@@ -49,6 +49,58 @@ describe("chunkMarkdown", () => {
     expect(b.endLine).toBe(3);
   });
 
+  it("assigns each window its own precise line span", () => {
+    const para = "word ".repeat(80).trim(); // ~399 chars, so each para is its own window
+    // lines: 0:# Big  1:para  2:""  3:para  4:""  5:para  6:""  7:para
+    const md = ["# Big", para, "", para, "", para, "", para].join("\n");
+    const chunks = chunkMarkdown(md, { maxChars: 500, overlapChars: 50 });
+    expect(chunks.length).toBe(4);
+    // First window opens at the heading line and ends at its body paragraph.
+    expect(chunks[0].startLine).toBe(0);
+    expect(chunks[0].endLine).toBe(1);
+    // Later windows report the line of the body paragraph they contain.
+    expect(chunks.map((c) => c.startLine)).toEqual([0, 3, 5, 7]);
+    expect(chunks.map((c) => c.endLine)).toEqual([1, 3, 5, 7]);
+    // Text is unchanged: every window still carries the heading breadcrumb.
+    for (const c of chunks) expect(c.text.startsWith("# Big")).toBe(true);
+  });
+
+  it("spans all paragraphs a window contains, first paragraph to last", () => {
+    const p = "alpha beta gamma delta"; // 22 chars; two fit per 60-char window
+    // lines: 0:# H  1:p  2:""  3:p  4:""  5:p  6:""  7:p
+    const md = ["# H", p, "", p, "", p, "", p].join("\n");
+    const chunks = chunkMarkdown(md, { maxChars: 60, overlapChars: 0 });
+    expect(chunks.length).toBe(2);
+    expect(chunks[0].startLine).toBe(0); // heading
+    expect(chunks[0].endLine).toBe(3); // through the second paragraph
+    expect(chunks[1].startLine).toBe(5); // third paragraph
+    expect(chunks[1].endLine).toBe(7); // through the fourth
+  });
+
+  it("does not inflate a window's line span with a trailing whitespace-only line", () => {
+    const para = "word ".repeat(80).trim();
+    // A stray space line ends the body; bodyText.trim() drops it, so the last
+    // window must end at paraB's line (3), not the whitespace line (4).
+    // lines: 0:# Big  1:paraA  2:""  3:paraB  4:"   "
+    const md = ["# Big", para, "", para, "   "].join("\n");
+    const chunks = chunkMarkdown(md, { maxChars: 500, overlapChars: 0 });
+    expect(chunks.length).toBe(2);
+    expect(chunks[1].startLine).toBe(3);
+    expect(chunks[1].endLine).toBe(3);
+  });
+
+  it("tracks per-window line spans for a windowed preamble (no heading)", () => {
+    const para = "word ".repeat(80).trim();
+    // lines: 0:para  1:""  2:para  (no heading -> bodyOffset is the section start)
+    const md = [para, "", para].join("\n");
+    const chunks = chunkMarkdown(md, { maxChars: 500, overlapChars: 50 });
+    expect(chunks.length).toBe(2);
+    expect(chunks[0].startLine).toBe(0);
+    expect(chunks[0].endLine).toBe(0);
+    expect(chunks[1].startLine).toBe(2);
+    expect(chunks[1].endLine).toBe(2);
+  });
+
   it("does not emit a header-only chunk when the first paragraph overflows", () => {
     const md = "# H\n\n" + "x".repeat(1500);
     const chunks = chunkMarkdown(md, { maxChars: 1200 });

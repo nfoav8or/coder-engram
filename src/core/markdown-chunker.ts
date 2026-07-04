@@ -18,12 +18,13 @@ export interface Chunk {
   /** Chunk text (trimmed). */
   text: string;
   /**
-   * 0-based inclusive start line of this chunk's SECTION in the original note.
-   * When a long section is split into multiple windows, every window reports
-   * the section's span (not the window's sub-span).
+   * 0-based inclusive start line of this chunk in the original note. For a
+   * section split into multiple windows, each window reports the line span of
+   * the paragraphs it actually contains: the first window starts at the
+   * heading line, and later windows start at their first body paragraph.
    */
   startLine: number;
-  /** 0-based inclusive end line of this chunk's section in the original note. */
+  /** 0-based inclusive end line of this chunk's content in the original note. */
   endLine: number;
 }
 
@@ -113,6 +114,43 @@ function splitIntoSections(lines: string[], bodyStartLine: number): RawSection[]
   return sections.filter((s) => s.heading !== "" || s.lines.some((l) => l.trim() !== ""));
 }
 
+interface LineSpan {
+  startIdx: number;
+  endIdx: number;
+}
+
+/**
+ * Segment body lines into paragraph blocks, tracking each block's original
+ * (0-based) line range. A block is a maximal run of non-empty lines; only a
+ * truly-empty ("") line separates blocks. This mirrors `text.split(/\n{2,}/)`
+ * on the joined body (a whitespace-only line does not create the consecutive
+ * newlines that split needs, so it stays inside its paragraph), keeping blocks
+ * aligned 1:1 with those paragraphs. Each block's reported span then trims any
+ * leading/trailing whitespace-only lines, matching `bodyText.trim()`, so a
+ * stray space/tab line at a body edge never inflates the span.
+ */
+function segmentBlocks(lines: string[], bodyOffset: number): LineSpan[] {
+  const blocks: LineSpan[] = [];
+  let start = -1;
+  const close = (endExclusive: number): void => {
+    let s = start;
+    let e = endExclusive - 1;
+    while (s < e && lines[s].trim() === "") s++;
+    while (e > s && lines[e].trim() === "") e--;
+    blocks.push({ startIdx: bodyOffset + s, endIdx: bodyOffset + e });
+    start = -1;
+  };
+  for (let j = 0; j < lines.length; j++) {
+    if (lines[j] !== "") {
+      if (start === -1) start = j;
+    } else if (start !== -1) {
+      close(j);
+    }
+  }
+  if (start !== -1) close(lines.length);
+  return blocks;
+}
+
 /** Pack paragraphs greedily into windows of ~maxChars with overlap. */
 function windowSection(section: RawSection, maxChars: number, overlapChars: number): Chunk[] {
   const bodyText = section.lines.join("\n").trim();
@@ -133,29 +171,45 @@ function windowSection(section: RawSection, maxChars: number, overlapChars: numb
         ];
   }
 
-  // Split body into paragraphs and greedily pack. All windows of one section
-  // share the section's line span (per-window line precision is deferred — no
-  // M1 feature navigates by chunk line number; search opens notes by path).
+  // Split the body into paragraphs and greedily pack. The paragraph *text* is
+  // buffered exactly as before (byte-for-byte identical chunk text); in
+  // parallel we track each window's precise line span from the original body
+  // paragraphs. The body's first line sits at `bodyOffset` in the note: one
+  // past the heading for a heading section, or the section start for preamble.
   const paragraphs = bodyText.split(/\n{2,}/);
+  const bodyOffset = section.heading ? section.startLine + 1 : section.startLine;
+  const blocks = segmentBlocks(section.lines, bodyOffset);
+  // Defensive: only trust per-window spans when blocks align 1:1 with the
+  // buffered paragraphs; otherwise fall back to the section span.
+  const preciseLines = blocks.length === paragraphs.length;
+
   const chunks: Chunk[] = [];
   const headerPrefix = headerLine ? `${headerLine}\n\n` : "";
   let buffer = headerPrefix;
   let paragraphsInBuffer = 0;
+  let firstWindow = true;
+  let curStart: number | null = null;
+  let curEnd: number | null = null;
 
   const push = (): void => {
     const text = buffer.trim();
     if (text.length > 0 && paragraphsInBuffer > 0) {
-      chunks.push({
-        heading: section.heading,
-        headingPath: section.headingPath,
-        text,
-        startLine: section.startLine,
-        endLine: section.endLine,
-      });
+      let startLine = section.startLine;
+      let endLine = section.endLine;
+      if (preciseLines && curStart !== null && curEnd !== null) {
+        // The first window opens at the heading line; later windows open at
+        // their first fresh body paragraph (the char-slice overlap carried
+        // from the previous window is not counted toward the line span).
+        startLine = firstWindow && section.heading ? section.startLine : curStart;
+        endLine = curEnd;
+      }
+      chunks.push({ heading: section.heading, headingPath: section.headingPath, text, startLine, endLine });
+      firstWindow = false;
     }
   };
 
-  for (const para of paragraphs) {
+  for (let k = 0; k < paragraphs.length; k++) {
+    const para = paragraphs[k];
     // Flush before adding this paragraph only if the buffer already holds body
     // content — never emit a header-only chunk when the first paragraph alone
     // overflows maxChars.
@@ -164,9 +218,15 @@ function windowSection(section: RawSection, maxChars: number, overlapChars: numb
       const carry = overlapChars > 0 ? buffer.slice(-overlapChars) : "";
       buffer = headerPrefix + (carry ? `${carry}\n\n` : "");
       paragraphsInBuffer = 0;
+      curStart = null;
+      curEnd = null;
     }
     buffer += para + "\n\n";
     paragraphsInBuffer++;
+    if (preciseLines) {
+      if (curStart === null) curStart = blocks[k].startIdx;
+      curEnd = blocks[k].endIdx;
+    }
   }
   push();
   return chunks;
