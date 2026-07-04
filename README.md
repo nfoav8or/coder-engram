@@ -4,7 +4,7 @@ An Obsidian-powered memory and RAG layer for Claude Code.
 
 Claude Code Engram turns your active Obsidian vault into a local-first memory, project-context, and retrieval backend. It indexes your Markdown notes, retrieves relevant chunks for a query, and lets you capture reviewable memory entries — all stored as plain Markdown inside a `Claude Code/` folder in your vault. Nothing is written outside the vault, and no cloud API key is required.
 
-> **Status:** v0.1.0 (Milestones 1–5). Local memory + lexical (BM25) retrieval (M1), a local MCP/HTTP server that Claude Code can query and propose memory to (M2), embedding-based vector + hybrid retrieval (M3), and a richer pending-memory review UI plus an honest extractive `summarize_note` (M4) all work today, with GitHub Actions CI and a tag-driven release workflow for packaging (M5). The server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too: the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. See [docs/ROADMAP.md](docs/ROADMAP.md).
+> **Status:** v0.2.0 (Milestones 1–6). Local memory + lexical (BM25) retrieval (M1), a local MCP/HTTP server that Claude Code can query and propose memory to (M2), embedding-based vector + hybrid retrieval (M3), and a richer pending-memory review UI plus an honest extractive `summarize_note` (M4) all work today, with GitHub Actions CI and a tag-driven release workflow for packaging (M5). M6 adds retrieval-quality polish — precise chunk line spans with open-at-line, densest-window snippets with whole-token highlighting, per-note result diversity, and a ~7× faster lexical query path. The server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too: the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What Claude Code Engram does
 
@@ -125,7 +125,7 @@ the plugin and attaches `main.js`, `manifest.json`, and `styles.css` to a GitHub
 release whenever a version tag is pushed. To cut a release:
 
 ```bash
-npm version 0.1.0        # bumps package.json + syncs manifest.json / versions.json
+npm version 0.2.0        # bumps package.json + syncs manifest.json / versions.json
 git push --follow-tags   # pushes the commit and the tag
 ```
 

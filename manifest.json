@@ -1,7 +1,7 @@
 {
   "id": "claude-code-engram",
   "name": "Claude Code Engram",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.5.0",
   "description": "An Obsidian-powered memory and RAG layer for Claude Code. Local-first memory, project context, and RAG retrieval stored as Markdown inside your vault.",
   "author": "Matt Smith",
