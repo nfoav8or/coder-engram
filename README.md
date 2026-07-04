@@ -37,7 +37,7 @@ Claude Code Engram turns your active Obsidian vault into a local-first memory, p
 - **Network safety**: refuses to bind a non-localhost host unless you both enable "Allow non-localhost binding" **and** set a token.
 - **Curated tools** (no generic file access, no full-vault dump): `search_vault_memory`, `add_memory` (always inbox-first over the network), `get_project_context`, `get_global_context`, `list_projects`, `get_recent_sessions`, and `reindex_vault` (rate-limited, 15s cooldown).
 - New **Restart Local Server** command; the control panel shows live server status (`running · host:port`).
-- 67 additional Vitest tests for auth, host/origin guards, the tool registry and rate limiter, JSON-RPC dispatch, batch limits, and lifecycle serialization (172 total).
+- 67 additional Vitest tests for auth, host/origin guards, the tool registry and rate limiter, JSON-RPC dispatch, batch limits, and lifecycle serialization.
 
 ## Features (Milestone 3)
 
@@ -117,6 +117,20 @@ Other scripts:
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run lint` | ESLint over `.ts` sources |
 | `npm run typecheck` | `tsc --noEmit` |
+
+## Releasing
+
+Releases are published by the `release.yml` GitHub Actions workflow, which builds
+the plugin and attaches `main.js`, `manifest.json`, and `styles.css` to a GitHub
+release whenever a version tag is pushed. To cut a release:
+
+```bash
+npm version 0.1.0        # bumps package.json + syncs manifest.json / versions.json
+git push --follow-tags   # pushes the commit and the tag
+```
+
+The tag must equal the `manifest.json` version (a leading `v` is tolerated), or
+the workflow fails its verification step before publishing.
 
 ## Configuration
 

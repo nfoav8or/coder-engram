@@ -19,7 +19,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint . --ext .ts",
-    "typecheck": "tsc --noEmit --skipLibCheck"
+    "typecheck": "tsc --noEmit --skipLibCheck",
+    "version": "node version-bump.mjs && git add manifest.json versions.json"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

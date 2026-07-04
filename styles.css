@@ -90,3 +90,16 @@
   white-space: pre-wrap;
   font-size: var(--font-ui-smaller);
 }
+
+.engram-pending-entry h3 {
+  margin: 0 0 4px;
+  font-size: var(--font-ui-small);
+}
+
+/* Standalone path label (e.g. the review modal's "Applies to:" line and other
+ * places that render a path outside a search-result card). */
+.engram-result-path {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-accent);
+  word-break: break-all;
+}

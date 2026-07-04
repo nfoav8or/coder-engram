@@ -71,9 +71,9 @@ Local MCP/HTTP server for Claude Code. The server is disabled by default and bin
 
 - `summarize_note` was intentionally not implemented: honest summarization needs an LLM/embedding backend and is deferred to M3+.
 
-## [0.1.0] — Milestone 1
+## Milestone 1
 
-Early, unreleased version. First working local memory + lexical RAG layer.
+First working local memory + lexical RAG layer.
 
 ### Added
 
@@ -101,5 +101,4 @@ Early, unreleased version. First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://example.com/compare/v0.1.0...HEAD
-[0.1.0]: https://example.com/releases/v0.1.0
+[Unreleased]: https://github.com/nfoav8or/claude-code-engram/commits/develop

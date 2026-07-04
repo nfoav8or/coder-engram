@@ -1,0 +1,60 @@
+# Builds the plugin and publishes a GitHub Release with the three artifacts
+# Obsidian needs (main.js, manifest.json, styles.css) whenever a version tag is
+# pushed. Tag with the bare version, e.g. `git tag 0.1.0 && git push origin 0.1.0`.
+name: Release
+
+on:
+  push:
+    tags:
+      # Accept both bare (`0.1.0`) and v-prefixed (`v0.1.0`) version tags.
+      - "*.*.*"
+      - "v*.*.*"
+
+# Least privilege: only the permission needed to create a release. Uses the
+# built-in GITHUB_TOKEN and the runner's `gh` CLI — no third-party actions in
+# the publish step, so no external action can read the token.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      # Gate the release on a green typecheck, lint, test suite, and build.
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+      - name: Verify the tag matches manifest.json version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Tolerate a leading `v` so the standard `npm version` flow (which
+          # creates a v-prefixed tag) works as well as a bare version tag.
+          VERSION="${TAG#v}"
+          MANIFEST_VERSION="$(node -p "require('./manifest.json').version")"
+          if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
+            echo "Tag '$TAG' (version '$VERSION') does not match manifest version '$MANIFEST_VERSION'." >&2
+            echo "Run 'npm version $VERSION' to sync manifest + versions.json, then push the tag." >&2
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "${TAG#v}" \
+            --notes "Claude Code Engram ${TAG#v}. See CHANGELOG.md for details." \
+            main.js manifest.json styles.css
