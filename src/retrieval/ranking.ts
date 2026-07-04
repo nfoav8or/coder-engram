@@ -56,6 +56,11 @@ export function applyFilters(
   projectRootResolver?: (project: string) => string,
 ): IndexedChunk[] {
   if (!filters) return chunks;
+  // No active filter → return the input array unchanged (same reference), so the
+  // whole-vault hot path can memoize corpus stats by identity and skips a copy.
+  if (!filters.folder && !filters.tag && !filters.project && filters.sinceMtime === undefined) {
+    return chunks;
+  }
   return chunks.filter((chunk) => {
     if (filters.folder && !isUnderFolder(chunk.notePath, filters.folder)) return false;
     if (filters.project && projectRootResolver) {

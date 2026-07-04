@@ -46,10 +46,22 @@ Retrieval is defined by the `Retriever` interface (`retrieval/retriever.ts`), so
 
 `LexicalRetriever` implements BM25 over the candidate chunks:
 
-- **Filtering first** (`retrieval/ranking.ts` `applyFilters`). Structural filters run before scoring: `folder` (segment-boundary aware), `project` (mapped to its folder via the engine's `projectRootResolver`), `tag` (leading `#` normalized away), and `sinceMtime` (recency). BM25 IDF is then computed over the filtered set, so it reflects the corpus actually being searched.
+- **Filtering first** (`retrieval/ranking.ts` `applyFilters`). Structural filters run before scoring: `folder` (segment-boundary aware), `project` (mapped to its folder via the engine's `projectRootResolver`), `tag` (leading `#` normalized away), and `sinceMtime` (recency). BM25 IDF is computed over the searched set: for a whole-vault query the corpus statistics are memoized (see below); a filtered subset gets fresh statistics so IDF reflects exactly that subset.
 - **Tokenization.** Lowercased, split on non-alphanumerics, dropping stopwords and 1-character tokens.
+- **Corpus statistics, computed once.** Per-chunk term frequencies, document lengths, per-chunk heading terms, and the global document-frequency map + average doc length depend only on the chunks, not the query. They are built once and **memoized by the chunks-array identity** (which `IndexManager` replaces on refresh), so repeated queries over an unchanged vault reuse them instead of re-tokenizing and re-counting the whole corpus per query. Chunk tokenization itself is separately memoized by chunk identity (`tokenizeChunk`, a `WeakMap`).
 - **Scoring.** Standard BM25 with `k1 = 1.5`, `b = 0.75`. A chunk whose heading contains a query term gets a `1.15` heading boost on that term.
-- **Results.** Each `RetrievalResult` carries the `chunk`, `score`, a `snippet` (a ~220-char window centered on the first match, via `buildSnippet`), and the `matchedTerms`. Results are sorted by score and truncated to the query limit (default `DEFAULT_LIMIT = 8`).
+- **Results.** Each `RetrievalResult` carries the `chunk`, `score`, a `snippet` (the densest-match window via `buildSnippet` — the window covering the most matches, not merely the first), and the `matchedTerms` (whole-token matches). Results are sorted by score, then **diversified so a single long note cannot flood the page** (`diversifyByNote`: at most `ceil(limit/3)`, floor 2, chunks per note, with rank-order backfill so the page is never shorter than a plain top-`limit`), and snippets are built only for the survivors. Default limit `DEFAULT_LIMIT = 8`.
+
+### Performance at scale
+
+Retrieval is measured by an on-demand benchmark (`npm run bench`, `tests/scale.bench.ts`; excluded from `npm test`/CI, like the e2e harness) that drives the real scanner → index → retriever path over a large synthetic in-memory vault. Representative numbers on a dev laptop (dense synthetic notes, ~9.5 chunks/note, 100 queries, embedding dim 384):
+
+| corpus | chunks | full build | incremental refresh | lexical query p50/p95 | hybrid query p50/p95 |
+| --- | --- | --- | --- | --- | --- |
+| 2,000 notes | ~19k | ~55 ms | ~3 ms (10 changed) | 21 / 25 ms | 37 / 41 ms |
+| 5,000 notes | ~48k | ~120 ms | ~10 ms (10 changed) | 55 / 63 ms | 102 / 114 ms |
+
+Notes: incremental refresh reuses unchanged chunk objects, so it is independent of vault size (only the changed notes are re-chunked). Lexical scoring iterates the whole candidate set per query (O(corpus)); the memoization above removes the per-query re-tokenization cost but not that linear scan, and the hybrid vector stage is O(chunks × dim) per query. Both stay interactive to tens of thousands of chunks; beyond that the levers are an inverted index (lexical) and approximate-nearest-neighbour search (vector) — deliberately not built yet, since real vaults sit well inside the measured range. Run `BENCH_NOTES=5000 npm run bench` to reproduce.
 
 ### Embedding abstraction
 

@@ -66,6 +66,23 @@ describe("LexicalRetriever", () => {
     expect(results.length).toBe(1);
   });
 
+  it("memoizes corpus stats yet reflects a replaced chunk set (no stale cache)", () => {
+    const retriever = new LexicalRetriever();
+    const first: IndexedChunk[] = [
+      chunk({ id: "a", notePath: "Notes/a.md", text: "indexing pipeline for markdown notes" }),
+    ];
+    const r1 = retriever.retrieve({ query: "indexing" }, first);
+    expect(r1[0].chunk.notePath).toBe("Notes/a.md");
+    // A repeat query over the SAME array reuses the memo and is identical.
+    expect(retriever.retrieve({ query: "indexing" }, first)[0].chunk.id).toBe("a");
+    // A NEW array (as IndexManager produces on refresh) must invalidate the memo.
+    const second: IndexedChunk[] = [
+      chunk({ id: "z", notePath: "Notes/z.md", text: "indexing rewritten in a different note" }),
+    ];
+    const r2 = retriever.retrieve({ query: "indexing" }, second);
+    expect(r2.map((r) => r.chunk.id)).toEqual(["z"]);
+  });
+
   it("does not let one long note flood the page and bury another relevant note", () => {
     const flooded: IndexedChunk[] = [
       chunk({ id: "a1", notePath: "Notes/long.md", text: "indexing pipeline detail one" }),

@@ -6,8 +6,43 @@ import {
   tokenizeChunk,
   diversifyByNote,
   maxPerNoteFor,
+  applyFilters,
 } from "../src/retrieval/ranking";
 import { IndexedChunk } from "../src/indexing/index-manager";
+
+function makeChunk(over: Partial<IndexedChunk> & { id: string }): IndexedChunk {
+  return {
+    notePath: `${over.id}.md`,
+    heading: "",
+    headingPath: [],
+    startLine: 0,
+    endLine: 0,
+    tags: [],
+    aliases: [],
+    links: [],
+    mtime: 1000,
+    text: "",
+    ...over,
+  };
+}
+
+describe("applyFilters", () => {
+  const chunks = [makeChunk({ id: "a", notePath: "Notes/a.md", tags: ["x"] })];
+
+  it("returns the same array reference when there is no filter", () => {
+    expect(applyFilters(chunks, undefined)).toBe(chunks);
+  });
+
+  it("returns the same array reference for a filter with no active fields", () => {
+    expect(applyFilters(chunks, { folder: "", tag: "" })).toBe(chunks);
+  });
+
+  it("filters (and returns a new array) when a field is active", () => {
+    const out = applyFilters(chunks, { folder: "Projects" });
+    expect(out).not.toBe(chunks);
+    expect(out).toHaveLength(0);
+  });
+});
 
 describe("findTermMatches", () => {
   it("matches whole tokens case-insensitively", () => {
