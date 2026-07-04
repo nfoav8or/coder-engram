@@ -57,20 +57,38 @@ src/
   core/
     vault-adapter.ts            VaultAdapter interface + in-memory impl
     obsidian-vault-adapter.ts   production adapter
+    http-client.ts              HttpClient boundary for outbound HTTP
+    obsidian-http-client.ts     production adapter over requestUrl
     markdown-chunker.ts         chunking
     metadata-extractor.ts       frontmatter / tags / links
   retrieval/
     retriever.ts                Retriever interface + types
     lexical-retriever.ts        BM25 retriever
+    vector-retriever.ts         cosine vector retriever
+    hybrid-retriever.ts         RRF fusion of lexical + vector
     ranking.ts                  tokenize / filter / snippet helpers
   embeddings/
     embedding-provider.ts       EmbeddingProvider interface + cosine
     mock-embedding-provider.ts  deterministic mock
+    ollama-provider.ts          local Ollama provider
+    openai-embedding-provider.ts  OpenAI-compatible provider
+    embedding-http.ts           shared embedding HTTP helpers
+    embedding-store.ts          content-hash-keyed vector cache
+    provider-factory.ts         createEmbeddingProvider factory
   memory/
     memory-types.ts             data model + folder layout
     memory-store.ts             read-side context + scaffold
     memory-writer.ts            inbox + direct writes
+    pending-inbox.ts            pending-block parser / serializer
     project-memory.ts           project + session scaffolding
+  server/
+    local-server.ts             local HTTP server + lifecycle
+    mcp-protocol.ts             JSON-RPC 2.0 MCP protocol
+    mcp-tools.ts                MCP tool definitions + handlers
+    auth.ts                     constant-time bearer-token auth
+    net.ts                      Host/Origin guards + request checks
+  summarize/
+    extractive.ts               extractive note summarizer
   utils/
     paths.ts                    path safety (resolveInVault)
     logger.ts                   debug-gated logger + redaction
@@ -80,7 +98,7 @@ src/
 tests/                          Vitest suite (mirrors src)
 ```
 
-The `server/` directory from the spec is not present yet; it arrives in Milestone 2.
+The `src/server/` directory is present: it implements the local MCP/HTTP server (added in Milestone 2).
 
 ## Testing in a real vault
 
@@ -93,7 +111,7 @@ The unit tests use `InMemoryVaultAdapter`, so most logic can be exercised withou
 
 ## Coding conventions
 
-- **The service and core layers must not import `obsidian`.** Only the UI layer (`main.ts`, `settings/settings-tab.ts`, `ui/*`) and `core/obsidian-vault-adapter.ts` may. This keeps indexing/retrieval/memory unit-testable and lets the future server reuse `EngramEngine`.
+- **The service and core layers must not import `obsidian`.** Only the UI layer (`main.ts`, `settings/settings-tab.ts`, `ui/*`) and `core/obsidian-vault-adapter.ts` may. This keeps indexing/retrieval/memory unit-testable and lets the server reuse `EngramEngine`.
 - **All vault paths go through `utils/paths`.** Never build a vault path by ad-hoc string concatenation. Use `resolveInVault` / `joinVaultPath` / `normalizeVaultRelativePath`. `MemoryWriter` is the only component that writes memory.
 - **Keep modules small and functions testable.** Prefer pure functions in the core layer; inject the `VaultAdapter`, `Logger`, and clock.
 - **Safe defaults.** New settings must default to the privacy-preserving, local-only choice, and `migrateSettings` must degrade a corrupt settings blob to defaults without throwing.

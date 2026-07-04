@@ -4,7 +4,7 @@ An Obsidian-powered memory and RAG layer for Claude Code.
 
 Claude Code Engram turns your active Obsidian vault into a local-first memory, project-context, and retrieval backend. It indexes your Markdown notes, retrieves relevant chunks for a query, and lets you capture reviewable memory entries — all stored as plain Markdown inside a `Claude Code/` folder in your vault. Nothing is written outside the vault, and no cloud API key is required.
 
-> **Status:** Milestone 4. Local memory + lexical (BM25) retrieval (M1), a local MCP/HTTP server that Claude Code can query and propose memory to (M2), embedding-based vector + hybrid retrieval (M3), and a richer pending-memory review UI plus an honest extractive `summarize_note` (M4) all work today. The server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too: the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. See [docs/ROADMAP.md](docs/ROADMAP.md).
+> **Status:** v0.1.0 (Milestones 1–5). Local memory + lexical (BM25) retrieval (M1), a local MCP/HTTP server that Claude Code can query and propose memory to (M2), embedding-based vector + hybrid retrieval (M3), and a richer pending-memory review UI plus an honest extractive `summarize_note` (M4) all work today, with GitHub Actions CI and a tag-driven release workflow for packaging (M5). The server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too: the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What Claude Code Engram does
 
@@ -241,6 +241,7 @@ Full details: [docs/SECURITY.md](docs/SECURITY.md).
 - **M2 (done):** control-panel polish, project creation, local MCP/HTTP server with constant-time token auth and DNS-rebinding guards, curated inbox-first tools, Claude Code integration docs.
 - **M3 (done):** embedding providers (Ollama, OpenAI-compatible) behind an injected HTTP boundary, vector + hybrid retrieval, and a vault-local vector cache.
 - **M4 (done):** richer pending-memory review UI with per-entry apply/edit/discard, and an honest extractive `summarize_note` (Summarize Current Note command + MCP tool).
+- **M5 (done):** GitHub Actions CI (typecheck/lint/test/build) and a tag-driven release workflow that publishes the plugin artifacts, plus `version-bump.mjs` tooling that keeps `manifest.json`/`versions.json` in sync.
 - **Future:** non-desktop support, indexing of binary attachments, and alternative local vector stores.
 
 Details: [docs/ROADMAP.md](docs/ROADMAP.md).

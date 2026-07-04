@@ -42,7 +42,7 @@ Scaffolding is non-destructive: template files are created only if missing and a
 
 ## MemoryEntry metadata
 
-A proposed memory (from the Add Memory command, or in future from the server) is modeled by `MemoryEntry` (`src/memory/memory-types.ts`):
+A proposed memory (from the Add Memory command, or from the server) is modeled by `MemoryEntry` (`src/memory/memory-types.ts`):
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -50,7 +50,7 @@ A proposed memory (from the Add Memory command, or in future from the server) is
 | `content` | string | The memory body. |
 | `project` | string (optional) | Associated project name. |
 | `source` | string | Where it came from, e.g. `Obsidian UI`, `Claude Code`. Defaults to `Obsidian UI`. |
-| `originTool` | string (optional) | Originating command or (future) MCP tool. |
+| `originTool` | string (optional) | Originating command or MCP tool. |
 | `confidence` | `low` \| `medium` \| `high` (optional) | |
 | `tags` | string[] | Extra tags; `#claude-code-engram` is always added. |
 | `relatedPaths` | string[] | Related note/file paths. |
@@ -87,4 +87,4 @@ Status: pending
 
 ## Markdown as source of truth
 
-The files under `Index/` (`chunks.json`, `metadata.json`, `embeddings.json`) are a derived cache built from your Markdown. They can be deleted and rebuilt at any time via **Reindex Vault** without losing memory. In M1, `embeddings.json` is written as an empty shell (`{ "model": null, "dim": 0, "vectors": {} }`) and is only populated once a vector provider is enabled in M3. See [RAG_PIPELINE.md](RAG_PIPELINE.md).
+The files under `Index/` (`chunks.json`, `metadata.json`, `embeddings.json`) are a derived cache built from your Markdown. They can be deleted and rebuilt at any time via **Reindex Vault** without losing memory. `embeddings.json` is written as an empty shell (`{ "model": null, "dim": 0, "vectors": {} }`) until an embedding provider is configured, and is populated with cached vectors once one is. See [RAG_PIPELINE.md](RAG_PIPELINE.md).

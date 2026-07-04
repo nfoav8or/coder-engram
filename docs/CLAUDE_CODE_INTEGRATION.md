@@ -73,6 +73,7 @@ Once connected, Claude Code can call:
 - `get_project_context` / `get_global_context` — concatenated memory reads.
 - `list_projects`, `get_recent_sessions` — project navigation.
 - `reindex_vault` — rebuild the index (rate-limited).
+- `summarize_note` — extractive summary of an in-index note (its own sentences, default 5 / max 20).
 
 Full descriptions and the security model are in [MCP_SERVER.md](MCP_SERVER.md).
 

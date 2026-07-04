@@ -1,6 +1,6 @@
 # RAG pipeline
 
-The retrieval pipeline is four stages: **scan → chunk → index → retrieve**. Everything runs locally with no API key. Milestone 1 ships lexical (BM25) retrieval; embedding-based vector retrieval is deferred to Milestone 3.
+The retrieval pipeline is four stages: **scan → chunk → index → retrieve**. Everything runs locally with no API key. Lexical (BM25) retrieval is the offline default; embedding-based vector and hybrid retrieval are available once an embedding provider is configured.
 
 ## 1. Scan (`indexing/vault-scanner.ts`)
 
@@ -30,7 +30,7 @@ Chunk options default to `{ maxChars: 1200, overlapChars: 150 }` and receive `bo
 `IndexManager` maintains the local JSON index:
 
 - **Records.** Each `IndexedChunk` carries `id` (`<notePath>::<ordinal>`), `notePath`, `heading`, `headingPath`, `text`, `startLine`/`endLine`, `tags`, `aliases`, `links`, and `mtime`.
-- **Files.** `chunks.json` (the chunk records), `metadata.json` (`version`, `builtAt`, `noteCount`, `chunkCount`), and `embeddings.json` (an empty shell in M1: `{ "model": null, "dim": 0, "vectors": {} }`, populated in M3).
+- **Files.** `chunks.json` (the chunk records), `metadata.json` (`version`, `builtAt`, `noteCount`, `chunkCount`), and `embeddings.json` (an empty shell until an embedding provider is configured: `{ "model": null, "dim": 0, "vectors": {} }`, then populated with cached vectors).
 - **Build.** `build(notes)` re-chunks every note and replaces the in-memory index.
 - **Incremental refresh.** `refresh(notes)` compares by `mtime`: notes whose mtime is unchanged keep their existing chunks; new/modified notes are re-chunked; notes absent from the scan are dropped. Returns counts of `added` / `updated` / `removed` / `unchanged`.
 - **Persist.** Writes each file through the adapter (atomic where the platform allows). The `embeddings.json` shell is only written if it does not already exist.
@@ -40,7 +40,7 @@ The engine loads a persisted index on layout-ready without blocking plugin load;
 
 ## 4. Retrieve (`retrieval/`)
 
-Retrieval is defined by the `Retriever` interface (`retrieval/retriever.ts`), so a vector retriever can replace or complement the lexical one at M3 without changing callers.
+Retrieval is defined by the `Retriever` interface (`retrieval/retriever.ts`), so a vector retriever can replace or complement the lexical one without changing callers.
 
 ### BM25 lexical retrieval (`retrieval/lexical-retriever.ts`)
 
@@ -51,8 +51,8 @@ Retrieval is defined by the `Retriever` interface (`retrieval/retriever.ts`), so
 - **Scoring.** Standard BM25 with `k1 = 1.5`, `b = 0.75`. A chunk whose heading contains a query term gets a `1.15` heading boost on that term.
 - **Results.** Each `RetrievalResult` carries the `chunk`, `score`, a `snippet` (a ~220-char window centered on the first match, via `buildSnippet`), and the `matchedTerms`. Results are sorted by score and truncated to the query limit (default `DEFAULT_LIMIT = 8`).
 
-### Embedding abstraction (deferred to M3)
+### Embedding abstraction
 
 `embeddings/embedding-provider.ts` defines the `EmbeddingProvider` interface (`embed`, `isAvailable`, `dimensions`) and a `cosineSimilarity` helper. `embeddings/mock-embedding-provider.ts` is a deterministic, dependency-free hash-based provider (default 64 dims, L2-normalized) used for development and tests — it is **not** semantically meaningful.
 
-In M1 the settings dropdown offers `none`, `mock`, `ollama`, and `openai-compatible`, but retrieval always uses `LexicalRetriever` regardless of the selection. Real providers and a vector/hybrid retriever arrive in M3.
+The settings dropdown offers `none`, `mock`, `ollama`, and `openai-compatible` providers. The provider selection, together with the `retrievalMode` setting (`lexical`, `hybrid`, or `vector`; default `hybrid`), now drives which retriever runs: with a real provider configured, `VectorRetriever` (cosine) and `HybridRetriever` (RRF of lexical + vector) are used. When the provider is `none` or unavailable, retrieval degrades to `LexicalRetriever`, so it stays lexical and offline until a provider is configured.
