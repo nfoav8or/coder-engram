@@ -17,7 +17,7 @@
  * and connect with chromium.connectOverCDP.
  */
 import playwright from "playwright-core";
-import { spawn, execSync } from "node:child_process";
+import { spawn, execSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -167,8 +167,18 @@ try {
   check("harness ran without throwing", false, e.message);
 } finally {
   if (browser) await browser.close();
-  try { proc.kill("SIGTERM"); } catch { /* ignore */ }
-  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }
+  // Obsidian spawns a helper process tree; killing only the main process leaves
+  // children writing into the vault dir, racing removal. Kill every process for
+  // this unique --user-data-dir, then remove (retry for lingering handles).
+  try { proc.kill("SIGKILL"); } catch { /* ignore */ }
+  try { spawnSync("pkill", ["-9", "-f", udd]); } catch { /* pkill may be absent */ }
+  for (let i = 0; i < 6; i++) {
+    await new Promise((r) => setTimeout(r, 400));
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+    } catch { /* keep retrying */ }
+    if (!fs.existsSync(tmp)) break;
+  }
 }
 
 const failed = results.filter((r) => !r.pass).length;
