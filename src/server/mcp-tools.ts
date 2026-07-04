@@ -99,6 +99,9 @@ const ADD_MEMORY_MAX_PER_MINUTE = 60;
 const SUMMARIZE_MAX_PER_MINUTE = 30;
 const SUMMARY_DEFAULT_SENTENCES = 5;
 const SUMMARY_MAX_SENTENCES = 20;
+const NOTE_CONTEXT_MAX_PER_MINUTE = 60;
+const NOTE_CONTEXT_DEFAULT_MAX_CHARS = 12_000;
+const NOTE_CONTEXT_MAX_CHARS = 50_000;
 
 const MEMORY_TYPES = [
   "decision",
@@ -354,10 +357,88 @@ const summarizeNoteTool: Tool = {
   },
 };
 
+const getNoteContextTool: Tool = {
+  definition: {
+    name: "get_note_context",
+    description:
+      "Return the full INDEXED text of a single note, passage by passage, each " +
+      "with its heading and line range — the natural follow-up to a search hit, " +
+      "which only returns a short snippet. Only notes present in the index are " +
+      "returned; an excluded or unindexed note is refused, so this is not a " +
+      "general file-read.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Vault-relative path of the note to read." },
+        maxChars: {
+          type: "number",
+          description:
+            `Max characters returned (1000–${NOTE_CONTEXT_MAX_CHARS}, default ` +
+            `${NOTE_CONTEXT_DEFAULT_MAX_CHARS}); the note is truncated past this.`,
+        },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  async handler(args, ctx) {
+    ctx.rateLimiter.enforceWindow("get_note_context", NOTE_CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
+    const obj = requireObject(args, "arguments");
+    const path = requireString(obj, "path", { maxLength: 1000 });
+    const maxChars = Math.trunc(
+      optionalNumber(obj, "maxChars", NOTE_CONTEXT_DEFAULT_MAX_CHARS, {
+        min: 1000,
+        max: NOTE_CONTEXT_MAX_CHARS,
+      }),
+    );
+
+    // Indexed-only gate (same as summarize_note): an excluded/unindexed note has
+    // no chunks and is refused, so this can never read a note the exclusion
+    // filters were meant to keep out.
+    const chunks = ctx.engine.getNoteChunks(path);
+    if (chunks.length === 0) {
+      throw new ValidationError(
+        `Note "${path}" is not indexed (it may be excluded or outside the vault). ` +
+          `Only indexed notes can be read.`,
+      );
+    }
+
+    // Assemble passages until `maxChars` of note text is reached. `maxChars` is a
+    // hard ceiling on the body: if even the first passage exceeds it (a single
+    // giant chunk — e.g. a note that is one unbroken paragraph), it is clipped so
+    // an oversized indexed note can't return unbounded output.
+    const blocks: string[] = [];
+    let used = 0;
+    let truncated = false;
+    for (const c of chunks) {
+      const start = c.startLine + 1;
+      const end = Math.max(start, c.endLine + 1);
+      const lines = start === end ? `Line ${start}` : `Lines ${start}–${end}`;
+      const heading = c.headingPath.length ? c.headingPath.join(" › ") : c.heading || "(top)";
+      const block = `[${lines}] ${heading}\n${c.text}`;
+      const sep = blocks.length > 0 ? 2 : 0; // "\n\n" between blocks
+      if (used + sep + block.length > maxChars) {
+        if (blocks.length === 0) blocks.push(block.slice(0, maxChars));
+        truncated = true;
+        break;
+      }
+      blocks.push(block);
+      used += sep + block.length;
+    }
+
+    const header = `${chunks[0].notePath} — ${chunks.length} indexed passage(s):`;
+    const body = blocks.join("\n\n");
+    return truncated
+      ? `${header}\n\n${body}\n\n…(truncated at ${maxChars} chars; narrow with search_vault_memory)`
+      : `${header}\n\n${body}`;
+  },
+};
+
 const ALL_TOOLS: Tool[] = [
   searchTool,
   addMemoryTool,
   summarizeNoteTool,
+  getNoteContextTool,
   getProjectContextTool,
   getGlobalContextTool,
   listProjectsTool,

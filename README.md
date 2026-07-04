@@ -35,7 +35,7 @@ Claude Code Engram turns your active Obsidian vault into a local-first memory, p
 - **DNS-rebinding protection**: validates the `Host` header against the bound address and rejects any non-loopback `Origin`.
 - **Request hardening**: POST-only, `Content-Type: application/json` required, and a 1 MB request-body cap.
 - **Network safety**: refuses to bind a non-localhost host unless you both enable "Allow non-localhost binding" **and** set a token.
-- **Curated tools** (no generic file access, no full-vault dump): `search_vault_memory`, `add_memory` (always inbox-first over the network), `get_project_context`, `get_global_context`, `list_projects`, `get_recent_sessions`, and `reindex_vault` (rate-limited, 15s cooldown).
+- **Curated tools** (no generic file access, no full-vault dump): `search_vault_memory`, `get_note_context` (full indexed text of one note, passage by passage — the follow-up to a search hit), `add_memory` (always inbox-first over the network), `get_project_context`, `get_global_context`, `list_projects`, `get_recent_sessions`, and `reindex_vault` (rate-limited, 15s cooldown).
 - New **Restart Local Server** command; the control panel shows live server status (`running · host:port`).
 - 67 additional Vitest tests for auth, host/origin guards, the tool registry and rate limiter, JSON-RPC dispatch, batch limits, and lifecycle serialization.
 

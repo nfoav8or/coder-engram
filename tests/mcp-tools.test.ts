@@ -32,6 +32,7 @@ describe("ToolRegistry", () => {
     expect(names).toContain("list_projects");
     expect(names).toContain("get_recent_sessions");
     expect(names).toContain("reindex_vault");
+    expect(names).toContain("get_note_context");
     for (const def of registry.list()) {
       expect(def.inputSchema.type).toBe("object");
     }
@@ -162,6 +163,56 @@ describe("RateLimiter.enforceWindow", () => {
     limiter.enforceWindow("k", 1, 1000);
     now = 2000; // advance past the window
     expect(() => limiter.enforceWindow("k", 1, 1000)).not.toThrow();
+  });
+
+  it("get_note_context returns the full indexed passages of a note", async () => {
+    const { engine, ctx } = makeContext({
+      "Notes/rag.md": "# RAG\n\nThe indexing pipeline chunks markdown for retrieval.\n\n## Vectors\n\nCosine similarity ranks chunks.",
+    });
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    const out = await registry.call("get_note_context", { path: "Notes/rag.md" }, ctx);
+    expect(out).toContain("Notes/rag.md");
+    expect(out).toContain("indexing pipeline chunks markdown");
+    expect(out).toContain("Cosine similarity ranks chunks");
+    expect(out).toMatch(/\[Line/); // carries line-range labels
+  });
+
+  it("get_note_context refuses a note that is not indexed", async () => {
+    // An excluded note has no chunks, so it must be refused (no general file-read).
+    const { engine, ctx } = makeContext(
+      { "Secret/keys.md": "# Keys\n\nsensitive content" },
+      { excludedFolders: ["Secret"] },
+    );
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    await expect(
+      registry.call("get_note_context", { path: "Secret/keys.md" }, ctx),
+    ).rejects.toThrow(/not indexed/i);
+  });
+
+  it("get_note_context truncates past maxChars and says so", async () => {
+    const long = Array.from({ length: 40 }, (_, i) => `## Section ${i}\n\n${"word ".repeat(200)}`).join("\n\n");
+    const { engine, ctx } = makeContext({ "Notes/big.md": `# Big\n\n${long}` });
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    const out = await registry.call("get_note_context", { path: "Notes/big.md", maxChars: 1500 }, ctx);
+    expect(out).toContain("truncated");
+    expect(out.length).toBeLessThan(3000);
+  });
+
+  it("get_note_context clips a single oversized passage to maxChars (hard ceiling)", async () => {
+    // One unbroken paragraph → one chunk larger than maxChars. It must still be
+    // capped and flagged, not returned in full.
+    const oneHugeParagraph = "word ".repeat(6000); // ~30k chars, no blank lines
+    const { engine, ctx } = makeContext({ "Notes/wall.md": `# Wall\n\n${oneHugeParagraph}` });
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    const maxChars = 2000;
+    const out = await registry.call("get_note_context", { path: "Notes/wall.md", maxChars }, ctx);
+    expect(out).toContain("truncated");
+    // Body is clipped to maxChars; header + footer are small bounded metadata.
+    expect(out.length).toBeLessThan(maxChars + 300);
   });
 
   it("floods of add_memory are eventually rate limited over the network path", async () => {
