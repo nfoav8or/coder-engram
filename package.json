@@ -1,6 +1,6 @@
 {
   "name": "claude-code-engram",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Safe, reviewable memory backend for Claude Code — agent-proposed entries you review before they land, stored as local Markdown.",
   "author": "Matt Smith",
   "license": "MIT",

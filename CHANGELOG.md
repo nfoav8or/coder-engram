@@ -5,7 +5,9 @@ All notable changes to Claude Code Engram are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] — 2026-07-05
+
+Milestone 7 — a deeper, safer Claude Code memory loop. New MCP tools to read a search hit's full passage and navigate the link graph, `add_memory` de-duplication so a looping agent can't flood the review inbox, and a persistence optimization — all on top of the safety-first model: agent writes still land in the review inbox, and nothing is written or edited without your approval. No settings/schema changes; an in-place upgrade from 0.2.0.
 
 ### Added
 
@@ -163,6 +165,6 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/claude-code-engram/compare/0.2.0...HEAD
+[0.3.0]: https://github.com/nfoav8or/claude-code-engram/releases/tag/0.3.0
 [0.2.0]: https://github.com/nfoav8or/claude-code-engram/releases/tag/0.2.0
 [0.1.0]: https://github.com/nfoav8or/claude-code-engram/releases/tag/0.1.0

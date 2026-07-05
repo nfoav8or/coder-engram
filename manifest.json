@@ -1,7 +1,7 @@
 {
   "id": "claude-code-engram",
   "name": "Claude Code Engram",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "minAppVersion": "1.5.0",
   "description": "Safe, reviewable memory for Claude Code: the agent proposes memory to a review inbox — nothing is written or edited without your approval. Local-first Markdown, no cloud key required, hardened localhost server.",
   "author": "Matt Smith",
