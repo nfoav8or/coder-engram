@@ -1,8 +1,17 @@
 # Claude Code Engram
 
-An Obsidian-powered memory and RAG layer for Claude Code.
+Safe, reviewable memory for Claude Code — stored as plain Markdown in your own vault.
 
-Claude Code Engram turns your active Obsidian vault into a local-first memory, project-context, and retrieval backend. It indexes your Markdown notes, retrieves relevant chunks for a query, and lets you capture reviewable memory entries — all stored as plain Markdown inside a `Claude Code/` folder in your vault. Nothing is written outside the vault, and no cloud API key is required.
+**Claude Code Engram is the safe memory layer for Claude Code.** It turns your Obsidian vault into persistent, structured memory an AI coding agent can search and *propose to* — but every agent-written memory lands in a review inbox you approve or discard, so nothing is ever silently written to or edited in your notes. Everything is plain Markdown inside a `Claude Code/` folder in your vault; the retrieval index is a rebuildable local cache. No cloud API key is required for the default experience, and the optional local server is off by default, binds `127.0.0.1`, and is token-authenticated.
+
+## What makes it different
+
+Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an agent broad read/write/edit access to your notes. Engram is neither:
+
+- **Human-in-the-loop writes.** The agent *proposes*; you review. Direct edit, delete, and overwrite are never exposed to it — so an agent can't surgically rewrite (or quietly corrupt) your notes.
+- **Durable agent memory, not a chatbot.** Structured global / project / session memory that accumulates across Claude Code runs and is captured for review — not an ephemeral chat.
+- **Hardened by default.** Server off by default, localhost-only, constant-time token auth, DNS-rebinding guards, a curated tool surface, and no generic file access or full-vault dump.
+- **Local-first, no lock-in.** Markdown is the source of truth; embeddings are opt-in (default is fully-offline lexical search); no cloud key for the default experience.
 
 > **Status:** v0.2.0 (Milestones 1–6). Local memory + lexical (BM25) retrieval (M1), a local MCP/HTTP server that Claude Code can query and propose memory to (M2), embedding-based vector + hybrid retrieval (M3), and a richer pending-memory review UI plus an honest extractive `summarize_note` (M4) all work today, with GitHub Actions CI and a tag-driven release workflow for packaging (M5). M6 adds retrieval-quality polish — precise chunk line spans with open-at-line, densest-window snippets with whole-token highlighting, per-note result diversity, and a ~7× faster lexical query path. The server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too: the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. See [docs/ROADMAP.md](docs/ROADMAP.md).
 

@@ -3,7 +3,7 @@
   "name": "Claude Code Engram",
   "version": "0.2.0",
   "minAppVersion": "1.5.0",
-  "description": "An Obsidian-powered memory and RAG layer for Claude Code. Local-first memory, project context, and RAG retrieval stored as Markdown inside your vault.",
+  "description": "Safe, reviewable memory for Claude Code: the agent proposes memory to a review inbox — nothing is written or edited without your approval. Local-first Markdown, no cloud key required, hardened localhost server.",
   "author": "Matt Smith",
   "authorUrl": "https://github.com/nfoav8or/claude-code-engram",
   "isDesktopOnly": true
