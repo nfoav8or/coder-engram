@@ -34,6 +34,17 @@ export interface MemoryWriterOptions {
   logger?: Logger;
 }
 
+/** Two proposals are the "same memory" for dedup when their content (trimmed),
+ * type, and project match. Metadata that legitimately varies between otherwise-
+ * identical proposals (timestamp, source, tags) is intentionally ignored. */
+function isSameMemory(existing: PendingEntry, entry: MemoryEntry): boolean {
+  return (
+    existing.content.trim() === entry.content.trim() &&
+    existing.type === entry.type &&
+    (existing.project ?? "") === (entry.project ?? "")
+  );
+}
+
 /** Format a ms-epoch timestamp as "YYYY-MM-DD HH:MM" in local time. */
 export function formatTimestamp(ms: number): string {
   const d = new Date(ms);
@@ -98,9 +109,17 @@ export class MemoryWriter {
   /**
    * Append a reviewable entry to the pending-memory inbox. Always available;
    * this is the safe default for both UI and server writes.
-   * @returns the pending-memory file path.
+   *
+   * De-duplicates: if an entry with the same content, type, and project is
+   * already pending, it is NOT appended again (so a looping/re-running agent
+   * calling add_memory can't flood the review inbox with identical proposals).
+   * The read-compare-append runs inside the inbox mutex so the check and the
+   * append cannot interleave with a concurrent propose/apply/discard.
+   *
+   * @returns the pending-memory file path and whether the entry was a duplicate
+   *   (already present, so nothing was appended).
    */
-  async proposeToInbox(entry: MemoryEntry): Promise<string> {
+  async proposeToInbox(entry: MemoryEntry): Promise<{ path: string; duplicate: boolean }> {
     const block = formatMemoryEntry(entry);
     const target = this.paths.pendingMemoryFile;
     // Defense-in-depth: the inbox file must live under the memory root.
@@ -110,11 +129,17 @@ export class MemoryWriter {
     return this.enqueueInbox(async () => {
       if (!(await this.adapter.exists(target))) {
         await this.adapter.write(target, INBOX_HEADER + block);
-      } else {
-        await this.adapter.append(target, block);
+        this.logger.info("Proposed memory to inbox", { type: entry.type, project: entry.project });
+        return { path: target, duplicate: false };
       }
+      const existing = parsePendingInbox(await this.adapter.read(target));
+      if (existing.entries.some((e) => isSameMemory(e, entry))) {
+        this.logger.info("Skipped duplicate memory proposal", { type: entry.type, project: entry.project });
+        return { path: target, duplicate: true };
+      }
+      await this.adapter.append(target, block);
       this.logger.info("Proposed memory to inbox", { type: entry.type, project: entry.project });
-      return target;
+      return { path: target, duplicate: false };
     });
   }
 

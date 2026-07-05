@@ -487,7 +487,10 @@ export class EngramEngine {
   }
 
   /** Propose a memory entry (to the inbox by default; direct write if enabled). */
-  async addMemory(input: AddMemoryInput, opts: { direct?: boolean; subpath?: string } = {}): Promise<string> {
+  async addMemory(
+    input: AddMemoryInput,
+    opts: { direct?: boolean; subpath?: string } = {},
+  ): Promise<{ path: string; duplicate: boolean }> {
     const entry: MemoryEntry = {
       type: input.type,
       content: input.content,
@@ -500,7 +503,8 @@ export class EngramEngine {
       timestamp: this.clock(),
     };
     if (opts.direct && opts.subpath) {
-      return this.writer.directWrite(opts.subpath, entry);
+      const path = await this.writer.directWrite(opts.subpath, entry);
+      return { path, duplicate: false };
     }
     return this.writer.proposeToInbox(entry);
   }

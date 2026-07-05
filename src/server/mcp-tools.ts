@@ -208,7 +208,7 @@ const addMemoryTool: Tool = {
     const relatedPaths = optionalStringArray(obj, "relatedPaths", 128);
 
     // Network path is inbox-only by construction: no `direct` option is passed.
-    const path = await ctx.engine.addMemory({
+    const { path, duplicate } = await ctx.engine.addMemory({
       type,
       content,
       project,
@@ -217,7 +217,9 @@ const addMemoryTool: Tool = {
       tags,
       relatedPaths,
     });
-    return `Proposed memory appended to ${path} for review.`;
+    return duplicate
+      ? `An identical memory is already pending review in ${path}; not added again.`
+      : `Proposed memory appended to ${path} for review.`;
   },
 };
 

@@ -215,6 +215,17 @@ describe("RateLimiter.enforceWindow", () => {
     expect(out.length).toBeLessThan(maxChars + 300);
   });
 
+  it("add_memory de-duplicates an identical proposal and says so", async () => {
+    const { ctx } = makeContext();
+    const registry = new ToolRegistry();
+    const args = { content: "Prefer pnpm over npm for this repo.", type: "preference" };
+    const first = await registry.call("add_memory", args, ctx);
+    expect(first).toMatch(/appended/i);
+    const second = await registry.call("add_memory", args, ctx);
+    expect(second).toMatch(/already pending/i);
+    expect(second).not.toMatch(/appended/i);
+  });
+
   it("floods of add_memory are eventually rate limited over the network path", async () => {
     // Frozen clock keeps every call inside one window so the cap is hit.
     const adapter = new InMemoryVaultAdapter("v", {});

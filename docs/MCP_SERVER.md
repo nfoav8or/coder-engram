@@ -64,7 +64,7 @@ Every request is a `POST` with `Content-Type: application/json` and an
 | --- | --- | --- |
 | `search_vault_memory` | Lexical (BM25) retrieval over the index. | Returns chunks with note path, heading, snippet. Filters: `folder`, `tag`, `project`, `sinceDays`. Limit capped at 25. Never returns whole notes. |
 | `get_note_context` | Full **indexed** text of one note, passage by passage with heading + line range. | The follow-up to a search hit (which returns only a snippet). Inputs: `path` (required), `maxChars` (optional, default 12000, max 50000; truncates past this). **In-scope only**: refused for notes not in the index — not a general file-read. **Rate-limited** (60/min). |
-| `add_memory` | Propose a memory entry. | **Always appends to the review inbox** (`Memory/Inbox/pending-memory.md`). Direct writes are never exposed over the network, even when `allowDirectWrites` is on. |
+| `add_memory` | Propose a memory entry. | **Always appends to the review inbox** (`Memory/Inbox/pending-memory.md`). Direct writes are never exposed over the network, even when `allowDirectWrites` is on. **De-duplicated**: an entry whose content, type, and project match one already pending is not added again (reported as `already pending`), so a looping agent can't flood the inbox. |
 | `get_project_context` | Concatenated project memory (overview → architecture → decisions → tasks → open questions). | |
 | `get_global_context` | Concatenated global memory (profile + preferences + conventions). | |
 | `list_projects` | Project names under the projects root. | |

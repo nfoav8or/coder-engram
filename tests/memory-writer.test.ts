@@ -40,7 +40,7 @@ describe("MemoryWriter.proposeToInbox", () => {
     const adapter = new InMemoryVaultAdapter("v", {});
     const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
 
-    const target = await writer.proposeToInbox(entry());
+    const { path: target } = await writer.proposeToInbox(entry());
     expect(target).toBe("Claude Code/Memory/Inbox/pending-memory.md");
     const first = await adapter.read(target);
     expect(first).toContain("# Pending Memory Inbox");
@@ -51,6 +51,38 @@ describe("MemoryWriter.proposeToInbox", () => {
     expect(second).toContain("Second decision.");
     // Two entry blocks present.
     expect(second.match(/## Pending Memory:/g)?.length).toBe(2);
+  });
+
+  it("de-duplicates an identical proposal (same content/type/project)", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+
+    const first = await writer.proposeToInbox(entry());
+    expect(first.duplicate).toBe(false);
+    // Same content/type/project but different timestamp/source/tags → still a dup.
+    const second = await writer.proposeToInbox(
+      entry({ timestamp: 1_800_000_000_000, source: "MCP", tags: ["other"] }),
+    );
+    expect(second.duplicate).toBe(true);
+
+    const inbox = await adapter.read(first.path);
+    expect(inbox.match(/## Pending Memory:/g)?.length).toBe(1);
+  });
+
+  it("does not de-duplicate when content, type, or project differ", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+
+    await writer.proposeToInbox(entry());
+    const diffContent = await writer.proposeToInbox(entry({ content: "A different decision." }));
+    const diffProject = await writer.proposeToInbox(entry({ project: "OtherProject" }));
+    const diffType = await writer.proposeToInbox(entry({ type: "note" }));
+    expect(diffContent.duplicate).toBe(false);
+    expect(diffProject.duplicate).toBe(false);
+    expect(diffType.duplicate).toBe(false);
+
+    const inbox = await adapter.read(diffContent.path);
+    expect(inbox.match(/## Pending Memory:/g)?.length).toBe(4);
   });
 });
 

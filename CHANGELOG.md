@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New MCP tool **`get_note_context`**: returns the full **indexed** text of a single note, passage by passage, each labelled with its heading and line range — the natural follow-up to a `search_vault_memory` hit, which only returns a short snippet. Inputs: `path` (required) and `maxChars` (optional, default 12000, max 50000; the note is truncated past this). Rate-limited (60/min).
 
+### Changed
+
+- **`add_memory` now de-duplicates.** Proposing a memory whose content, type, and project match an entry already pending in the review inbox no longer appends a second copy — so a looping or re-running agent can't flood the inbox with identical proposals. The MCP tool reports `already pending … not added again` (and the UI shows `Already pending …`) so the caller knows it was a duplicate. The check runs inside the existing inbox mutex, so it can't interleave with a concurrent propose/apply/discard.
+
 ### Performance
 
 - The embeddings cache (`Index/embeddings.json`) is no longer re-serialized and rewritten when an index refresh changed nothing — a no-op refresh (all vectors reused, none removed, identity unchanged) now skips the write entirely. Previously every refresh rewrote the whole file (tens–hundreds of MB at scale) on the main thread, even when the output was byte-identical.

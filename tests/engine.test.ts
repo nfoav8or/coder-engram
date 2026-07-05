@@ -38,7 +38,7 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
 
   it("adds memory to the pending inbox by default", async () => {
     const { adapter, engine } = makeEngine({});
-    const path = await engine.addMemory({
+    const { path } = await engine.addMemory({
       type: "decision",
       content: "Use a local JSON index for v1.",
       project: "Demo",

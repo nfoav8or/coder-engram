@@ -102,7 +102,7 @@ export class AddMemoryModal extends Modal {
       relatedPaths: this.defaults.relatedPaths ?? [],
     };
     try {
-      const path = await this.engine.addMemory({
+      const { path, duplicate } = await this.engine.addMemory({
         type: entry.type!,
         content: entry.content!,
         project: entry.project,
@@ -112,7 +112,7 @@ export class AddMemoryModal extends Modal {
         source: "Obsidian UI",
         originTool: "add-memory-command",
       });
-      new Notice(`Memory proposed to ${path}`);
+      new Notice(duplicate ? `Already pending in ${path}` : `Memory proposed to ${path}`);
       this.close();
     } catch (err) {
       new Notice(`Failed to add memory: ${err instanceof Error ? err.message : String(err)}`);
