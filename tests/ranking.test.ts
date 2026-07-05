@@ -7,6 +7,7 @@ import {
   diversifyByNote,
   maxPerNoteFor,
   applyFilters,
+  dropNearDuplicates,
 } from "../src/retrieval/ranking";
 import { IndexedChunk } from "../src/indexing/index-manager";
 
@@ -25,6 +26,38 @@ function makeChunk(over: Partial<IndexedChunk> & { id: string }): IndexedChunk {
     ...over,
   };
 }
+
+describe("dropNearDuplicates", () => {
+  const r = (id: string, text: string) => ({ chunk: makeChunk({ id, text }) });
+
+  it("drops a near-identical result, keeping the higher-ranked copy", () => {
+    const text = "the indexing pipeline chunks markdown notes for retrieval";
+    const out = dropNearDuplicates([
+      r("a", text),
+      r("b", text), // duplicate content in another note
+      r("c", "vector cosine similarity ranks embedding results"),
+    ]);
+    expect(out.map((x) => x.chunk.id)).toEqual(["a", "c"]);
+  });
+
+  it("keeps distinct results", () => {
+    const out = dropNearDuplicates([r("a", "alpha beta gamma delta"), r("b", "epsilon zeta eta theta")]);
+    expect(out.map((x) => x.chunk.id)).toEqual(["a", "b"]);
+  });
+
+  it("keeps chunks that merely overlap rather than near-duplicate", () => {
+    // Only a 3-word prefix overlaps (Jaccard ≈ 0.2, well under 0.85).
+    const out = dropNearDuplicates([
+      r("a", "shared overlap prefix alpha beta gamma delta epsilon"),
+      r("b", "shared overlap prefix zeta eta theta iota kappa lambda"),
+    ]);
+    expect(out.map((x) => x.chunk.id)).toEqual(["a", "b"]);
+  });
+
+  it("does not treat empty-token chunks as duplicates of each other", () => {
+    expect(dropNearDuplicates([r("a", ""), r("b", "")])).toHaveLength(2);
+  });
+});
 
 describe("applyFilters", () => {
   const chunks = [makeChunk({ id: "a", notePath: "Notes/a.md", tags: ["x"] })];

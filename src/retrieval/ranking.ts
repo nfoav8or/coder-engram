@@ -177,3 +177,42 @@ export function diversifyByNote<T extends { chunk: IndexedChunk }>(
   }
   return selected;
 }
+
+/** Jaccard similarity of two token sets: |A∩B| / |A∪B|, in [0, 1]. */
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  let inter = 0;
+  for (const t of small) if (large.has(t)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+
+/** Token-set Jaccard at/above which two chunks are treated as the same memory.
+ * Tuned so "same content, different surrounding context" (e.g. a decision copied
+ * into a session note — differing headings/adjacent lines push identical prose to
+ * ~0.82) is caught, while genuinely distinct memories (which rarely share >80% of
+ * their tokens) are kept. */
+const NEAR_DUP_THRESHOLD = 0.8;
+
+/**
+ * Drop near-duplicate results, keeping the highest-ranked copy. Two results are
+ * near-duplicates when their chunk token sets overlap by at least `threshold`
+ * (Jaccard). This is recall-SAFE: the dropped content still appears in the kept,
+ * higher-ranked result — it only removes redundant copies (e.g. a decision that
+ * was applied into a session note, or overlapping chunk windows) that would
+ * otherwise cost tokens without adding information. Input order is preserved.
+ */
+export function dropNearDuplicates<T extends { chunk: IndexedChunk }>(
+  results: T[],
+  threshold = NEAR_DUP_THRESHOLD,
+): T[] {
+  const kept: T[] = [];
+  const keptTokens: Set<string>[] = [];
+  for (const r of results) {
+    const tokens = new Set(tokenizeChunk(r.chunk));
+    if (tokens.size > 0 && keptTokens.some((s) => jaccard(s, tokens) >= threshold)) continue;
+    kept.push(r);
+    keptTokens.push(tokens);
+  }
+  return kept;
+}

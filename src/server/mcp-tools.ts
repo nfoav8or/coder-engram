@@ -28,6 +28,7 @@ import {
   optionalNumber,
 } from "../utils/validation";
 import { MemoryEntry } from "../memory/memory-types";
+import { dropNearDuplicates } from "../retrieval/ranking";
 
 /** JSON-Schema-shaped tool description advertised via `tools/list`. */
 export interface ToolDefinition {
@@ -120,9 +121,10 @@ const searchTool: Tool = {
   definition: {
     name: "search_vault_memory",
     description:
-      "Search the vault's memory/RAG index (lexical BM25). Returns query-scoped " +
-      "chunks with their source note path, heading, and a snippet. Never returns " +
-      "whole notes or the full vault.",
+      "Search the vault's memory index (BM25 lexical by default, or vector/hybrid " +
+      "when an embedding provider is configured). Returns query-scoped chunks — note " +
+      "path, heading, line range, and a snippet — de-duplicated so the same memory " +
+      "isn't returned twice. Never returns whole notes or the full vault.",
     inputSchema: {
       type: "object",
       properties: {
@@ -163,14 +165,20 @@ const searchTool: Tool = {
     if (results.length === 0) {
       return `No results for "${query}".`;
     }
-    const blocks = results.map((r, i) => {
+    // Drop near-duplicate hits so the agent isn't fed (and charged tokens for)
+    // the same memory twice — e.g. a decision copied into a session note. The
+    // format is deliberately lean: note path, heading, and line range so the
+    // agent can locate or fetch the passage, then the snippet. No score float
+    // (rank order already conveys it) — every token returned should aid recall.
+    const distinct = dropNearDuplicates(results);
+    const blocks = distinct.map((r, i) => {
       const heading = r.chunk.headingPath.length ? r.chunk.headingPath.join(" › ") : r.chunk.heading || "(top)";
-      return [
-        `${i + 1}. ${r.chunk.notePath}  ·  ${heading}  ·  score ${r.score.toFixed(3)}`,
-        r.snippet,
-      ].join("\n");
+      const start = r.chunk.startLine + 1;
+      const end = Math.max(start, r.chunk.endLine + 1);
+      const lines = start === end ? `L${start}` : `L${start}–${end}`;
+      return `${i + 1}. ${r.chunk.notePath} › ${heading} (${lines})\n${r.snippet}`;
     });
-    return `${results.length} result(s):\n\n${blocks.join("\n\n")}`;
+    return `${distinct.length} result(s):\n\n${blocks.join("\n\n")}`;
   },
 };
 

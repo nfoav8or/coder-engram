@@ -5,6 +5,12 @@ All notable changes to Claude Code Engram are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **`search_vault_memory` returns leaner, higher-signal results to Claude Code.** Near-duplicate hits are collapsed (token-set overlap ≥ 0.8), so the agent isn't fed — or charged tokens for — the same memory twice (e.g. a decision copied into a session note); the dropped copy still survives in the higher-ranked result, so recall is unaffected. Each result now carries its **line range** and drops the low-signal score float — every returned token should aid recall. The tool description no longer claims "lexical BM25" only; it reflects the configured retrieval mode (lexical by default, vector/hybrid when an embedding provider is set). This affects the MCP output only; the desktop search UI is unchanged.
+
 ## [0.3.0] — 2026-07-05
 
 Milestone 7 — a deeper, safer Claude Code memory loop. New MCP tools to read a search hit's full passage and navigate the link graph, `add_memory` de-duplication so a looping agent can't flood the review inbox, and a persistence optimization — all on top of the safety-first model: agent writes still land in the review inbox, and nothing is written or edited without your approval. No settings/schema changes; an in-place upgrade from 0.2.0.
@@ -165,6 +171,7 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
+[Unreleased]: https://github.com/nfoav8or/claude-code-engram/compare/0.3.0...HEAD
 [0.3.0]: https://github.com/nfoav8or/claude-code-engram/releases/tag/0.3.0
 [0.2.0]: https://github.com/nfoav8or/claude-code-engram/releases/tag/0.2.0
 [0.1.0]: https://github.com/nfoav8or/claude-code-engram/releases/tag/0.1.0

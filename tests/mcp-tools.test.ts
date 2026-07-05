@@ -216,6 +216,25 @@ describe("RateLimiter.enforceWindow", () => {
     expect(out.length).toBeLessThan(maxChars + 300);
   });
 
+  it("search_vault_memory collapses near-duplicate hits and returns a lean, line-ranged format", async () => {
+    const decision = "We chose a local JSON index for indexing performance and offline retrieval.";
+    const { engine, ctx } = makeContext({
+      "Projects/x/decisions.md": `# Decisions\n\n${decision}`,
+      // Same decision copied verbatim into a session note — a real accumulation pattern.
+      "Sessions/2026-07-05.md": `# Session\n\n${decision}`,
+      "Notes/other.md": "# Other\n\nUnrelated vault content about markdown chunking windows.",
+    });
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    const out = await registry.call("search_vault_memory", { query: "local JSON index indexing" }, ctx);
+    // The duplicated decision appears once, not twice.
+    const occurrences = out.split(decision).length - 1;
+    expect(occurrences).toBe(1);
+    // Lean, higher-signal format: carries a line range, no "score" float.
+    expect(out).toMatch(/\(L\d/);
+    expect(out).not.toMatch(/score \d/);
+  });
+
   it("find_related_notes returns forward links and backlinks between indexed notes", async () => {
     const { engine, ctx } = makeContext({
       "Notes/a.md": "# A\n\nSee [[b]] for details.",
