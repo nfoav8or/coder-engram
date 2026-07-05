@@ -9,6 +9,7 @@ import { VaultAdapter } from "./core/vault-adapter";
 import { HttpClient } from "./core/http-client";
 import { VaultScanner } from "./indexing/vault-scanner";
 import { IndexManager, IndexedChunk, RefreshResult } from "./indexing/index-manager";
+import { relatedNotes, RelatedNotes } from "./indexing/link-graph";
 import { LexicalRetriever } from "./retrieval/lexical-retriever";
 import { VectorRetriever } from "./retrieval/vector-retriever";
 import { HybridRetriever } from "./retrieval/hybrid-retriever";
@@ -389,6 +390,25 @@ export class EngramEngine {
   getNoteChunks(notePath: string): IndexedChunk[] {
     const normalized = normalizeVaultRelativePath(notePath);
     return this.index.getChunks().filter((c) => c.notePath === normalized);
+  }
+
+  /**
+   * Notes related to an indexed note through the link graph: which indexed notes
+   * it links to, and which indexed notes link back to it.
+   *
+   * SECURITY / scope: only an INDEXED note can be navigated (same gate as
+   * summarizeNote); an excluded/unindexed note is refused. Resolution is over the
+   * index only, so unresolved links (to excluded or non-existent notes) are
+   * dropped and never surface.
+   */
+  getRelatedNotes(notePath: string): RelatedNotes {
+    const normalized = normalizeVaultRelativePath(notePath);
+    if (this.getNoteChunks(normalized).length === 0) {
+      throw new ConfigError(
+        `Note "${normalized}" is not indexed (it may be excluded or outside the vault). Only indexed notes can be navigated.`,
+      );
+    }
+    return relatedNotes(normalized, this.index.getChunks());
   }
 
   /**

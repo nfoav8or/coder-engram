@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - New MCP tool **`get_note_context`**: returns the full **indexed** text of a single note, passage by passage, each labelled with its heading and line range — the natural follow-up to a `search_vault_memory` hit, which only returns a short snippet. Inputs: `path` (required) and `maxChars` (optional, default 12000, max 50000; the note is truncated past this). Rate-limited (60/min).
+- New MCP tool **`find_related_notes`**: navigates the memory graph from one **indexed** note — returns the indexed notes it links to and the indexed notes that link back to it. Links resolve by note name (Obsidian-style, basename); only indexed notes appear and an excluded/unindexed note is refused. Input: `path` (required). Rate-limited (120/min).
 
 ### Changed
 

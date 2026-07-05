@@ -33,6 +33,7 @@ describe("ToolRegistry", () => {
     expect(names).toContain("get_recent_sessions");
     expect(names).toContain("reindex_vault");
     expect(names).toContain("get_note_context");
+    expect(names).toContain("find_related_notes");
     for (const def of registry.list()) {
       expect(def.inputSchema.type).toBe("object");
     }
@@ -213,6 +214,33 @@ describe("RateLimiter.enforceWindow", () => {
     expect(out).toContain("truncated");
     // Body is clipped to maxChars; header + footer are small bounded metadata.
     expect(out.length).toBeLessThan(maxChars + 300);
+  });
+
+  it("find_related_notes returns forward links and backlinks between indexed notes", async () => {
+    const { engine, ctx } = makeContext({
+      "Notes/a.md": "# A\n\nSee [[b]] for details.",
+      "Notes/b.md": "# B\n\nBack to [[a]].",
+      "Notes/c.md": "# C\n\nAlso references [[a]].",
+    });
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    const out = await registry.call("find_related_notes", { path: "Notes/a.md" }, ctx);
+    expect(out).toContain("Links to");
+    expect(out).toContain("Notes/b.md");
+    expect(out).toContain("Linked from");
+    expect(out).toContain("Notes/c.md");
+  });
+
+  it("find_related_notes refuses a note that is not indexed", async () => {
+    const { engine, ctx } = makeContext(
+      { "Secret/keys.md": "# Keys\n\n[[a]]" },
+      { excludedFolders: ["Secret"] },
+    );
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    await expect(
+      registry.call("find_related_notes", { path: "Secret/keys.md" }, ctx),
+    ).rejects.toThrow(/not indexed/i);
   });
 
   it("add_memory de-duplicates an identical proposal and says so", async () => {

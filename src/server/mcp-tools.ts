@@ -436,11 +436,48 @@ const getNoteContextTool: Tool = {
   },
 };
 
+const findRelatedNotesTool: Tool = {
+  definition: {
+    name: "find_related_notes",
+    description:
+      "Navigate the memory graph from one INDEXED note: returns the indexed notes " +
+      "it links to and the indexed notes that link back to it. Links resolve by " +
+      "note name (Obsidian-style); only notes in the index appear, and an excluded " +
+      "or unindexed note is refused.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Vault-relative path of the note to navigate from." },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  async handler(args, ctx) {
+    ctx.rateLimiter.enforceWindow("find_related_notes", SEARCH_MAX_PER_MINUTE, RATE_WINDOW_MS);
+    const obj = requireObject(args, "arguments");
+    const path = requireString(obj, "path", { maxLength: 1000 });
+    const related = ctx.engine.getRelatedNotes(path);
+    if (related.linksTo.length === 0 && related.linkedFrom.length === 0) {
+      return `No linked notes found for "${path}".`;
+    }
+    const section = (title: string, notes: string[]) =>
+      notes.length ? `${title}:\n${notes.map((n) => `- ${n}`).join("\n")}` : "";
+    return [
+      section("Links to", related.linksTo),
+      section("Linked from", related.linkedFrom),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  },
+};
+
 const ALL_TOOLS: Tool[] = [
   searchTool,
   addMemoryTool,
   summarizeNoteTool,
   getNoteContextTool,
+  findRelatedNotesTool,
   getProjectContextTool,
   getGlobalContextTool,
   listProjectsTool,
