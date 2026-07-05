@@ -64,6 +64,36 @@ describe("EmbeddingStore.embedIndex", () => {
     expect(result).toMatchObject({ embedded: 0, reused: 3, removed: 0 });
   });
 
+  it("skips the persist rewrite on a no-op refresh (nothing embedded or removed)", async () => {
+    const adapter = new InMemoryVaultAdapter("v");
+    const chunks = makeChunks(3);
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    await store.embedIndex(chunks, new MockEmbeddingProvider());
+    const mtimeAfterFirst = await adapter.getMtime(FILE);
+
+    // Same chunks, same provider identity → every vector reused → no disk write.
+    const result = await store.embedIndex(chunks, new MockEmbeddingProvider());
+    expect(result).toMatchObject({ embedded: 0, reused: 3, removed: 0 });
+    expect(await adapter.getMtime(FILE)).toBe(mtimeAfterFirst);
+    // In-memory vectors are still available for retrieval.
+    expect(store.vectorsMap().size).toBe(3);
+  });
+
+  it("still persists when a chunk changed (guard does not swallow real writes)", async () => {
+    const adapter = new InMemoryVaultAdapter("v");
+    const chunks = makeChunks(3);
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    await store.embedIndex(chunks, new MockEmbeddingProvider());
+    const mtimeAfterFirst = await adapter.getMtime(FILE);
+
+    const edited = [...chunks];
+    edited[0] = { id: "c0", text: "new text here" };
+    await store.embedIndex(edited, new MockEmbeddingProvider());
+    expect(await adapter.getMtime(FILE)).not.toBe(mtimeAfterFirst);
+  });
+
   it("re-embeds only the chunk whose text changed", async () => {
     const adapter = new InMemoryVaultAdapter("v");
     const chunks = makeChunks(3);

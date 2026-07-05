@@ -218,7 +218,14 @@ export class EmbeddingStore {
     }
 
     this.state = { version: EMBED_STORE_VERSION, model: identity, dim, vectors: nextVectors };
-    await this.persist();
+    // Persist only when the on-disk file would actually differ. When nothing was
+    // embedded or removed and the identity is unchanged, `nextVectors` is byte-for-
+    // byte identical to what is already on disk (every chunk was reused), so a
+    // full re-serialize + rewrite of a large embeddings.json (tens–hundreds of MB
+    // at scale) on the main thread would be wasted work.
+    if (embedded > 0 || removed > 0 || identityChanged) {
+      await this.persist();
+    }
     (opts.logger ?? this.logger).info("Embedded index", { embedded, reused, removed, dim });
     return { embedded, reused, removed, skipped: false };
   }
