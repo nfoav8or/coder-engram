@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  isPluginArtifact,
   resolveMemoryPaths,
   resolveProjectPaths,
   sanitizeProjectName,
@@ -28,6 +29,28 @@ describe("resolveMemoryPaths", () => {
         pendingFile: "pending-memory.md",
       }),
     ).toThrow(PathSecurityError);
+  });
+});
+
+describe("isPluginArtifact", () => {
+  const paths = resolveMemoryPaths("Claude Code");
+
+  it("matches the plugin's own Index/ and Config/ artifacts", () => {
+    expect(isPluginArtifact(paths, "Claude Code/Index/chunks.json")).toBe(true);
+    expect(isPluginArtifact(paths, "Claude Code/Index/embeddings.json")).toBe(true);
+    expect(isPluginArtifact(paths, "Claude Code/Config/plugin-settings-backup.json")).toBe(true);
+  });
+
+  it("does not match ordinary vault or memory files", () => {
+    expect(isPluginArtifact(paths, "Notes/a.md")).toBe(false);
+    // Memory files are user-reviewable content — edits there SHOULD reindex.
+    expect(isPluginArtifact(paths, "Claude Code/Memory/Inbox/pending-memory.md")).toBe(false);
+    // An Index/ look-alike outside the root is a normal file.
+    expect(isPluginArtifact(paths, "Other/Index/chunks.json")).toBe(false);
+  });
+
+  it("fails open (not an artifact) on an unparseable path", () => {
+    expect(isPluginArtifact(paths, "../escape.md")).toBe(false);
   });
 });
 

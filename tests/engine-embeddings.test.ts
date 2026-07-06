@@ -45,6 +45,26 @@ describe("EngramEngine M3 embeddings integration", () => {
     expect(results.some((r) => r.chunk.notePath === "Notes/rag.md")).toBe(true);
   });
 
+  it("serves hybrid results after a no-op refresh and picks up changes after a real one", async () => {
+    const { adapter, engine } = makeEngine({
+      ...DEFAULT_SETTINGS,
+      embeddingProvider: "mock",
+      retrievalMode: "hybrid",
+    });
+    await engine.reindex();
+    // No-op refresh: nothing changed, so no persist and no retriever rebuild —
+    // search must still serve from the existing vectors.
+    await engine.refresh();
+    const results = await engine.search({ query: "indexing markdown retrieval" });
+    expect(results.length).toBeGreaterThan(0);
+
+    // A real change must still flow through: new content becomes searchable.
+    adapter.touch("Notes/new.md", "# New\nA fresh note about quasar telemetry.");
+    await engine.refresh();
+    const after = await engine.search({ query: "quasar telemetry" });
+    expect(after.some((r) => r.chunk.notePath === "Notes/new.md")).toBe(true);
+  });
+
   it("switches none -> mock via updateSettings, then a reindex populates vectors and search works", async () => {
     const { engine } = makeEngine({ ...DEFAULT_SETTINGS, embeddingProvider: "none" });
     await engine.reindex();

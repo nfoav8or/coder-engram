@@ -84,6 +84,13 @@ export function chunkNote(note: ScannedNote, chunkOptions?: ChunkOptions): Index
 
 export class IndexManager {
   private index: VaultIndex | null = null;
+  /**
+   * mtime of every note seen by the last build/refresh — INCLUDING zero-chunk
+   * notes (empty files), which leave no trace in `chunks` and would otherwise
+   * read as "added" on every refresh. Rebuilt from chunks on load(), so a
+   * zero-chunk note reads as added once after a plugin reload, then settles.
+   */
+  private noteMtimes: Map<string, number> | null = null;
   private readonly chunkOptions?: ChunkOptions;
   private readonly logger: Logger;
   private readonly clock: () => number;
@@ -112,6 +119,7 @@ export class IndexManager {
     for (const note of notes) {
       chunks.push(...chunkNote(note, this.chunkOptions));
     }
+    this.noteMtimes = new Map(notes.map((n) => [n.path, n.mtime]));
     this.index = {
       metadata: {
         version: INDEX_VERSION,
@@ -141,23 +149,40 @@ export class IndexManager {
     const nextChunks: IndexedChunk[] = [];
     const seenNotes = new Set<string>();
 
+    // Note identity comes from the mtime map, not from chunks: a zero-chunk
+    // note (empty file) leaves no chunks, and deriving identity from chunks
+    // made such a note read as "added" on every refresh — which kept the
+    // all-unchanged fast path below from ever engaging. Fall back to
+    // chunk-derived mtimes for an index loaded from disk (a zero-chunk note
+    // then reads as added once, and settles).
+    const priorMtimes =
+      this.noteMtimes ??
+      new Map(Array.from(existingByNote, ([path, chunks]) => [path, chunks[0].mtime]));
+
     for (const note of notes) {
       seenNotes.add(note.path);
-      const prior = existingByNote.get(note.path);
-      if (prior && prior.length > 0 && prior[0].mtime === note.mtime) {
-        nextChunks.push(...prior);
+      const priorMtime = priorMtimes.get(note.path);
+      if (priorMtime === note.mtime) {
+        nextChunks.push(...(existingByNote.get(note.path) ?? []));
         result.unchanged++;
       } else {
         nextChunks.push(...chunkNote(note, this.chunkOptions));
-        if (prior) result.updated++;
+        if (priorMtime !== undefined) result.updated++;
         else result.added++;
       }
     }
 
-    for (const notePath of existingByNote.keys()) {
+    for (const notePath of priorMtimes.keys()) {
       if (!seenNotes.has(notePath)) result.removed++;
     }
+    this.noteMtimes = new Map(notes.map((n) => [n.path, n.mtime]));
 
+    // On an all-unchanged refresh, keep the PREVIOUS chunks array (same
+    // elements, possibly different scan order): retrieval memoizes corpus
+    // stats by chunks-array identity, so swapping in an equal-content array
+    // would silently re-pay the full stats build on the next query.
+    const noop =
+      result.added === 0 && result.updated === 0 && result.removed === 0 && this.index !== null;
     this.index = {
       metadata: {
         version: INDEX_VERSION,
@@ -165,7 +190,7 @@ export class IndexManager {
         noteCount: notes.length,
         chunkCount: nextChunks.length,
       },
-      chunks: nextChunks,
+      chunks: noop ? existing : nextChunks,
     };
     return result;
   }

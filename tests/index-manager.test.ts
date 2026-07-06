@@ -100,4 +100,50 @@ describe("IndexManager incremental refresh", () => {
     expect(result.updated).toBe(0);
     expect(result.added).toBe(0);
   });
+
+  it("preserves the chunks array identity across an all-unchanged refresh", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {
+      "Notes/a.md": "# Alpha\nstable",
+      "Notes/b.md": "# Beta\nalso stable",
+    });
+    const scanner = new VaultScanner(adapter);
+    const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
+    const notes = await scanner.scan(scanConfig());
+    mgr.build(notes);
+    const before = mgr.getChunks();
+    mgr.refresh(notes);
+    // Same ARRAY OBJECT, not just equal contents: retrieval memoizes corpus
+    // stats by chunks-array identity, so swapping in an equal-content array
+    // would silently re-pay the full stats build on the next query.
+    expect(mgr.getChunks()).toBe(before);
+
+    adapter.touch("Notes/a.md", "# Alpha\nCHANGED");
+    mgr.refresh(await scanner.scan(scanConfig()));
+    expect(mgr.getChunks()).not.toBe(before);
+  });
+
+  it("treats a zero-chunk (empty) note as unchanged, not perpetually added", async () => {
+    // An empty note produces no chunks, so chunk-derived identity would count
+    // it as "added" on EVERY refresh — keeping the all-unchanged fast path
+    // (skip persist, keep array identity) from ever engaging.
+    const adapter = new InMemoryVaultAdapter("v", {
+      "Notes/a.md": "# Alpha\nstable",
+      "Notes/empty.md": "",
+    });
+    const scanner = new VaultScanner(adapter);
+    const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
+    mgr.build(await scanner.scan(scanConfig()));
+    const before = mgr.getChunks();
+
+    const result = mgr.refresh(await scanner.scan(scanConfig()));
+    expect(result).toEqual({ added: 0, updated: 0, removed: 0, unchanged: 2 });
+    expect(mgr.getChunks()).toBe(before);
+
+    // An empty note gaining content is an update and becomes indexed.
+    adapter.touch("Notes/empty.md", "# Filled\nnow has content");
+    const result2 = mgr.refresh(await scanner.scan(scanConfig()));
+    expect(result2.updated).toBe(1);
+    expect(result2.added).toBe(0);
+    expect(mgr.getChunks().map((c) => c.notePath)).toContain("Notes/empty.md");
+  });
 });

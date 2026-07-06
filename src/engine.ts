@@ -268,7 +268,14 @@ export class EngramEngine {
     }
     const notes = await this.scanner.scan(toScanConfig(this.settings));
     const result = this.index.refresh(notes);
-    await this.index.persist();
+    // Persist only when something changed: a no-op persist re-serializes the
+    // whole index (tens of MB at scale) on the main thread, and — because the
+    // index files live inside the vault — its own writes re-fire the vault
+    // watcher and schedule the next debounced refresh, sustaining a
+    // refresh/serialize/write cycle with auto-indexing on.
+    if (result.added + result.updated + result.removed > 0) {
+      await this.index.persist();
+    }
     await this.embedIndex();
     return result;
   }
@@ -352,11 +359,17 @@ export class EngramEngine {
       }
       // Snapshot chunks now so a concurrent index mutation can't shift them mid-pass.
       const chunks = this.index.getChunks().map((c) => ({ id: c.id, text: c.text }));
-      await this.embeddingStore.embedIndex(chunks, provider, {
+      const pass = await this.embeddingStore.embedIndex(chunks, provider, {
         batchSize: this.settings.embeddingBatchSize,
         identity: this.vectorIdentity(),
       });
-      this.retriever = this.buildRetriever();
+      // Rebuild only when the pass changed vectors: the retriever snapshots the
+      // vector map at build time, so an unchanged map needs no rebuild — and a
+      // rebuild discards the lexical corpus-stats memo. (Vectors loaded from
+      // disk are handled by loadIndex, which rebuilds itself.)
+      if (pass.embedded > 0 || pass.removed > 0) {
+        this.retriever = this.buildRetriever();
+      }
     } catch (err) {
       this.logger.warn("Embedding pass failed; retrieval stays lexical", {
         error: err instanceof Error ? err.message : String(err),

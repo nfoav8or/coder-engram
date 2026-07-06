@@ -36,6 +36,27 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
     expect(engine2.getIndexStats().noteCount).toBe(1);
   });
 
+  it("skips the index rewrite on a no-op refresh (nothing changed)", async () => {
+    // Includes an empty note: zero-chunk notes must not defeat the no-op path.
+    const { adapter, engine } = makeEngine({ "Notes/a.md": "# A\nalpha content", "Notes/empty.md": "" });
+    await engine.reindex();
+    const chunksMtime = await adapter.getMtime("Claude Code/Index/chunks.json");
+    const metaMtime = await adapter.getMtime("Claude Code/Index/metadata.json");
+
+    const result = await engine.refresh();
+    expect(result.added + result.updated + result.removed).toBe(0);
+    // No write may happen here: the Index/ files live inside the vault, so a
+    // no-op refresh that persisted would re-fire the vault watcher and
+    // schedule the next refresh indefinitely (besides re-serializing the
+    // whole index on the main thread).
+    expect(await adapter.getMtime("Claude Code/Index/chunks.json")).toBe(chunksMtime);
+    expect(await adapter.getMtime("Claude Code/Index/metadata.json")).toBe(metaMtime);
+
+    adapter.touch("Notes/a.md", "# A\nchanged content");
+    await engine.refresh();
+    expect(await adapter.getMtime("Claude Code/Index/chunks.json")).not.toBe(chunksMtime);
+  });
+
   it("adds memory to the pending inbox by default", async () => {
     const { adapter, engine } = makeEngine({});
     const { path } = await engine.addMemory({

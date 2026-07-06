@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`get_note_context` accepts `startLine`/`endLine`** (1-based, matching the line ranges search results carry): only passages overlapping that span are returned. This fixes a dead-end in the agent loop — the tool previously assembled passages from the top of the note and hard-stopped at `maxChars`, so a search hit deep in a long note was unreachable by its own "natural follow-up". Pass the hit's line range to read exactly that region. A range matching no indexed passage reports the note's actual indexed span; the indexed-only gate is unchanged and checked first.
 
+### Performance
+
+- **A zero-change refresh is now actually free.** Previously every debounced auto-refresh (a) re-serialized and rewrote the whole `Index/chunks.json` + `metadata.json` on the main thread even when nothing changed — and because those files live inside the vault, the plugin's own writes re-fired the vault watcher and scheduled the next refresh, sustaining a permanent refresh/serialize/write cycle with auto-indexing on; and (b) swapped in a new (equal-content) chunks array, silently invalidating the memoized BM25 corpus stats so the next query re-paid the full stats build. Now: a no-op refresh skips the persist entirely, keeps the chunks-array identity (the stats memo survives), skips the retriever rebuild when the embedding pass changed nothing, and the file watcher ignores the plugin's own `Index/`/`Config/` writes altogether.
+
 ### Changed
 
 - **Search hits from the review inbox are labelled `[PENDING REVIEW — proposed, not yet accepted]`.** The inbox is ordinary vault Markdown, so after a reindex an agent's own unreviewed proposal is searchable — previously it came back indistinguishable from accepted memory, quietly bypassing the human review on the read side. The label closes that self-reinforcement loop while keeping the content searchable (an agent can still see that — and what — it already proposed). MCP output only.

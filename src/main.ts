@@ -6,8 +6,9 @@
  * ControlPanelActions so the settings tab and control panel stay decoupled.
  */
 
-import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, TAbstractFile, WorkspaceLeaf } from "obsidian";
 import { EngramEngine } from "./engine";
+import { isPluginArtifact } from "./memory/memory-types";
 import { ObsidianVaultAdapter } from "./core/obsidian-vault-adapter";
 import { ObsidianHttpClient } from "./core/obsidian-http-client";
 import {
@@ -329,11 +330,24 @@ export default class EngramPlugin
   }
 
   private registerFileWatchers(): void {
-    const trigger = () => this.debouncedRefresh();
+    // Ignore the plugin's own Index/ and Config/ writes: every refresh persists
+    // there, and reacting to our own events would schedule the next refresh
+    // indefinitely. Paths are re-read per event so a memory-root move applies.
+    const trigger = (file: TAbstractFile) => {
+      if (isPluginArtifact(this.engine.getPaths(), file.path)) return;
+      this.debouncedRefresh();
+    };
+    // A rename is suppressed only when BOTH ends are artifacts: a note renamed
+    // into Index/ still needs a refresh to drop its chunks under the old path.
+    const renameTrigger = (file: TAbstractFile, oldPath: string) => {
+      const paths = this.engine.getPaths();
+      if (isPluginArtifact(paths, file.path) && isPluginArtifact(paths, oldPath)) return;
+      this.debouncedRefresh();
+    };
     this.registerEvent(this.app.vault.on("modify", trigger));
     this.registerEvent(this.app.vault.on("create", trigger));
     this.registerEvent(this.app.vault.on("delete", trigger));
-    this.registerEvent(this.app.vault.on("rename", trigger));
+    this.registerEvent(this.app.vault.on("rename", renameTrigger));
   }
 
   private addCurrentNoteToProject(): void {

@@ -7,7 +7,7 @@
  * resolution throws rather than writing outside the root.
  */
 
-import { resolveInVault, joinVaultPath } from "../utils/paths";
+import { resolveInVault, joinVaultPath, isInsideRoot } from "../utils/paths";
 import { PathSecurityError } from "../utils/errors";
 
 export type MemoryType =
@@ -111,6 +111,21 @@ export function resolveMemoryPaths(
       conventions: resolveInVault(global, "conventions.md"),
     },
   };
+}
+
+/**
+ * True when `path` is one of the plugin's own machine-managed artifacts — the
+ * `Index/` cache files or the `Config/` settings backup. Vault-event watchers
+ * must ignore these: the plugin writes them while refreshing, and reacting to
+ * our own writes would schedule the next refresh indefinitely. An unparseable
+ * path returns false (fail open: treat it as a normal vault file).
+ */
+export function isPluginArtifact(paths: MemoryPaths, path: string): boolean {
+  try {
+    return isInsideRoot(paths.index, path) || isInsideRoot(paths.config, path);
+  } catch {
+    return false;
+  }
 }
 
 export interface ProjectPaths {
