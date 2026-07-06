@@ -153,8 +153,9 @@ const searchTool: Tool = {
     description:
       "Search the vault's memory index (BM25 lexical by default, or vector/hybrid " +
       "when an embedding provider is configured). Returns query-scoped chunks — note " +
-      "path, heading, line range, and a snippet — de-duplicated so the same memory " +
-      "isn't returned twice. Never returns whole notes or the full vault.",
+      "path, heading, line range, modified date, and a snippet — de-duplicated so " +
+      "the same memory isn't returned twice. Never returns whole notes or the full " +
+      "vault.",
     inputSchema: {
       type: "object",
       properties: {
@@ -216,8 +217,12 @@ const searchTool: Tool = {
       const start = r.chunk.startLine + 1;
       const end = Math.max(start, r.chunk.endLine + 1);
       const lines = start === end ? `L${start}` : `L${start}–${end}`;
+      // The note's modified date lets the agent judge staleness when memories
+      // conflict — a deliberate alternative to recency-RANKING, which would
+      // change scoring semantics. Day granularity; ~11 chars per result.
+      const modified = new Date(r.chunk.mtime).toISOString().slice(0, 10);
       const pending = r.chunk.notePath === pendingPath ? " [PENDING REVIEW — proposed, not yet accepted]" : "";
-      return `${i + 1}. ${r.chunk.notePath} › ${heading} (${lines})${pending}\n${r.snippet}`;
+      return `${i + 1}. ${r.chunk.notePath} › ${heading} (${lines}, ${modified})${pending}\n${r.snippet}`;
     });
     return `${distinct.length} result(s):\n\n${blocks.join("\n\n")}`;
   },

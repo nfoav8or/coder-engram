@@ -320,8 +320,9 @@ describe("RateLimiter.enforceWindow", () => {
     // The duplicated decision appears once, not twice.
     const occurrences = out.split(decision).length - 1;
     expect(occurrences).toBe(1);
-    // Lean, higher-signal format: carries a line range, no "score" float.
-    expect(out).toMatch(/\(L\d/);
+    // Lean, higher-signal format: carries a line range and the note's modified
+    // date (staleness judgment when memories conflict), no "score" float.
+    expect(out).toMatch(/\(L\d+[^)]*, \d{4}-\d{2}-\d{2}\)/);
     expect(out).not.toMatch(/score \d/);
   });
 
