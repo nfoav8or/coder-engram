@@ -3,7 +3,7 @@ import process from "node:process";
 import builtins from "builtin-modules";
 
 const banner = `/*
- * Claude Code Engram — bundled plugin artifact.
+ * Coder Engram — bundled plugin artifact.
  * This file is generated from src/. Do not edit directly.
  */`;
 
