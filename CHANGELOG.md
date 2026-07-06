@@ -5,7 +5,9 @@ All notable changes to Claude Code Engram are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] — 2026-07-06
+
+Milestone 8 — a sharper, safer, cheaper agent loop. Search hands the agent line-ranged, dated, de-duplicated results; `get_note_context` can read exactly the region a hit points at; unreviewed inbox proposals are labelled so they never masquerade as accepted memory; the session-priming tools are output-bounded and rate-limited; and indexing no longer reads unchanged files or rewrites unchanged indexes — closing a self-sustaining refresh cycle. One real bug fixed: embedding-provider changes in the settings tab now apply without a plugin reload. Every security invariant re-audited across the full delta (clean, 0 npm vulnerabilities); no settings/schema changes — an in-place upgrade from 0.3.0.
 
 ### Added
 
@@ -18,17 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **The bulk context reads are now bounded and rate-limited.** `get_project_context`, `get_global_context`, and `get_recent_sessions` — the session-priming tools — previously returned unbounded concatenations of whole memory files (and up to 20 full session notes) with no rate limit, so they grew into the loop's biggest token sink as a vault matured. They now accept `maxChars` (default 12000, max 50000), truncate past it with a pointer to targeted recall (`search_vault_memory` + `get_note_context`), and carry a 60/min sliding-window cap like the other read tools.
+- **Search results carry the note's modified date** (`YYYY-MM-DD`, in the result header next to the line range). `sinceDays` filtering already existed, but the agent couldn't see *which* hit was from yesterday versus two years ago — which is what matters when memories conflict. Display-only: a deliberate, recall-safe alternative to recency-*ranking*, which would change scoring semantics. MCP output only.
+- **Search hits from the review inbox are labelled `[PENDING REVIEW — proposed, not yet accepted]`.** The inbox is ordinary vault Markdown, so after a reindex an agent's own unreviewed proposal is searchable — previously it came back indistinguishable from accepted memory, quietly bypassing the human review on the read side. The label closes that self-reinforcement loop while keeping the content searchable (an agent can still see that — and what — it already proposed). MCP output only.
+- **`search_vault_memory` returns leaner, higher-signal results to Claude Code.** Near-duplicate hits are collapsed (token-set overlap ≥ 0.8), so the agent isn't fed — or charged tokens for — the same memory twice (e.g. a decision copied into a session note); the dropped copy still survives in the higher-ranked result, so recall is unaffected. Dropped duplicates no longer shrink the page: the tool fetches a deeper candidate pool (2× the requested limit) and backfills with the next distinct results, re-applying the per-note diversity cap at the final page size — so `limit` now means "up to this many *distinct* memories". Each result now carries its **line range** and drops the low-signal score float — every returned token should aid recall. The tool description no longer claims "lexical BM25" only; it reflects the configured retrieval mode (lexical by default, vector/hybrid when an embedding provider is set). This affects the MCP output only; the desktop search UI is unchanged.
 
 ### Performance
 
 - **A refresh now reads only changed notes from disk.** The vault scanner read the full content of every eligible note on every debounced refresh (the mtime short-circuit happened after the read), so "incremental" held for chunking but not for file I/O — every vault event re-read the whole vault. The engine now passes the index's known per-note mtimes into the scan, which skips unchanged files without touching disk (re-scan at 2k notes: ~60 ms → ~2 ms in-memory; on a real vault the saving is actual disk I/O). Safety: the fast path is invalidated whenever the scan config changes, so adding an excluded tag/folder still re-checks every note on the next refresh — an exclusion is enforced by verdict, never assumed from a stale scan.
 - **A zero-change refresh is now actually free.** Previously every debounced auto-refresh (a) re-serialized and rewrote the whole `Index/chunks.json` + `metadata.json` on the main thread even when nothing changed — and because those files live inside the vault, the plugin's own writes re-fired the vault watcher and scheduled the next refresh, sustaining a permanent refresh/serialize/write cycle with auto-indexing on; and (b) swapped in a new (equal-content) chunks array, silently invalidating the memoized BM25 corpus stats so the next query re-paid the full stats build. Now: a no-op refresh skips the persist entirely, keeps the chunks-array identity (the stats memo survives), skips the retriever rebuild when the embedding pass changed nothing, and the file watcher ignores the plugin's own `Index/`/`Config/` writes altogether.
-
-### Changed
-
-- **Search results carry the note's modified date** (`YYYY-MM-DD`, in the result header next to the line range). `sinceDays` filtering already existed, but the agent couldn't see *which* hit was from yesterday versus two years ago — which is what matters when memories conflict. Display-only: a deliberate, recall-safe alternative to recency-*ranking*, which would change scoring semantics. MCP output only.
-- **Search hits from the review inbox are labelled `[PENDING REVIEW — proposed, not yet accepted]`.** The inbox is ordinary vault Markdown, so after a reindex an agent's own unreviewed proposal is searchable — previously it came back indistinguishable from accepted memory, quietly bypassing the human review on the read side. The label closes that self-reinforcement loop while keeping the content searchable (an agent can still see that — and what — it already proposed). MCP output only.
-- **`search_vault_memory` returns leaner, higher-signal results to Claude Code.** Near-duplicate hits are collapsed (token-set overlap ≥ 0.8), so the agent isn't fed — or charged tokens for — the same memory twice (e.g. a decision copied into a session note); the dropped copy still survives in the higher-ranked result, so recall is unaffected. Dropped duplicates no longer shrink the page: the tool fetches a deeper candidate pool (2× the requested limit) and backfills with the next distinct results, re-applying the per-note diversity cap at the final page size — so `limit` now means "up to this many *distinct* memories". Each result now carries its **line range** and drops the low-signal score float — every returned token should aid recall. The tool description no longer claims "lexical BM25" only; it reflects the configured retrieval mode (lexical by default, vector/hybrid when an embedding provider is set). This affects the MCP output only; the desktop search UI is unchanged.
 
 ## [0.3.0] — 2026-07-05
 
@@ -191,6 +190,7 @@ First working local memory + lexical RAG layer.
 - No cloud services or API keys required for the default experience.
 
 [Unreleased]: https://github.com/nfoav8or/claude-code-engram/compare/0.3.0...HEAD
+[0.4.0]: https://github.com/nfoav8or/claude-code-engram/releases/tag/0.4.0
 [0.3.0]: https://github.com/nfoav8or/claude-code-engram/releases/tag/0.3.0
 [0.2.0]: https://github.com/nfoav8or/claude-code-engram/releases/tag/0.2.0
 [0.1.0]: https://github.com/nfoav8or/claude-code-engram/releases/tag/0.1.0
