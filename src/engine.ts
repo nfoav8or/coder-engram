@@ -100,6 +100,11 @@ export class EngramEngine {
    * snapshot (not object compare) for the same aliasing reason as
    * lastEmbeddingKey. Empty = no scan yet → next refresh reads everything. */
   private lastScanConfigKey = "";
+  /** Scan config as of the last constructor/updateSettings call — detects a
+   * scan-relevant settings CHANGE (vs lastScanConfigKey, which tracks what the
+   * index was last scanned under). Own string state for the same in-place-
+   * mutation aliasing reason as lastEmbeddingKey. */
+  private lastScanSettingsKey: string;
 
   constructor(
     private readonly adapter: VaultAdapter,
@@ -110,6 +115,7 @@ export class EngramEngine {
   ) {
     this.settings = settings;
     this.lastEmbeddingKey = embeddingKey(settings);
+    this.lastScanSettingsKey = JSON.stringify(toScanConfig(settings));
     this.http = deps.http;
     this.paths = EngramEngine.resolvePaths(settings);
     this.scanner = new VaultScanner(adapter, logger.child("scanner"));
@@ -196,9 +202,15 @@ export class EngramEngine {
    *
    * @returns rootChanged — the memory root moved and the index was reset (the
    * host should reload/reindex); embeddingChanged — the embedding identity or
-   * retrieval mode moved (the host should syncEmbeddings() in the background).
+   * retrieval mode moved (the host should syncEmbeddings() in the background);
+   * scanConfigChanged — the indexing eligibility rules moved (the host should
+   * refresh so new exclusions actually drop notes from the index).
    */
-  updateSettings(settings: EngramSettings): { rootChanged: boolean; embeddingChanged: boolean } {
+  updateSettings(settings: EngramSettings): {
+    rootChanged: boolean;
+    embeddingChanged: boolean;
+    scanConfigChanged: boolean;
+  } {
     const previousRoot = this.paths.root;
     this.settings = settings;
     this.paths = EngramEngine.resolvePaths(settings);
@@ -206,6 +218,9 @@ export class EngramEngine {
     const nextEmbeddingKey = embeddingKey(settings);
     const embeddingChanged = nextEmbeddingKey !== this.lastEmbeddingKey;
     this.lastEmbeddingKey = nextEmbeddingKey;
+    const nextScanSettingsKey = JSON.stringify(toScanConfig(settings));
+    const scanConfigChanged = nextScanSettingsKey !== this.lastScanSettingsKey;
+    this.lastScanSettingsKey = nextScanSettingsKey;
 
     // Writer options can change without a root change, so always rebuild it.
     this.writer = this.buildWriter();
@@ -223,7 +238,7 @@ export class EngramEngine {
       this.embeddingProvider = this.buildProvider();
       this.retriever = this.buildRetriever();
     }
-    return { rootChanged, embeddingChanged };
+    return { rootChanged, embeddingChanged, scanConfigChanged };
   }
 
   getPaths(): MemoryPaths {

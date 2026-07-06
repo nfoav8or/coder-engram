@@ -42,6 +42,7 @@ export default class EngramPlugin
   private engine!: EngramEngine;
   private server!: LocalServer;
   private debouncedRefresh!: Debounced<[]>;
+  private debouncedConfigRefresh!: Debounced<[]>;
 
   async onload(): Promise<void> {
     this.settings = migrateSettings(await this.loadData());
@@ -58,6 +59,9 @@ export default class EngramPlugin
 
     this.debouncedRefresh = debounce(() => {
       void this.autoRefresh();
+    }, AUTO_INDEX_DEBOUNCE_MS);
+    this.debouncedConfigRefresh = debounce(() => {
+      void this.configRefresh();
     }, AUTO_INDEX_DEBOUNCE_MS);
 
     this.registerView(
@@ -87,6 +91,7 @@ export default class EngramPlugin
 
   onunload(): void {
     this.debouncedRefresh?.cancel();
+    this.debouncedConfigRefresh?.cancel();
     void this.server?.stop();
   }
 
@@ -97,7 +102,8 @@ export default class EngramPlugin
   }
 
   async onSettingsChanged(): Promise<void> {
-    const { rootChanged, embeddingChanged } = this.engine.updateSettings(this.settings);
+    const { rootChanged, embeddingChanged, scanConfigChanged } =
+      this.engine.updateSettings(this.settings);
     // Only the memory-root move resets the index; reload it from the new
     // location so search/stats aren't left empty.
     if (rootChanged) await this.engine.loadIndex();
@@ -115,6 +121,12 @@ export default class EngramPlugin
     // effect without a manual reindex. The engine owns the "what forces a
     // re-embed" definition, so this can't drift from what it rebuilds.
     if (embeddingChanged) void this.syncEmbeddings();
+
+    // If the eligibility rules changed (excluded folders/tags/patterns,
+    // included folders), refresh so newly-excluded notes actually leave the
+    // index. Skipped on a root change — that path already reloads/reindexes.
+    // Debounced: the settings tab fires per edit.
+    if (!rootChanged && scanConfigChanged) this.debouncedConfigRefresh();
 
     this.refreshControlPanel();
   }
@@ -258,6 +270,23 @@ export default class EngramPlugin
       this.refreshControlPanel();
     } catch (err) {
       this.logger.warn("Auto-refresh failed", { error: toMessage(err) });
+    }
+  }
+
+  /**
+   * One-shot refresh after the scan config changed. NOT gated on
+   * autoIndexOnChange (that governs continuous file-event indexing): a new
+   * exclusion must drop the excluded notes from the index even for users who
+   * never enabled auto-indexing — otherwise they stay searchable until a
+   * manual reindex or an unrelated vault event.
+   */
+  private async configRefresh(): Promise<void> {
+    if (!this.settings.indexingEnabled) return;
+    try {
+      await this.engine.refresh();
+      this.refreshControlPanel();
+    } catch (err) {
+      this.logger.warn("Config-change refresh failed", { error: toMessage(err) });
     }
   }
 

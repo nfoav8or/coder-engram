@@ -173,6 +173,16 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
     const changed = engine.updateSettings({ ...DEFAULT_SETTINGS, defaultProject: "Demo" });
     expect(changed.rootChanged).toBe(false);
     expect(changed.embeddingChanged).toBe(false);
+    expect(changed.scanConfigChanged).toBe(false);
+
+    // A scan-eligibility change is reported so the host can refresh — even
+    // when the ONE shared settings object is mutated in place (the production
+    // settings-tab pattern).
+    const shared = { ...DEFAULT_SETTINGS };
+    engine.updateSettings(shared);
+    shared.excludedTags = ["private"];
+    expect(engine.updateSettings(shared).scanConfigChanged).toBe(true);
+    expect(engine.updateSettings(shared).scanConfigChanged).toBe(false); // settled
     expect(engine.getIndexStats().chunkCount).toBe(before); // index NOT wiped
     expect((await engine.search({ query: "alpha" })).length).toBeGreaterThan(0);
   });

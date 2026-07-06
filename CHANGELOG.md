@@ -5,6 +5,12 @@ All notable changes to Claude Code Engram are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Changing the indexing exclusions now takes effect on its own.** Adding an excluded folder/tag/pattern (or narrowing the included folders) previously left already-indexed notes searchable — and their vectors cached — until a manual reindex or an unrelated vault event happened to fire a refresh. `updateSettings` now reports `scanConfigChanged` and the plugin schedules a debounced refresh in response, gated only on `indexingEnabled` (not on `autoIndexOnChange`, which governs continuous file-event indexing). Follows the 0.4.0 audit's recommendation.
+
 ## [0.4.0] — 2026-07-06
 
 Milestone 8 — a sharper, safer, cheaper agent loop. Search hands the agent line-ranged, dated, de-duplicated results; `get_note_context` can read exactly the region a hit points at; unreviewed inbox proposals are labelled so they never masquerade as accepted memory; the session-priming tools are output-bounded and rate-limited; and indexing no longer reads unchanged files or rewrites unchanged indexes — closing a self-sustaining refresh cycle. One real bug fixed: embedding-provider changes in the settings tab now apply without a plugin reload. Every security invariant re-audited across the full delta (clean, 0 npm vulnerabilities); no settings/schema changes — an in-place upgrade from 0.3.0.
