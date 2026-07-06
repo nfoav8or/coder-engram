@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatLineRange } from "../src/ui/format";
+import { formatLineRange, formatModifiedDate } from "../src/ui/format";
 
 describe("formatLineRange", () => {
   it("renders a single 0-based line as a 1-based 'Line N'", () => {
@@ -15,5 +15,16 @@ describe("formatLineRange", () => {
   it("never renders an end before the start", () => {
     // Defensive: a malformed endLine < startLine collapses to a single line.
     expect(formatLineRange(5, 3)).toBe("Line 6");
+  });
+});
+
+describe("formatModifiedDate", () => {
+  it("renders an epoch-ms mtime as a UTC YYYY-MM-DD day", () => {
+    expect(formatModifiedDate(Date.UTC(2026, 6, 5, 23, 59))).toBe("2026-07-05");
+  });
+
+  it("returns empty for a non-finite mtime", () => {
+    expect(formatModifiedDate(NaN)).toBe("");
+    expect(formatModifiedDate(Infinity)).toBe("");
   });
 });

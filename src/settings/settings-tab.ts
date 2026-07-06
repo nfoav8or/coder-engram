@@ -30,9 +30,45 @@ export class EngramSettingTab extends PluginSettingTab {
     return this.host.settings;
   }
 
+  /** Set by text-field edits; flushed to a single commit on blur / tab close. */
+  private dirty = false;
+  /** Raw memory-root text, validated only at flush so half-typed roots never
+   * reload the index (and the user isn't Noticed per keystroke). */
+  private rawMemoryRoot: string | null = null;
+
   private async commit(): Promise<void> {
     await this.host.saveSettings();
     await this.host.onSettingsChanged();
+  }
+
+  /**
+   * Text fields update settings state per keystroke but COMMIT only when the
+   * field loses focus (or the tab closes): a commit restarts subsystems —
+   * server rebind, index reload from a half-typed memory root — so committing
+   * on every input event turns typing into a restart storm.
+   */
+  private deferCommit(t: { inputEl: HTMLInputElement | HTMLTextAreaElement }): void {
+    t.inputEl.addEventListener("blur", () => void this.flushCommit());
+  }
+
+  private async flushCommit(): Promise<void> {
+    if (this.rawMemoryRoot !== null) {
+      const value = this.rawMemoryRoot.trim();
+      this.rawMemoryRoot = null;
+      try {
+        this.s.memoryRoot = normalizeVaultRelativePath(value || "Claude Code");
+      } catch {
+        new Notice("Invalid memory root: must be a relative path inside the vault. Keeping the previous value.");
+      }
+    }
+    if (!this.dirty) return;
+    this.dirty = false;
+    await this.commit();
+  }
+
+  hide(): void {
+    void this.flushCommit();
+    super.hide();
   }
 
   display(): void {
@@ -60,61 +96,59 @@ export class EngramSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Memory root")
       .setDesc("Vault-relative folder for plugin-managed memory. Must stay inside the vault.")
-      .addText((t) =>
-        t
-          .setPlaceholder("Claude Code")
+      .addText((t) => {
+        t.setPlaceholder("Claude Code")
           .setValue(this.s.memoryRoot)
-          .onChange(async (v) => {
-            const value = v.trim();
-            try {
-              const normalized = normalizeVaultRelativePath(value || "Claude Code");
-              this.s.memoryRoot = normalized;
-              await this.commit();
-            } catch {
-              new Notice("Invalid memory root: must be a relative path inside the vault.");
-            }
-          }),
-      );
+          .onChange((v) => {
+            this.rawMemoryRoot = v;
+            this.dirty = true;
+          });
+        this.deferCommit(t);
+      });
 
     new Setting(containerEl)
       .setName("Included folders")
       .setDesc("Allowlist (one per line or comma-separated). Empty = whole vault.")
-      .addTextArea((t) =>
-        t.setValue(this.s.includedFolders.join("\n")).onChange(async (v) => {
+      .addTextArea((t) => {
+        t.setValue(this.s.includedFolders.join("\n")).onChange((v) => {
           this.s.includedFolders = parseList(v);
-          await this.commit();
-        }),
-      );
+          this.dirty = true;
+        });
+        this.deferCommit(t);
+      });
 
     new Setting(containerEl)
       .setName("Excluded folders")
       .setDesc("Denylist of folders to skip.")
-      .addTextArea((t) =>
-        t.setValue(this.s.excludedFolders.join("\n")).onChange(async (v) => {
+      .addTextArea((t) => {
+        t.setValue(this.s.excludedFolders.join("\n")).onChange((v) => {
           this.s.excludedFolders = parseList(v);
-          await this.commit();
-        }),
-      );
+          this.dirty = true;
+        });
+        this.deferCommit(t);
+      });
 
     new Setting(containerEl)
       .setName("Excluded tags")
       .setDesc("Notes carrying any of these tags are never indexed.")
-      .addTextArea((t) =>
-        t.setValue(this.s.excludedTags.join("\n")).onChange(async (v) => {
+      .addTextArea((t) => {
+        t.setValue(this.s.excludedTags.join("\n")).onChange((v) => {
           this.s.excludedTags = parseList(v);
-          await this.commit();
-        }),
-      );
+          this.dirty = true;
+        });
+        this.deferCommit(t);
+      });
 
     new Setting(containerEl)
       .setName("Excluded path patterns")
       .setDesc("Glob (*, **) or substring patterns for sensitive notes to skip.")
-      .addTextArea((t) =>
-        t.setValue(this.s.excludedPathPatterns.join("\n")).onChange(async (v) => {
+      .addTextArea((t) => {
+        t.setValue(this.s.excludedPathPatterns.join("\n")).onChange((v) => {
           this.s.excludedPathPatterns = parseList(v);
-          await this.commit();
-        }),
-      );
+          this.dirty = true;
+        });
+        this.deferCommit(t);
+      });
 
     new Setting(containerEl)
       .setName("Auto-index on file change")
@@ -129,12 +163,13 @@ export class EngramSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Default project")
       .setDesc("Used by project-context and add-to-project commands.")
-      .addText((t) =>
-        t.setValue(this.s.defaultProject).onChange(async (v) => {
+      .addText((t) => {
+        t.setValue(this.s.defaultProject).onChange((v) => {
           this.s.defaultProject = v.trim();
-          await this.commit();
-        }),
-      );
+          this.dirty = true;
+        });
+        this.deferCommit(t);
+      });
 
     new Setting(containerEl)
       .setName("Rebuild index")
@@ -222,12 +257,13 @@ export class EngramSettingTab extends PluginSettingTab {
             ? "Ollama model name, e.g. nomic-embed-text or mxbai-embed-large."
             : "Model name, e.g. text-embedding-3-small.",
         )
-        .addText((t) =>
-          t.setValue(this.s.embeddingModel).onChange(async (v) => {
+        .addText((t) => {
+          t.setValue(this.s.embeddingModel).onChange((v) => {
             this.s.embeddingModel = v.trim();
-            await this.commit();
-          }),
-        );
+            this.dirty = true;
+          });
+          this.deferCommit(t);
+        });
 
       new Setting(containerEl)
         .setName("Endpoint")
@@ -236,15 +272,15 @@ export class EngramSettingTab extends PluginSettingTab {
             ? "Base URL of the Ollama server. Default http://127.0.0.1:11434."
             : "Base URL of the OpenAI-compatible API, including any version prefix (e.g. https://api.openai.com/v1).",
         )
-        .addText((t) =>
-          t
-            .setPlaceholder(provider === "ollama" ? "http://127.0.0.1:11434" : "https://api.openai.com/v1")
+        .addText((t) => {
+          t.setPlaceholder(provider === "ollama" ? "http://127.0.0.1:11434" : "https://api.openai.com/v1")
             .setValue(this.s.embeddingEndpoint)
-            .onChange(async (v) => {
+            .onChange((v) => {
               this.s.embeddingEndpoint = v.trim();
-              await this.commit();
-            }),
-        );
+              this.dirty = true;
+            });
+          this.deferCommit(t);
+        });
     }
 
     if (provider === "openai-compatible") {
@@ -252,11 +288,12 @@ export class EngramSettingTab extends PluginSettingTab {
         .setName("API key")
         .setDesc("Bearer token for the endpoint. Stored locally and never logged.")
         .addText((t) => {
-          t.setPlaceholder("(required)").setValue(this.s.embeddingApiKey).onChange(async (v) => {
+          t.setPlaceholder("(required)").setValue(this.s.embeddingApiKey).onChange((v) => {
             this.s.embeddingApiKey = v.trim();
-            await this.commit();
+            this.dirty = true;
           });
           t.inputEl.type = "password";
+          this.deferCommit(t);
         });
     }
 
@@ -264,15 +301,16 @@ export class EngramSettingTab extends PluginSettingTab {
       new Setting(containerEl)
         .setName("Batch size")
         .setDesc("Chunks per embedding request (1–512). Lower this if the provider rejects large batches.")
-        .addText((t) =>
-          t.setValue(String(this.s.embeddingBatchSize)).onChange(async (v) => {
+        .addText((t) => {
+          t.setValue(String(this.s.embeddingBatchSize)).onChange((v) => {
             const n = Math.trunc(Number(v));
             if (Number.isFinite(n) && n >= 1 && n <= 512) {
               this.s.embeddingBatchSize = n;
-              await this.commit();
+              this.dirty = true;
             }
-          }),
-        );
+          });
+          this.deferCommit(t);
+        });
     }
   }
 
@@ -300,16 +338,17 @@ export class EngramSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Host")
       .setDesc("Bind address. Leave as 127.0.0.1 unless you fully understand the risk.")
-      .addText((t) =>
-        t.setValue(this.s.server.host).onChange(async (v) => {
+      .addText((t) => {
+        t.setValue(this.s.server.host).onChange((v) => {
           const host = v.trim() || "127.0.0.1";
           if (host !== "127.0.0.1" && host !== "localhost") {
             new Notice("Warning: binding the server to a non-localhost address exposes memory to your network.");
           }
           this.s.server.host = host;
-          await this.commit();
-        }),
-      );
+          this.dirty = true;
+        });
+        this.deferCommit(t);
+      });
 
     new Setting(containerEl)
       .setName("Allow non-localhost binding")
@@ -327,25 +366,27 @@ export class EngramSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Port")
-      .addText((t) =>
-        t.setValue(String(this.s.server.port)).onChange(async (v) => {
+      .addText((t) => {
+        t.setValue(String(this.s.server.port)).onChange((v) => {
           const port = Number(v);
           if (Number.isInteger(port) && port >= 1 && port <= 65535) {
             this.s.server.port = port;
-            await this.commit();
+            this.dirty = true;
           }
-        }),
-      );
+        });
+        this.deferCommit(t);
+      });
 
     new Setting(containerEl)
       .setName("Token")
       .setDesc("Required auth token for server requests. Strongly recommended; mandatory for non-localhost.")
       .addText((t) => {
-        t.setPlaceholder("(set a strong token)").setValue(this.s.server.token).onChange(async (v) => {
+        t.setPlaceholder("(set a strong token)").setValue(this.s.server.token).onChange((v) => {
           this.s.server.token = v.trim();
-          await this.commit();
+          this.dirty = true;
         });
         t.inputEl.type = "password";
+        this.deferCommit(t);
       })
       .addButton((b) =>
         b.setButtonText("Generate").onClick(async () => {

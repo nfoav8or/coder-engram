@@ -51,6 +51,13 @@ export interface ServerAddress {
 export class LocalServer {
   private server: http.Server | null = null;
   private address: ServerAddress | null = null;
+  /** Settings SNAPSHOT taken at the last start() (deep-copied): the host
+   * mutates its one live settings object per keystroke in the settings tab,
+   * so auth and the tools must see committed state — never a half-typed
+   * token — and the handler reads this field, not a live reference. */
+  private settings: EngramSettings | null = null;
+  /** Server sub-config the current listener was bound with. */
+  private boundConfigKey = "";
   private readonly registry = new ToolRegistry();
   private readonly rateLimiter: RateLimiter;
   private readonly clock: () => number;
@@ -116,12 +123,25 @@ export class LocalServer {
   }
 
   private async doStart(settings: EngramSettings): Promise<ServerAddress> {
+    // Restarting is disruptive (kills in-flight requests), and the settings
+    // tab commits on every edit — skip the rebind when the server sub-config
+    // is unchanged. Non-server settings still take effect: the handler reads
+    // `this.settings`, refreshed here.
+    // Deep-copy: `settings` is the host's live object, mutated in place by the
+    // settings tab per keystroke. Every field here is plain JSON data.
+    const snapshot = JSON.parse(JSON.stringify(settings)) as EngramSettings;
+    const configKey = JSON.stringify(snapshot.server);
+    if (this.server && this.address && configKey === this.boundConfigKey) {
+      this.settings = snapshot;
+      return this.address;
+    }
+
     // Serialized via enqueue(), so calling doStop() directly here is safe.
     if (this.server) await this.doStop();
 
-    const address = LocalServer.validateConfig(settings);
+    const address = LocalServer.validateConfig(snapshot);
     const nonLocal = !isLoopbackHost(address.host);
-    const tokenSet = settings.server.token.trim() !== "";
+    const tokenSet = snapshot.server.token.trim() !== "";
 
     // Security-relevant startup event. Never logs the token itself.
     this.opts.logger.info("Starting local server", {
@@ -138,7 +158,10 @@ export class LocalServer {
     }
 
     const server = http.createServer((req, res) => {
-      this.handleRequest(req, res, settings, address.host).catch((err) => {
+      // Read the last COMMITTED snapshot so non-server settings changes (which
+      // skip the rebind above) still reach auth and the tool context — while
+      // in-flight edits to the host's live object never do.
+      this.handleRequest(req, res, this.settings ?? snapshot, address.host).catch((err) => {
         this.opts.logger.error("Unhandled request error", { error: toMessage(err) });
         endJson(res, 500, { error: "Internal error." });
       });
@@ -151,6 +174,8 @@ export class LocalServer {
       this.opts.logger.error("Server error", { error: toMessage(err) });
     });
     this.server = server;
+    this.settings = snapshot;
+    this.boundConfigKey = configKey;
     // Reflect the actually-bound port (in case port 0 was requested for tests).
     const bound = server.address();
     if (bound && typeof bound === "object") {
@@ -170,6 +195,8 @@ export class LocalServer {
     if (!server) return;
     this.server = null;
     this.address = null;
+    this.settings = null;
+    this.boundConfigKey = "";
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
       // Force-close idle keep-alive sockets so close() resolves promptly.

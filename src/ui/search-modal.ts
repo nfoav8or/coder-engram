@@ -7,7 +7,7 @@ import { App, MarkdownView, Modal, Notice, Setting, TFile } from "obsidian";
 import { EngramEngine } from "../engine";
 import { RetrievalResult } from "../retrieval/retriever";
 import { findTermMatches } from "../retrieval/ranking";
-import { formatLineRange } from "./format";
+import { formatLineRange, formatModifiedDate } from "./format";
 
 export class SearchModal extends Modal {
   private query = "";
@@ -52,6 +52,11 @@ export class SearchModal extends Modal {
     });
   }
 
+  /** Monotonic search sequence: in vector/hybrid mode a search awaits a network
+   * embed, so a slow older query can resolve AFTER a newer one — its results
+   * must be dropped, not rendered over the fresh ones. */
+  private searchSeq = 0;
+
   private async runSearch(): Promise<void> {
     const q = this.query.trim();
     this.resultsEl.empty();
@@ -59,13 +64,18 @@ export class SearchModal extends Modal {
       this.resultsEl.createEl("p", { text: "Enter a query.", cls: "engram-stat-row" });
       return;
     }
+    const seq = ++this.searchSeq;
     let results: RetrievalResult[] = [];
     try {
       results = await this.engine.search({ query: q, limit: 15 });
     } catch (err) {
-      new Notice(`Search failed: ${err instanceof Error ? err.message : String(err)}`);
+      if (seq === this.searchSeq) {
+        new Notice(`Search failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
       return;
     }
+    if (seq !== this.searchSeq) return; // a newer search superseded this one
+    this.resultsEl.empty(); // clear anything an interleaved run left behind
     if (results.length === 0) {
       this.resultsEl.createEl("p", {
         text: "No results. Try reindexing the vault, or a different query.",
@@ -85,7 +95,13 @@ export class SearchModal extends Modal {
     if (chunk.heading) {
       el.createDiv({ cls: "engram-result-heading", text: chunk.heading });
     }
-    el.createDiv({ cls: "engram-result-lines", text: formatLineRange(chunk.startLine, chunk.endLine) });
+    const modified = formatModifiedDate(chunk.mtime);
+    el.createDiv({
+      cls: "engram-result-lines",
+      text: modified
+        ? `${formatLineRange(chunk.startLine, chunk.endLine)} · ${modified}`
+        : formatLineRange(chunk.startLine, chunk.endLine),
+    });
     const snippetEl = el.createDiv({ cls: "engram-result-snippet" });
     this.renderHighlighted(snippetEl, result.snippet, result.matchedTerms);
 

@@ -202,6 +202,80 @@ describe("LocalServer over a real socket", () => {
     expect(res.status).toBe(202);
   });
 
+  it("start() with an unchanged server config skips the rebind; a changed config restarts", async () => {
+    // The settings tab commits per edit; a rebind kills in-flight MCP requests,
+    // so an unchanged server config must be a no-op.
+    const binds: string[] = [];
+    const recordingLogger = {
+      info: (msg: string) => {
+        if (msg === "Starting local server") binds.push(msg);
+      },
+      warn: () => {},
+      error: () => {},
+      debug: () => {},
+      child: () => recordingLogger,
+    } as unknown as typeof NULL_LOGGER;
+
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const mk = (token: string, debugLogging = false): EngramSettings => ({
+      ...DEFAULT_SETTINGS,
+      debugLogging,
+      server: { ...DEFAULT_SETTINGS.server, enabled: true, host: "127.0.0.1", port: 0, token },
+    });
+    const engine = new EngramEngine(adapter, mk("tok-a"), NULL_LOGGER);
+    const server = new LocalServer({
+      engine,
+      logger: recordingLogger,
+      serverInfo: { name: "claude-code-engram", version: "0.0.0" },
+    });
+    running = server;
+
+    const addr1 = await server.start(mk("tok-a"));
+    expect(binds.length).toBe(1);
+
+    // Non-server settings change → same server config → no rebind, same port.
+    const addr2 = await server.start(mk("tok-a", true));
+    expect(binds.length).toBe(1);
+    expect(addr2.port).toBe(addr1.port);
+
+    // Server config change (new token) → real restart, and the NEW token is
+    // the one that authenticates.
+    const addr3 = await server.start(mk("tok-b"));
+    expect(binds.length).toBe(2);
+    const ok = await raw(addr3.port, { headers: { authorization: "Bearer tok-b" }, body: RPC("ping") });
+    expect(ok.status).toBe(200);
+    const stale = await raw(addr3.port, { headers: { authorization: "Bearer tok-a" }, body: RPC("ping") });
+    expect(stale.status).toBe(401);
+  });
+
+  it("auth uses the settings committed at start(), never live host mutations", async () => {
+    // The Obsidian settings tab mutates the ONE live settings object per
+    // keystroke; a half-typed token must never reach auth before a commit
+    // (i.e. before the host calls start() again).
+    const live: EngramSettings = {
+      ...DEFAULT_SETTINGS,
+      server: { ...DEFAULT_SETTINGS.server, enabled: true, host: "127.0.0.1", port: 0, token: "committed-token" },
+    };
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const engine = new EngramEngine(adapter, live, NULL_LOGGER);
+    const server = new LocalServer({
+      engine,
+      logger: NULL_LOGGER,
+      serverInfo: { name: "claude-code-engram", version: "0.0.0" },
+    });
+    running = server;
+    const addr = await server.start(live);
+
+    live.server.token = "half-typ"; // keystroke — no commit yet
+    const committed = await raw(addr.port, {
+      headers: { authorization: "Bearer committed-token" },
+      body: RPC("ping"),
+    });
+    expect(committed.status).toBe(200);
+    const half = await raw(addr.port, { headers: { authorization: "Bearer half-typ" }, body: RPC("ping") });
+    expect(half.status).toBe(401);
+  });
+
   it("serializes overlapping restarts without leaking a listener", async () => {
     const { server, addr } = await startServer();
     const settings = {

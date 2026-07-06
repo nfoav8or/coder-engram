@@ -12,3 +12,12 @@ export function formatLineRange(startLine: number, endLine: number): string {
   const end = Math.max(start, endLine + 1);
   return start === end ? `Line ${start}` : `Lines ${start}–${end}`;
 }
+
+/**
+ * UTC day (`YYYY-MM-DD`) of an epoch-ms mtime — the staleness signal shown
+ * next to a search hit (same as the MCP output). "" for a non-finite mtime.
+ */
+export function formatModifiedDate(mtimeMs: number): string {
+  if (!Number.isFinite(mtimeMs)) return "";
+  return new Date(mtimeMs).toISOString().slice(0, 10);
+}

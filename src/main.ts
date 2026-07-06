@@ -43,6 +43,11 @@ export default class EngramPlugin
   private server!: LocalServer;
   private debouncedRefresh!: Debounced<[]>;
   private debouncedConfigRefresh!: Debounced<[]>;
+  /** Last announced server state (`up:<host>:<port>` / `down` / "" = unknown),
+   * so per-edit settings commits don't repeat the same Notice. */
+  private lastServerState = "";
+  /** In-flight guard: a double-clicked Reindex must not run two full scans. */
+  private reindexing = false;
 
   async onload(): Promise<void> {
     this.settings = migrateSettings(await this.loadData());
@@ -157,9 +162,17 @@ export default class EngramPlugin
     try {
       if (this.settings.server.enabled) {
         const addr = await this.server.start(this.settings);
-        new Notice(`Claude Code Engram server listening on ${addr.host}:${addr.port}.`);
+        // start() is a no-op when the server config is unchanged; only a real
+        // state transition deserves a Notice (the settings tab commits per
+        // edit, and a Notice per edit is noise).
+        const state = `up:${addr.host}:${addr.port}`;
+        if (state !== this.lastServerState) {
+          this.lastServerState = state;
+          new Notice(`Claude Code Engram server listening on ${addr.host}:${addr.port}.`);
+        }
       } else if (this.server.isRunning()) {
         await this.server.stop();
+        this.lastServerState = "down";
         new Notice("Claude Code Engram server stopped.");
       }
     } catch (err) {
@@ -168,11 +181,23 @@ export default class EngramPlugin
       await this.server.stop().catch(() => {});
       new Notice(`Server not started: ${toMessage(err)}`);
       this.logger.error("Server sync failed", { error: toMessage(err) });
+      // Unknown state after a failure: re-announce whatever happens next.
+      this.lastServerState = "";
     }
   }
 
   async rebuildIndex(): Promise<void> {
-    await this.engine.reindex();
+    // Shares the reindex in-flight guard: "Rebuild now" double-clicked (or
+    // racing the Reindex command) must not run two concurrent full scans.
+    if (this.reindexing) {
+      throw new Error("A reindex is already in progress.");
+    }
+    this.reindexing = true;
+    try {
+      await this.engine.reindex();
+    } finally {
+      this.reindexing = false;
+    }
     this.refreshControlPanel();
   }
 
@@ -183,6 +208,11 @@ export default class EngramPlugin
       new Notice("Indexing is disabled in settings.");
       return;
     }
+    if (this.reindexing) {
+      new Notice("Reindex already in progress.");
+      return;
+    }
+    this.reindexing = true;
     new Notice("Claude Code Engram: reindexing…");
     try {
       const { noteCount, chunkCount } = await this.engine.reindex();
@@ -190,6 +220,8 @@ export default class EngramPlugin
     } catch (err) {
       new Notice(`Reindex failed: ${toMessage(err)}`);
       this.logger.error("Reindex failed", { error: toMessage(err) });
+    } finally {
+      this.reindexing = false;
     }
     this.refreshControlPanel();
   }
@@ -225,9 +257,12 @@ export default class EngramPlugin
       new Notice("Set a default project in settings first.");
       return;
     }
-    void this.engine.getProjectContext(project).then((ctx) => {
-      new TextDisplayModal(this.app, `Project context: ${project}`, ctx).open();
-    });
+    void this.engine
+      .getProjectContext(project)
+      .then((ctx) => {
+        new TextDisplayModal(this.app, `Project context: ${project}`, ctx).open();
+      })
+      .catch((err) => new Notice(`Could not load project context: ${toMessage(err)}`));
   }
 
   getStats(): { noteCount: number; chunkCount: number; builtAt: number | null } {
@@ -248,6 +283,10 @@ export default class EngramPlugin
   }
 
   async restartServer(): Promise<void> {
+    // A REAL restart, bypassing start()'s unchanged-config skip: this command
+    // is the user's recovery lever for a wedged server, so it must rebind.
+    await this.server.stop();
+    this.lastServerState = "";
     await this.syncServer();
   }
 
@@ -431,9 +470,10 @@ export default class EngramPlugin
       { title: "End Session Note", placeholder: "Closing summary", cta: "Append" },
       (summary) => {
         if (!summary) return;
-        void this.engine.endSession(file.path, summary).then(() => {
-          new Notice("Session closed.");
-        });
+        void this.engine
+          .endSession(file.path, summary)
+          .then(() => new Notice("Session closed."))
+          .catch((err) => new Notice(`Could not close session: ${toMessage(err)}`));
       },
     ).open();
   }
