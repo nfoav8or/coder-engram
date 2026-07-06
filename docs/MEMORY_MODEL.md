@@ -58,7 +58,7 @@ A proposed memory (from the Add Memory command, or from the server) is modeled b
 
 ## Pending-memory block format
 
-By default, every proposed entry is appended to `Memory/Inbox/pending-memory.md` as a reviewable block (`formatMemoryEntry` in `src/memory/memory-writer.ts`). If the inbox file does not exist yet, it is created with a short header first. Example block:
+By default, every proposed entry is appended to `Memory/Inbox/pending-memory.md` as a reviewable block (`formatMemoryEntry` in `src/memory/memory-writer.ts`). If the inbox file does not exist yet, it is created with a short header first. Proposals are **de-duplicated**: an entry whose content, type, and project match one already pending is not appended again (the caller is told it is already pending), so a looping agent cannot flood the inbox with identical proposals. Example block:
 
 ```markdown
 ## Pending Memory: 2026-07-03 14:22

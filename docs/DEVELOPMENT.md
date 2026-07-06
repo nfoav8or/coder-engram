@@ -79,9 +79,11 @@ src/
     add-memory-modal.ts         add-memory UI
     pending-memory-modal.ts     inbox review UI
     simple-modals.ts            prompt / text-display helpers
+    format.ts                   pure display helpers (line ranges)
   indexing/
     vault-scanner.ts            note enumeration + filters
     index-manager.ts            build / refresh / persist / load
+    link-graph.ts               wikilink graph (find_related_notes)
   core/
     vault-adapter.ts            VaultAdapter interface + in-memory impl
     obsidian-vault-adapter.ts   production adapter
@@ -139,7 +141,7 @@ The unit tests use `InMemoryVaultAdapter`, so most logic can be exercised withou
 
 ## Coding conventions
 
-- **The service and core layers must not import `obsidian`.** Only the UI layer (`main.ts`, `settings/settings-tab.ts`, `ui/*`) and `core/obsidian-vault-adapter.ts` may. This keeps indexing/retrieval/memory unit-testable and lets the server reuse `EngramEngine`.
+- **The service and core layers must not import `obsidian`.** Only the UI layer (`main.ts`, `settings/settings-tab.ts`, `ui/*`), `core/obsidian-vault-adapter.ts`, and `core/obsidian-http-client.ts` may. This keeps indexing/retrieval/memory unit-testable and lets the server reuse `EngramEngine`.
 - **All vault paths go through `utils/paths`.** Never build a vault path by ad-hoc string concatenation. Use `resolveInVault` / `joinVaultPath` / `normalizeVaultRelativePath`. `MemoryWriter` is the only component that writes memory.
 - **Keep modules small and functions testable.** Prefer pure functions in the core layer; inject the `VaultAdapter`, `Logger`, and clock.
 - **Safe defaults.** New settings must default to the privacy-preserving, local-only choice, and `migrateSettings` must degrade a corrupt settings blob to defaults without throwing.

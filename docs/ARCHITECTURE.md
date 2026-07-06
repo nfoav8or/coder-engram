@@ -60,6 +60,7 @@ These modules import `obsidian`. Nothing below this layer does.
 - `engine.ts` — `EngramEngine` is the orchestration facade shared by UI commands (and, in M2, the server). It owns the scanner, index manager, memory store, memory writer, and retriever, and rebuilds them whenever settings change. It depends only on a `VaultAdapter`, a settings object, and a `Logger`.
 - `indexing/vault-scanner.ts` — `VaultScanner` enumerates eligible Markdown notes and applies folder/tag/pattern filters.
 - `indexing/index-manager.ts` — `IndexManager` builds, incrementally refreshes, persists, and loads the JSON index.
+- `indexing/link-graph.ts` — pure wikilink-graph resolution over indexed chunks (backs the `find_related_notes` tool).
 - `retrieval/retriever.ts` + `retrieval/lexical-retriever.ts` — the `Retriever` interface and the M1 BM25 `LexicalRetriever`.
 - `memory/memory-store.ts` — `MemoryStore` handles read-side context (global/project/sessions) and non-destructive scaffold creation.
 - `memory/memory-writer.ts` — `MemoryWriter` is the only component that writes memory: inbox proposals and double-gated direct writes.

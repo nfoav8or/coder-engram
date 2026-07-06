@@ -251,6 +251,9 @@ Full details: [docs/SECURITY.md](docs/SECURITY.md).
 - **M3 (done):** embedding providers (Ollama, OpenAI-compatible) behind an injected HTTP boundary, vector + hybrid retrieval, and a vault-local vector cache.
 - **M4 (done):** richer pending-memory review UI with per-entry apply/edit/discard, and an honest extractive `summarize_note` (Summarize Current Note command + MCP tool).
 - **M5 (done):** GitHub Actions CI (typecheck/lint/test/build) and a tag-driven release workflow that publishes the plugin artifacts, plus `version-bump.mjs` tooling that keeps `manifest.json`/`versions.json` in sync.
+- **M6 (done):** retrieval quality — precise line spans with open-at-line, densest-window snippets, per-note result diversity, memoized corpus stats (~7× faster lexical queries), a scale benchmark, and a real-Obsidian e2e harness.
+- **M7 (done):** deeper Claude Code loop — `get_note_context`, `find_related_notes`, `add_memory` de-duplication, embeddings no-op-persist guard.
+- **M8 (done):** sharper/cheaper loop — ranged reads, dated + de-duplicated + backfilled search pages with `[PENDING REVIEW]` labels, bounded and rate-limited context tools, O(changed) refresh I/O, and the embedding-settings reload fix.
 - **Future:** non-desktop support, indexing of binary attachments, and alternative local vector stores.
 
 Details: [docs/ROADMAP.md](docs/ROADMAP.md).

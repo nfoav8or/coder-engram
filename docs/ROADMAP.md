@@ -1,6 +1,6 @@
 # Roadmap
 
-Claude Code Engram is built in five milestones. Milestones 1 through 5 are complete; further work is tracked under "Deferred / future" below.
+Claude Code Engram is built in milestones. Milestones 1 through 8 are complete (through v0.4.0); further work is tracked under "Deferred / future" below.
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -46,6 +46,31 @@ Claude Code Engram is built in five milestones. Milestones 1 through 5 are compl
 - GitHub Actions CI workflow (`.github/workflows/ci.yml`) running typecheck, tests, lint, and the production build on push/PR.
 - Release workflow (`.github/workflows/release.yml`) that builds and publishes the plugin artifacts (`main.js`, `manifest.json`, `styles.css`).
 - Version-bump tooling (`version-bump.mjs`) to keep `manifest.json`, `versions.json`, and `package.json` in sync for tagged releases.
+
+## Milestone 6 — retrieval quality (done, v0.2.0)
+
+- Precise per-chunk line spans, surfaced in search results with open-at-line navigation.
+- Densest-window snippets and word-boundary highlighting.
+- Per-note result diversity (one long note can't flood a result page).
+- Memoized BM25 corpus statistics (~7× faster lexical queries at scale) and an on-demand scale benchmark (`npm run bench`).
+- Playwright e2e harness driving the real plugin inside real Obsidian (local-only).
+
+## Milestone 7 — deeper, safer Claude Code memory loop (done, v0.3.0)
+
+- `get_note_context` MCP tool: full indexed text of one note, passage by passage.
+- `find_related_notes` MCP tool: link-graph neighbours of an indexed note.
+- `add_memory` de-duplication so a looping agent can't flood the review inbox.
+- Embeddings-cache no-op-persist guard.
+- Safety-first positioning across README/manifest.
+
+## Milestone 8 — sharper, safer, cheaper agent loop (done, v0.4.0)
+
+- Ranged reads: `get_note_context` accepts `startLine`/`endLine` from a search hit.
+- Search pages de-duplicated (near-dup collapse), backfilled to the requested limit, dated, and line-ranged; inbox hits labelled `[PENDING REVIEW]`.
+- Output caps (`maxChars`) and rate limits on the session-priming context tools.
+- O(changed) refresh file I/O (skip-unchanged scanning, config-keyed) and truly free no-op refreshes; the watcher ignores the plugin's own index writes.
+- Fixed: embedding-provider settings changes now apply without a plugin reload; exclusion changes trigger their own refresh.
+- Full-delta security audit before release; e2e coverage of the MCP server over the wire.
 
 ## Deferred / future
 
