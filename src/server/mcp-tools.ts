@@ -103,6 +103,36 @@ const SUMMARY_MAX_SENTENCES = 20;
 const NOTE_CONTEXT_MAX_PER_MINUTE = 60;
 const NOTE_CONTEXT_DEFAULT_MAX_CHARS = 12_000;
 const NOTE_CONTEXT_MAX_CHARS = 50_000;
+// Bulk context reads (project/global/sessions): the session-priming tools.
+// They concatenate whole memory files, so as a project's memory grows they
+// become the biggest token sink in the agent loop — cap them like
+// get_note_context instead of returning unbounded output.
+const CONTEXT_MAX_PER_MINUTE = 60;
+const CONTEXT_DEFAULT_MAX_CHARS = 12_000;
+const CONTEXT_MAX_CHARS = 50_000;
+
+/** Clip `text` to `maxChars`, flagging the cut with a follow-up hint. */
+function clipContext(text: string, maxChars: number, hint: string): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n\n…(truncated at ${maxChars} chars; ${hint})`;
+}
+
+/** Parsed optional `maxChars` argument for the bulk context reads. */
+function contextMaxChars(obj: Record<string, unknown>): number {
+  return Math.trunc(
+    optionalNumber(obj, "maxChars", CONTEXT_DEFAULT_MAX_CHARS, {
+      min: 1000,
+      max: CONTEXT_MAX_CHARS,
+    }),
+  );
+}
+
+const MAX_CHARS_SCHEMA = {
+  type: "number",
+  description:
+    `Max characters returned (1000–${CONTEXT_MAX_CHARS}, default ` +
+    `${CONTEXT_DEFAULT_MAX_CHARS}); output is truncated past this.`,
+} as const;
 
 const MEMORY_TYPES = [
   "decision",
@@ -250,16 +280,22 @@ const getProjectContextTool: Tool = {
       "decisions → tasks → open questions) for a named project.",
     inputSchema: {
       type: "object",
-      properties: { project: { type: "string", description: "Project name." } },
+      properties: {
+        project: { type: "string", description: "Project name." },
+        maxChars: MAX_CHARS_SCHEMA,
+      },
       required: ["project"],
       additionalProperties: false,
     },
   },
   async handler(args, ctx) {
+    ctx.rateLimiter.enforceWindow("get_project_context", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
     const obj = requireObject(args, "arguments");
     const project = requireString(obj, "project", { maxLength: 200 });
-    const ctxText = await ctx.engine.getProjectContext(project);
-    return ctxText.trim() || `No project memory found for "${project}".`;
+    const maxChars = contextMaxChars(obj);
+    const ctxText = (await ctx.engine.getProjectContext(project)).trim();
+    if (!ctxText) return `No project memory found for "${project}".`;
+    return clipContext(ctxText, maxChars, "use search_vault_memory + get_note_context for targeted recall");
   },
 };
 
@@ -267,11 +303,19 @@ const getGlobalContextTool: Tool = {
   definition: {
     name: "get_global_context",
     description: "Return the concatenated global memory (profile + preferences + conventions).",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: { maxChars: MAX_CHARS_SCHEMA },
+      additionalProperties: false,
+    },
   },
-  async handler(_args, ctx) {
-    const text = await ctx.engine.getGlobalContext();
-    return text.trim() || "No global memory recorded yet.";
+  async handler(args, ctx) {
+    ctx.rateLimiter.enforceWindow("get_global_context", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
+    const obj = requireObject(args ?? {}, "arguments");
+    const maxChars = contextMaxChars(obj);
+    const text = (await ctx.engine.getGlobalContext()).trim();
+    if (!text) return "No global memory recorded yet.";
+    return clipContext(text, maxChars, "use search_vault_memory + get_note_context for targeted recall");
   },
 };
 
@@ -296,23 +340,27 @@ const getRecentSessionsTool: Tool = {
       properties: {
         project: { type: "string", description: "Project name." },
         limit: { type: "number", description: `Max sessions (1–${SESSIONS_MAX_LIMIT}, default 5).` },
+        maxChars: MAX_CHARS_SCHEMA,
       },
       required: ["project"],
       additionalProperties: false,
     },
   },
   async handler(args, ctx) {
+    ctx.rateLimiter.enforceWindow("get_recent_sessions", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
     const obj = requireObject(args, "arguments");
     const project = requireString(obj, "project", { maxLength: 200 });
     const limit = Math.min(
       SESSIONS_MAX_LIMIT,
       Math.max(1, Math.trunc(optionalNumber(obj, "limit", 5, { min: 1, max: SESSIONS_MAX_LIMIT }))),
     );
+    const maxChars = contextMaxChars(obj);
     const sessions = await ctx.engine.getRecentSessions(project, limit);
     if (sessions.length === 0) return `No sessions found for "${project}".`;
-    return sessions
+    const joined = sessions
       .map((s) => `## ${s.path}\n\n${s.content.trim()}`)
       .join("\n\n---\n\n");
+    return clipContext(joined, maxChars, "use a smaller limit, or search_vault_memory for targeted recall");
   },
 };
 

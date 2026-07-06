@@ -216,6 +216,43 @@ describe("RateLimiter.enforceWindow", () => {
     expect(out.length).toBeLessThan(maxChars + 300);
   });
 
+  it("bulk context reads are capped at maxChars with a follow-up hint", async () => {
+    const big = "word ".repeat(2000); // ~10k chars per file
+    const { engine, ctx } = makeContext({
+      "Claude Code/Memory/Projects/Demo/overview.md": `# Overview\n\n${big}`,
+      "Claude Code/Memory/Projects/Demo/decisions.md": `# Decisions\n\n${big}`,
+      "Claude Code/Memory/Projects/Demo/sessions/2026-07-05.md": `# Session\n\n${big}`,
+      "Claude Code/Memory/Global/profile.md": `# Profile\n\n${big}`,
+    });
+    await engine.reindex();
+    const registry = new ToolRegistry();
+
+    const project = await registry.call("get_project_context", { project: "Demo", maxChars: 1000 }, ctx);
+    expect(project).toContain("truncated at 1000");
+    expect(project.length).toBeLessThan(1300);
+
+    const global = await registry.call("get_global_context", { maxChars: 1000 }, ctx);
+    expect(global).toContain("truncated at 1000");
+
+    const sessions = await registry.call(
+      "get_recent_sessions",
+      { project: "Demo", maxChars: 1000 },
+      ctx,
+    );
+    expect(sessions).toContain("truncated at 1000");
+    expect(sessions.length).toBeLessThan(1300);
+  });
+
+  it("bulk context reads are rate-limited per window", async () => {
+    const { ctx } = makeContext({});
+    const registry = new ToolRegistry();
+    // Fixed clock in makeContext: all calls land in one window.
+    for (let i = 0; i < 60; i++) {
+      await registry.call("get_global_context", {}, ctx);
+    }
+    await expect(registry.call("get_global_context", {}, ctx)).rejects.toThrow(/rate/i);
+  });
+
   it("get_note_context reaches a passage deep in a long note via startLine/endLine", async () => {
     // 40 sections × ~1000 chars: a plain read at maxChars=1000 truncates long
     // before the last section — the ranged read is the only way to reach it.

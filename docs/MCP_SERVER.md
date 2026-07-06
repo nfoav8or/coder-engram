@@ -66,10 +66,10 @@ Every request is a `POST` with `Content-Type: application/json` and an
 | `get_note_context` | Full **indexed** text of one note, passage by passage with heading + line range. | The follow-up to a search hit (which returns only a snippet). Inputs: `path` (required), `maxChars` (optional, default 12000, max 50000; truncates past this), `startLine`/`endLine` (optional, 1-based; return only passages overlapping that span — pass a search hit's line range to read deep into a long note without paging from the top). **In-scope only**: refused for notes not in the index — not a general file-read. **Rate-limited** (60/min). |
 | `find_related_notes` | Link-graph neighbours of one **indexed** note: notes it links to + notes that link back. | Input: `path` (required). Links resolve by note name (Obsidian-style basename); only **indexed** notes appear (unresolved/excluded links are dropped), and an unindexed note is refused. **Rate-limited** (120/min). |
 | `add_memory` | Propose a memory entry. | **Always appends to the review inbox** (`Memory/Inbox/pending-memory.md`). Direct writes are never exposed over the network, even when `allowDirectWrites` is on. **De-duplicated**: an entry whose content, type, and project match one already pending is not added again (reported as `already pending`), so a looping agent can't flood the inbox. |
-| `get_project_context` | Concatenated project memory (overview → architecture → decisions → tasks → open questions). | |
-| `get_global_context` | Concatenated global memory (profile + preferences + conventions). | |
+| `get_project_context` | Concatenated project memory (overview → architecture → decisions → tasks → open questions). | Input: `maxChars` (optional, default 12000, max 50000; truncated past this with a pointer to targeted recall). **Rate-limited** (60/min). |
+| `get_global_context` | Concatenated global memory (profile + preferences + conventions). | Input: `maxChars` (optional, same bounds). **Rate-limited** (60/min). |
 | `list_projects` | Project names under the projects root. | |
-| `get_recent_sessions` | Most recent session notes for a project. | Limit capped at 20. |
+| `get_recent_sessions` | Most recent session notes for a project. | Inputs: `limit` (capped at 20), `maxChars` (optional, same bounds). **Rate-limited** (60/min). |
 | `reindex_vault` | Rebuild the index from the vault. | **Rate-limited** (15 s cooldown). Refused when indexing is disabled. |
 | `summarize_note` | Extractive summary of an indexed note. | Inputs: `path` (required), `maxSentences` (optional, default 5, max 20). Returns a selection of the note's **own sentences** — verbatim, in original order — never generated prose. **In-scope only**: refused for notes that are not in the index. **Rate-limited** (30/min). |
 
@@ -106,9 +106,15 @@ All enforced in code; see [SECURITY.md](SECURITY.md) for the full model.
   returned wholesale.
 - **Inbox-first writes.** `add_memory` never overwrites and never writes
   directly over the network.
-- **Rate-limited operations.** `reindex_vault` has a 15 s cooldown;
-  `search_vault_memory` and `add_memory` have per-minute sliding-window caps, and
-  `summarize_note` is capped at 30/min, to bound sustained flooding.
+- **Rate-limited operations.** `reindex_vault` has a 15 s cooldown; every other
+  tool that reads or writes content has a per-minute sliding-window cap
+  (`search_vault_memory` 120, `add_memory` 60, `summarize_note` 30,
+  `get_note_context` 60, `find_related_notes` 120, and the bulk context reads
+  `get_project_context` / `get_global_context` / `get_recent_sessions` 60 each),
+  to bound sustained flooding.
+- **Bounded output.** The bulk context reads accept `maxChars` (default 12000,
+  max 50000) and truncate past it with a pointer to targeted recall, so
+  session-priming can't silently balloon with a growing vault.
 - **Serialized lifecycle.** Overlapping enable/disable/restart events are
   single-flighted, so the server can never bind two listeners or leak a port.
 - **No secrets in logs.** The token is never logged; auth failures log only a
