@@ -140,7 +140,15 @@ try {
   // the plugin through the API, which is robust to first-run state.
   await page.evaluate(async () => {
     const pm = window.app.plugins;
+    // setEnable(true) (leaving Restricted Mode) loads community plugins
+    // ASYNCHRONOUSLY — checking pm.plugins immediately races it, and a second
+    // enablePluginAndSave then creates a SECOND plugin instance: commands stay
+    // registered to one instance while pm.plugins holds the other, each with
+    // its own engine. Poll first; force-enable only if genuinely absent.
     if (pm.setEnable) pm.setEnable(true);
+    for (let i = 0; i < 50 && !pm.plugins["claude-code-engram"]; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
     if (!pm.plugins["claude-code-engram"]) {
       await (pm.enablePluginAndSave?.("claude-code-engram") ?? pm.enablePlugin?.("claude-code-engram"));
     }
@@ -187,6 +195,74 @@ try {
   });
   check("clicking opens the matched note", !!opened.path && opened.path.endsWith("lines.md"), opened.path);
   check("cursor lands at the chunk's start line (not the file top)", opened.line === 4, `cursor line ${opened.line}`);
+
+  // --- MCP server end-to-end: the exact wire path Claude Code uses ----------
+  // Enable the real localhost server (port 0 = OS-assigned, no collisions) and
+  // drive it with JSON-RPC from this process.
+  const TOKEN = "e2e-token-0123456789abcdef0123456789abcdef";
+  const addr = await page.evaluate(async (token) => {
+    const plugin = window.app.plugins.plugins["claude-code-engram"];
+    plugin.settings.server = { ...plugin.settings.server, enabled: true, port: 0, token };
+    return await plugin.server.start(plugin.settings);
+  }, TOKEN);
+  check(
+    "MCP server starts on localhost",
+    addr && addr.host === "127.0.0.1" && addr.port > 0,
+    `${addr.host}:${addr.port}`,
+  );
+
+  const rpc = async (method, params) => {
+    const res = await fetch(`http://127.0.0.1:${addr.port}/`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: Math.floor(Math.random() * 1e6), method, params }),
+    });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  };
+  const toolText = (r) => r.body?.result?.content?.[0]?.text ?? "";
+
+  // Auth is enforced before any dispatch.
+  const noAuth = await fetch(`http://127.0.0.1:${addr.port}/`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+  });
+  check("MCP rejects a missing bearer token", noAuth.status === 401, `status ${noAuth.status}`);
+
+  const init = await rpc("initialize", {
+    protocolVersion: "2024-11-05",
+    capabilities: {},
+    clientInfo: { name: "e2e", version: "0" },
+  });
+  check("MCP initialize succeeds", init.status === 200 && !!init.body?.result);
+
+  const search = await rpc("tools/call", {
+    name: "search_vault_memory",
+    arguments: { query: "ollama" },
+  });
+  const searchText = toolText(search);
+  check(
+    "MCP search returns line-ranged, dated results",
+    /Notes\/ollama\.md/.test(searchText) && /\(L\d+[^)]*, \d{4}-\d{2}-\d{2}\)/.test(searchText),
+    searchText.split("\n")[2] ?? "",
+  );
+
+  // The safety loop over the wire: a proposal lands inbox-first, and after a
+  // reindex it surfaces in search labelled pending — never as accepted memory.
+  const proposal = "Proposed decision: adopt engram zebra-cadence for session memory.";
+  const add = await rpc("tools/call", { name: "add_memory", arguments: { content: proposal, type: "decision" } });
+  check("MCP add_memory lands in the review inbox", /pending-memory\.md/.test(toolText(add)), toolText(add));
+  await rpc("tools/call", { name: "reindex_vault", arguments: {} });
+  const echo = await rpc("tools/call", {
+    name: "search_vault_memory",
+    arguments: { query: "zebra-cadence session memory" },
+  });
+  const echoText = toolText(echo);
+  check(
+    "unreviewed proposal comes back labelled PENDING REVIEW",
+    /zebra-cadence/.test(echoText) && /\[PENDING REVIEW/.test(echoText),
+    echoText.split("\n")[1] ?? "",
+  );
 
   await page.screenshot({ path: path.join(tmp, "search.png") });
 } catch (e) {
