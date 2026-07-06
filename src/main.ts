@@ -42,7 +42,6 @@ export default class EngramPlugin
   private engine!: EngramEngine;
   private server!: LocalServer;
   private debouncedRefresh!: Debounced<[]>;
-  private lastEmbeddingSig = "";
 
   async onload(): Promise<void> {
     this.settings = migrateSettings(await this.loadData());
@@ -51,7 +50,6 @@ export default class EngramPlugin
     this.engine = new EngramEngine(adapter, this.settings, this.logger, undefined, {
       http: new ObsidianHttpClient(),
     });
-    this.lastEmbeddingSig = embeddingSignature(this.settings);
     this.server = new LocalServer({
       engine: this.engine,
       logger: this.logger.child("server"),
@@ -99,7 +97,7 @@ export default class EngramPlugin
   }
 
   async onSettingsChanged(): Promise<void> {
-    const rootChanged = this.engine.updateSettings(this.settings);
+    const { rootChanged, embeddingChanged } = this.engine.updateSettings(this.settings);
     // Only the memory-root move resets the index; reload it from the new
     // location so search/stats aren't left empty.
     if (rootChanged) await this.engine.loadIndex();
@@ -114,12 +112,9 @@ export default class EngramPlugin
 
     // If the embedding provider/model/endpoint/key/mode changed, (re)embed the
     // current index in the background so switching to a vector provider takes
-    // effect without a manual reindex. Cheap when nothing embedding-related moved.
-    const sig = embeddingSignature(this.settings);
-    if (sig !== this.lastEmbeddingSig) {
-      this.lastEmbeddingSig = sig;
-      void this.syncEmbeddings();
-    }
+    // effect without a manual reindex. The engine owns the "what forces a
+    // re-embed" definition, so this can't drift from what it rebuilds.
+    if (embeddingChanged) void this.syncEmbeddings();
 
     this.refreshControlPanel();
   }
@@ -430,21 +425,6 @@ export default class EngramPlugin
       if (view instanceof ControlPanelView) view.render();
     }
   }
-}
-
-/**
- * Signature of settings that should trigger a re-embed / retriever refresh.
- * Batch size is deliberately excluded: it changes only how embedding requests
- * are chunked, never the resulting vectors, so it must not force a re-embed.
- */
-function embeddingSignature(s: EngramSettings): string {
-  return [
-    s.embeddingProvider,
-    s.embeddingModel,
-    s.embeddingEndpoint,
-    s.embeddingApiKey,
-    s.retrievalMode,
-  ].join(" ");
 }
 
 /** Format a ms timestamp as "YYYY-MM-DD-HHMM" for session filenames. */

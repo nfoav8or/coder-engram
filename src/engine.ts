@@ -84,6 +84,11 @@ export class EngramEngine {
   private retriever: Retriever;
   private embeddingStore: EmbeddingStore;
   private embeddingProvider: EmbeddingProvider | null;
+  /** String snapshot of the embedding-related settings. Kept as OWN state —
+   * never recomputed from `this.settings` at compare time — because the host
+   * (Obsidian settings tab) mutates the one shared settings object in place,
+   * so `this.settings` may alias the object passed to updateSettings. */
+  private lastEmbeddingKey: string;
   private readonly http?: HttpClient;
   /** Serializes embedding passes so overlapping reindex/refresh/sync can't
    * interleave (last-writer-wins persist / mid-pass index mutation). */
@@ -97,6 +102,7 @@ export class EngramEngine {
     deps: EngramEngineDeps = {},
   ) {
     this.settings = settings;
+    this.lastEmbeddingKey = embeddingKey(settings);
     this.http = deps.http;
     this.paths = EngramEngine.resolvePaths(settings);
     this.scanner = new VaultScanner(adapter, logger.child("scanner"));
@@ -181,15 +187,18 @@ export class EngramEngine {
    * rebuilt. When the root actually moves, the index legitimately points to a
    * new location and is reset; the host should then reload/reindex.
    *
-   * @returns true if the memory root changed (index was reset).
+   * @returns rootChanged — the memory root moved and the index was reset (the
+   * host should reload/reindex); embeddingChanged — the embedding identity or
+   * retrieval mode moved (the host should syncEmbeddings() in the background).
    */
-  updateSettings(settings: EngramSettings): boolean {
+  updateSettings(settings: EngramSettings): { rootChanged: boolean; embeddingChanged: boolean } {
     const previousRoot = this.paths.root;
-    const previousEmbeddingKey = embeddingKey(this.settings);
     this.settings = settings;
     this.paths = EngramEngine.resolvePaths(settings);
     const rootChanged = this.paths.root !== previousRoot;
-    const embeddingChanged = embeddingKey(settings) !== previousEmbeddingKey;
+    const nextEmbeddingKey = embeddingKey(settings);
+    const embeddingChanged = nextEmbeddingKey !== this.lastEmbeddingKey;
+    this.lastEmbeddingKey = nextEmbeddingKey;
 
     // Writer options can change without a root change, so always rebuild it.
     this.writer = this.buildWriter();
@@ -207,7 +216,7 @@ export class EngramEngine {
       this.embeddingProvider = this.buildProvider();
       this.retriever = this.buildRetriever();
     }
-    return rootChanged;
+    return { rootChanged, embeddingChanged };
   }
 
   getPaths(): MemoryPaths {
@@ -582,8 +591,11 @@ export class EngramEngine {
 }
 
 /**
- * Identity of the embedding-related settings. When this string changes, the
- * provider and/or retriever must be rebuilt.
+ * Identity of the embedding-related settings — the single definition of "what
+ * forces a re-embed". When this string changes, the provider and/or retriever
+ * must be rebuilt and the host should re-embed via syncEmbeddings(). Batch
+ * size is deliberately excluded: it changes only how embedding requests are
+ * chunked, never the resulting vectors, so it must not force a re-embed.
  */
 function embeddingKey(s: EngramSettings): string {
   return [

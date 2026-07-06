@@ -108,7 +108,8 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
 
     // Change something other than the memory root.
     const changed = engine.updateSettings({ ...DEFAULT_SETTINGS, defaultProject: "Demo" });
-    expect(changed).toBe(false);
+    expect(changed.rootChanged).toBe(false);
+    expect(changed.embeddingChanged).toBe(false);
     expect(engine.getIndexStats().chunkCount).toBe(before); // index NOT wiped
     expect((await engine.search({ query: "alpha" })).length).toBeGreaterThan(0);
   });
@@ -117,7 +118,7 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
     const { engine } = makeEngine({ "Notes/a.md": "# A\nalpha" });
     await engine.reindex();
     const changed = engine.updateSettings({ ...DEFAULT_SETTINGS, memoryRoot: "Brain" });
-    expect(changed).toBe(true);
+    expect(changed.rootChanged).toBe(true);
     expect(engine.getIndexStats().chunkCount).toBe(0);
   });
 

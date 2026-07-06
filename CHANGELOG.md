@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`get_note_context` accepts `startLine`/`endLine`** (1-based, matching the line ranges search results carry): only passages overlapping that span are returned. This fixes a dead-end in the agent loop — the tool previously assembled passages from the top of the note and hard-stopped at `maxChars`, so a search hit deep in a long note was unreachable by its own "natural follow-up". Pass the hit's line range to read exactly that region. A range matching no indexed passage reports the note's actual indexed span; the indexed-only gate is unchanged and checked first.
 
+### Fixed
+
+- **Switching the embedding provider/model/endpoint/key in the settings tab now takes effect without a plugin reload.** The engine decided "did the embedding settings change?" by comparing against its held settings object — but the settings tab mutates that same object in place, so the engine compared the object to itself and the provider/retriever rebuild never fired on the real settings path (it worked in tests, which pass fresh objects). The engine now snapshots the embedding-settings identity as its own string state. The re-embed trigger and the rebuild are also now driven by one definition owned by the engine (`updateSettings` returns `{ rootChanged, embeddingChanged }`), removing a duplicated signature in the UI layer that could drift.
+
 ### Changed
 
 - **The bulk context reads are now bounded and rate-limited.** `get_project_context`, `get_global_context`, and `get_recent_sessions` — the session-priming tools — previously returned unbounded concatenations of whole memory files (and up to 20 full session notes) with no rate limit, so they grew into the loop's biggest token sink as a vault matured. They now accept `maxChars` (default 12000, max 50000), truncate past it with a pointer to targeted recall (`search_vault_memory` + `get_note_context`), and carry a 60/min sliding-window cap like the other read tools.

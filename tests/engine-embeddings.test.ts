@@ -65,18 +65,55 @@ describe("EngramEngine M3 embeddings integration", () => {
     expect(after.some((r) => r.chunk.notePath === "Notes/new.md")).toBe(true);
   });
 
+  it("detects an embedding change when the ONE shared settings object is mutated in place", async () => {
+    // Production pattern: Obsidian's settings tab mutates the single settings
+    // object the engine also holds, then notifies. Comparing this.settings to
+    // the incoming object compares it to itself — the engine must snapshot the
+    // embedding key as its own string state instead.
+    const settings: EngramSettings = { ...DEFAULT_SETTINGS, embeddingProvider: "none" };
+    const adapter = new InMemoryVaultAdapter("v", { ...SEED });
+    let t = 10_000;
+    const engine = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++);
+    await engine.reindex();
+    expect(engine.getRetrievalMode()).toBe("lexical");
+
+    settings.embeddingProvider = "mock";
+    settings.retrievalMode = "hybrid";
+    const changed = engine.updateSettings(settings);
+    expect(changed.embeddingChanged).toBe(true);
+    // The provider/retriever rebuild keys off the same flag: hybrid must
+    // actually serve after the in-place switch.
+    expect(engine.getRetrievalMode()).toBe("hybrid");
+    await engine.reindex();
+    const results = await engine.search({ query: "ollama embedding backends" });
+    expect(results.some((r) => r.chunk.notePath === "Notes/embeddings.md")).toBe(true);
+  });
+
   it("switches none -> mock via updateSettings, then a reindex populates vectors and search works", async () => {
     const { engine } = makeEngine({ ...DEFAULT_SETTINGS, embeddingProvider: "none" });
     await engine.reindex();
     expect(engine.getRetrievalMode()).toBe("lexical");
 
-    const rootChanged = engine.updateSettings({
+    const changed = engine.updateSettings({
       ...DEFAULT_SETTINGS,
       embeddingProvider: "mock",
       retrievalMode: "hybrid",
     });
-    expect(rootChanged).toBe(false);
+    expect(changed.rootChanged).toBe(false);
+    // The engine is the single owner of "what forces a re-embed" — the host
+    // keys its background syncEmbeddings() off this flag.
+    expect(changed.embeddingChanged).toBe(true);
     expect(engine.getRetrievalMode()).toBe("hybrid");
+
+    // Batch size alone must NOT read as an embedding change (it never alters
+    // the resulting vectors).
+    const batchOnly = engine.updateSettings({
+      ...DEFAULT_SETTINGS,
+      embeddingProvider: "mock",
+      retrievalMode: "hybrid",
+      embeddingBatchSize: 4,
+    });
+    expect(batchOnly.embeddingChanged).toBe(false);
 
     await engine.reindex();
     const results = await engine.search({ query: "ollama embedding backends" });
