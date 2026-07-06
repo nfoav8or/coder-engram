@@ -32,7 +32,7 @@ export class PendingMemoryModal extends Modal {
   private async renderList(): Promise<void> {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "Review Pending Memory" });
+    this.setTitle("Review pending memory");
 
     const pendingPath = this.engine.getPaths().pendingMemoryFile;
 
@@ -171,11 +171,11 @@ class EditContentModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "Edit memory content" });
+    this.setTitle("Edit memory content");
 
     new Setting(contentEl).addTextArea((t) => {
       t.setValue(this.value).onChange((v) => (this.value = v));
-      t.inputEl.style.width = "100%";
+      t.inputEl.classList.add("engram-full-width");
       t.inputEl.rows = 10;
       window.setTimeout(() => t.inputEl.focus(), 0);
     });

@@ -75,7 +75,6 @@ export class EngramSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl("h2", { text: "Claude Code Engram" });
     containerEl.createEl("p", {
       text: "All plugin-managed memory lives inside this vault, under the memory root below. Nothing is written outside the vault.",
       cls: "engram-stat-row",
@@ -425,7 +424,7 @@ export class EngramSettingTab extends PluginSettingTab {
   }
 
   private section(title: string): void {
-    this.containerEl.createEl("h3", { text: title, cls: "engram-setting-section-header" });
+    new Setting(this.containerEl).setName(title).setHeading();
   }
 }
 

@@ -238,6 +238,15 @@ Markdown files are the durable source of truth; the JSON files under `Index/` ar
 
 Full details: [docs/SECURITY.md](docs/SECURITY.md).
 
+## Network use
+
+By default the plugin makes **no network connections at all**: search is offline lexical BM25, and the local server is off. Network activity exists only when you explicitly enable it:
+
+- **Embeddings (opt-in).** If you set the embedding provider to **Ollama**, the plugin sends indexed note text to your configured Ollama endpoint (local by default, `http://127.0.0.1:11434`) to compute embeddings. If you set it to **OpenAI-compatible**, indexed note text is sent to the endpoint you configure (which may be a remote service such as OpenAI) for the same purpose; the API key is sent only in the `Authorization` header and never logged. Notes excluded from indexing are never embedded, so their content is never sent anywhere.
+- **Local MCP/HTTP server (opt-in).** When enabled, the plugin listens on `127.0.0.1` so local tools such as Claude Code can query memory and propose entries to the review inbox. It makes no outbound connections; binding a non-localhost address requires an explicit second opt-in plus a token.
+
+There is no telemetry of any kind, and nothing is read or written outside the vault.
+
 ## Limitations
 
 - **`summarize_note` is extractive, not abstractive.** It selects the note's own sentences; there is no LLM/generative backend, so it never rewrites or paraphrases. It also only works on notes that are in the index.

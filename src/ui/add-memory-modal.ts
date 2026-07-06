@@ -39,7 +39,7 @@ export class AddMemoryModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "Add Memory" });
+    this.setTitle("Add memory");
     contentEl.createEl("p", {
       text: "By default this is proposed to the review inbox for you to apply manually.",
       cls: "engram-stat-row",
@@ -67,11 +67,11 @@ export class AddMemoryModal extends Modal {
     });
 
     const contentSetting = new Setting(contentEl).setName("Content");
-    contentSetting.controlEl.style.width = "100%";
+    contentSetting.controlEl.classList.add("engram-full-width");
     const textarea = contentSetting.controlEl.createEl("textarea", {
       cls: "engram-content-input",
     });
-    textarea.style.width = "100%";
+    textarea.classList.add("engram-full-width");
     textarea.rows = 6;
     textarea.value = this.content;
     textarea.addEventListener("input", () => (this.content = textarea.value));

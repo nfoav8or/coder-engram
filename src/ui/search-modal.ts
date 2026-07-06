@@ -23,13 +23,13 @@ export class SearchModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "Search Memory" });
+    this.setTitle("Search memory");
 
     new Setting(contentEl)
       .setName("Query")
       .addText((text) => {
         text.setPlaceholder("Search indexed notes…");
-        text.inputEl.style.width = "100%";
+        text.inputEl.classList.add("engram-full-width");
         text.onChange((value) => {
           this.query = value;
         });

@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Search results in the desktop UI now show the note's modified date** next to the line range (`Lines 5–8 · 2026-07-05`) — the same staleness signal the MCP output already carries.
 
+### Changed
+
+- **Community-catalog compliance pass** against Obsidian's current plugin guidelines and developer policies: command names and modal titles use sentence case; modals use `setTitle()` and settings sections use `Setting.setHeading()` instead of raw heading elements (the plugin-name heading in settings is gone); the last hardcoded styles moved to a CSS class (`engram-full-width`) so themes can override; the manifest description now opens with an action statement and `authorUrl` points at the author, not the plugin repo; the README gained an explicit **Network use** disclosure (no connections by default; opt-in embeddings and the localhost server described with what is sent where, and a no-telemetry statement).
+
 ### Fixed
 
 - **Editing settings no longer restarts the world on every keystroke.** The settings tab committed on every input event, and each commit unconditionally rebound the local server (killing in-flight MCP requests and popping a "listening" Notice per keystroke) — typing a token restarted the server once per character, and typing a memory root reloaded the index from each half-typed prefix. Text fields now commit once, when the field loses focus (or the tab closes); the server additionally skips the rebind entirely when its config is unchanged (non-server settings changes still reach running requests), and the "listening"/"stopped" Notices fire only on real state transitions. The server now also authenticates against a settings **snapshot taken at start** — a half-typed token in the settings tab was previously enforced live, request by request, before the user finished typing it. "Restart Local Server" (command and control-panel button) deliberately bypasses the unchanged-config skip: it remains a real rebind, the recovery lever for a wedged server.

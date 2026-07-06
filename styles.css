@@ -76,12 +76,10 @@
   font-size: var(--font-ui-small);
 }
 
-.engram-setting-section-header {
-  margin-top: 1.25rem;
-  font-size: var(--font-ui-medium);
-  color: var(--text-normal);
-  border-bottom: 1px solid var(--background-modifier-border);
-  padding-bottom: 4px;
+.engram-full-width,
+.engram-full-width input,
+.engram-full-width textarea {
+  width: 100%;
 }
 
 .engram-pending-entry {

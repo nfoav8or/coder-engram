@@ -20,12 +20,12 @@ export class PromptModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: this.opts.title });
+    this.setTitle(this.opts.title);
 
     new Setting(contentEl).addText((t) => {
       t.setPlaceholder(this.opts.placeholder ?? "").setValue(this.value);
       t.onChange((v) => (this.value = v));
-      t.inputEl.style.width = "100%";
+      t.inputEl.classList.add("engram-full-width");
       t.inputEl.addEventListener("keydown", (evt) => {
         if (evt.key === "Enter") {
           evt.preventDefault();
@@ -64,7 +64,7 @@ export class TextDisplayModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: this.title });
+    this.setTitle(this.title);
     const box = contentEl.createDiv({ cls: "engram-pending-entry" });
     if (this.body.trim().length === 0) {
       box.createEl("p", { text: "(empty)", cls: "engram-stat-row" });

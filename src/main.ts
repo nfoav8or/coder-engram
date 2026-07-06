@@ -243,7 +243,7 @@ export default class EngramPlugin
   createProject(): void {
     new PromptModal(
       this.app,
-      { title: "Create Project Memory Folder", placeholder: "Project name", cta: "Create" },
+      { title: "Create project memory folder", placeholder: "Project name", cta: "Create" },
       (name) => {
         if (!name) return;
         void this.doCreateProject(name);
@@ -332,62 +332,62 @@ export default class EngramPlugin
   private registerCommands(): void {
     this.addCommand({
       id: "open-control-panel",
-      name: "Open Control Panel",
+      name: "Open control panel",
       callback: () => void this.activateControlPanel(),
     });
     this.addCommand({
       id: "reindex-vault",
-      name: "Reindex Vault",
+      name: "Reindex vault",
       callback: () => void this.reindex(),
     });
     this.addCommand({
       id: "search-memory",
-      name: "Search Memory",
+      name: "Search memory",
       callback: () => this.openSearch(),
     });
     this.addCommand({
       id: "add-memory",
-      name: "Add Memory",
+      name: "Add memory",
       callback: () => this.openAddMemory(),
     });
     this.addCommand({
       id: "add-current-note-to-project",
-      name: "Add Current Note to Project Memory",
+      name: "Add current note to project memory",
       callback: () => this.addCurrentNoteToProject(),
     });
     this.addCommand({
       id: "create-project",
-      name: "Create Project Memory Folder",
+      name: "Create project memory folder",
       callback: () => this.createProject(),
     });
     this.addCommand({
       id: "show-project-context",
-      name: "Show Project Context",
+      name: "Show project context",
       callback: () => this.showProjectContext(),
     });
     this.addCommand({
       id: "review-pending-memory",
-      name: "Review Pending Memory",
+      name: "Review pending memory",
       callback: () => this.openPendingReview(),
     });
     this.addCommand({
       id: "summarize-current-note",
-      name: "Summarize Current Note",
+      name: "Summarize current note",
       callback: () => this.summarizeCurrentNote(),
     });
     this.addCommand({
       id: "start-session-note",
-      name: "Start Session Note",
+      name: "Start session note",
       callback: () => this.startSessionNote(),
     });
     this.addCommand({
       id: "end-session-note",
-      name: "End Session Note",
+      name: "End session note",
       callback: () => this.endSessionNote(),
     });
     this.addCommand({
       id: "restart-server",
-      name: "Restart Local Server",
+      name: "Restart local server",
       callback: () => void this.restartServer(),
     });
   }
@@ -467,7 +467,7 @@ export default class EngramPlugin
     }
     new PromptModal(
       this.app,
-      { title: "End Session Note", placeholder: "Closing summary", cta: "Append" },
+      { title: "End session note", placeholder: "Closing summary", cta: "Append" },
       (summary) => {
         if (!summary) return;
         void this.engine

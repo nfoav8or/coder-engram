@@ -3,8 +3,8 @@
   "name": "Claude Code Engram",
   "version": "0.4.0",
   "minAppVersion": "1.5.0",
-  "description": "Safe, reviewable memory for Claude Code: the agent proposes memory to a review inbox — nothing is written or edited without your approval. Local-first Markdown, no cloud key required, hardened localhost server.",
+  "description": "Give Claude Code safe, reviewable memory: the agent proposes memories to a review inbox and nothing is written without your approval. Local-first Markdown, no cloud key required, hardened localhost server.",
   "author": "Matt Smith",
-  "authorUrl": "https://github.com/nfoav8or/claude-code-engram",
+  "authorUrl": "https://github.com/nfoav8or",
   "isDesktopOnly": true
 }
