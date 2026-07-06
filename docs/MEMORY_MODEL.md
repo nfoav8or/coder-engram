@@ -1,6 +1,6 @@
 # Memory model
 
-Claude Code Engram stores all plugin-managed memory as Markdown inside the active vault, under a configurable root (default `Claude Code/`). Markdown is the durable source of truth; the JSON files under `Index/` are a rebuildable cache and never the only copy of your memory.
+Coder Engram stores all plugin-managed memory as Markdown inside the active vault, under a configurable root (default `Claude Code/`). Markdown is the durable source of truth; the JSON files under `Index/` are a rebuildable cache and never the only copy of your memory.
 
 ## Folder tree
 
@@ -52,7 +52,7 @@ A proposed memory (from the Add Memory command, or from the server) is modeled b
 | `source` | string | Where it came from, e.g. `Obsidian UI`, `Claude Code`. Defaults to `Obsidian UI`. |
 | `originTool` | string (optional) | Originating command or MCP tool. |
 | `confidence` | `low` \| `medium` \| `high` (optional) | |
-| `tags` | string[] | Extra tags; `#claude-code-engram` is always added. |
+| `tags` | string[] | Extra tags; `#coder-engram` is always added. |
 | `relatedPaths` | string[] | Related note/file paths. |
 | `timestamp` | number | ms since epoch. |
 
@@ -67,7 +67,7 @@ Type: decision
 Project: ExampleProject
 Source: Claude Code
 Confidence: medium
-Tags: #claude-code-engram #decision
+Tags: #coder-engram #decision
 
 Content:
 
@@ -83,7 +83,7 @@ Status: pending
 ---
 ```
 
-`Project`, `Origin`, `Confidence`, and the `Related files` list are only emitted when present. The `Tags` line always begins with `#claude-code-engram`. You review these blocks in the vault (or via **Review Pending Memory**) and apply or discard them by hand.
+`Project`, `Origin`, `Confidence`, and the `Related files` list are only emitted when present. The `Tags` line always begins with `#coder-engram`. You review these blocks in the vault (or via **Review Pending Memory**) and apply or discard them by hand.
 
 ## Markdown as source of truth
 

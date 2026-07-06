@@ -1,5 +1,5 @@
 {
-  "name": "claude-code-engram",
+  "name": "coder-engram",
   "version": "0.4.0",
   "description": "Give Claude Code safe, reviewable memory: agent-proposed entries you review before they land, stored as local Markdown.",
   "author": "Matt Smith",

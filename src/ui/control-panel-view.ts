@@ -34,7 +34,7 @@ export class ControlPanelView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Claude Code Engram";
+    return "Coder Engram";
   }
 
   getIcon(): string {
@@ -50,7 +50,7 @@ export class ControlPanelView extends ItemView {
     const root = this.contentEl;
     root.empty();
     root.addClass("engram-control-panel");
-    root.createEl("h2", { text: "Claude Code Engram" });
+    root.createEl("h2", { text: "Coder Engram" });
 
     const stats = this.actions.getStats();
     this.stat(root, "Memory root", this.actions.getMemoryRoot());

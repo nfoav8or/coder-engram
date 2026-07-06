@@ -27,7 +27,7 @@ async function startServer(overrides: Partial<EngramSettings["server"]> = {}, se
   const server = new LocalServer({
     engine,
     logger: NULL_LOGGER,
-    serverInfo: { name: "claude-code-engram", version: "0.1.0" },
+    serverInfo: { name: "coder-engram", version: "0.1.0" },
   });
   const addr = await server.start(settings);
   running = server;
@@ -108,7 +108,7 @@ describe("LocalServer over a real socket", () => {
     const res = await raw(addr.port, { body: RPC("initialize", { protocolVersion: "2025-06-18" }) });
     expect(res.status).toBe(200);
     const json = JSON.parse(res.body);
-    expect(json.result.serverInfo.name).toBe("claude-code-engram");
+    expect(json.result.serverInfo.name).toBe("coder-engram");
   });
 
   it("executes a tools/call search over the index", async () => {
@@ -226,7 +226,7 @@ describe("LocalServer over a real socket", () => {
     const server = new LocalServer({
       engine,
       logger: recordingLogger,
-      serverInfo: { name: "claude-code-engram", version: "0.0.0" },
+      serverInfo: { name: "coder-engram", version: "0.0.0" },
     });
     running = server;
 
@@ -261,7 +261,7 @@ describe("LocalServer over a real socket", () => {
     const server = new LocalServer({
       engine,
       logger: NULL_LOGGER,
-      serverInfo: { name: "claude-code-engram", version: "0.0.0" },
+      serverInfo: { name: "coder-engram", version: "0.0.0" },
     });
     running = server;
     const addr = await server.start(live);

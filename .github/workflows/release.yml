@@ -56,5 +56,5 @@ jobs:
         run: |
           gh release create "$TAG" \
             --title "${TAG#v}" \
-            --notes "Claude Code Engram ${TAG#v}. See CHANGELOG.md for details." \
+            --notes "Coder Engram ${TAG#v}. See CHANGELOG.md for details." \
             main.js manifest.json styles.css

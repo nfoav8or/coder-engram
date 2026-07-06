@@ -29,7 +29,7 @@ describe("formatMemoryEntry", () => {
     expect(block).toContain("Project: ExampleProject");
     expect(block).toContain("Source: Claude Code");
     expect(block).toContain("Confidence: medium");
-    expect(block).toContain("#claude-code-engram");
+    expect(block).toContain("#coder-engram");
     expect(block).toContain("Status: pending");
     expect(block).toContain("* docs/architecture.md");
   });

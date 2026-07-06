@@ -1,5 +1,5 @@
 /**
- * Claude Code Engram — plugin entrypoint.
+ * Coder Engram — plugin entrypoint.
  *
  * Wires Obsidian (commands, views, settings, file events) to the
  * Obsidian-agnostic EngramEngine. The plugin implements SettingsHost and
@@ -75,7 +75,7 @@ export default class EngramPlugin
     );
 
     this.addSettingTab(new EngramSettingTab(this.app, this));
-    this.addRibbonIcon("brain-circuit", "Claude Code Engram: Control Panel", () => {
+    this.addRibbonIcon("brain-circuit", "Coder Engram: Control Panel", () => {
       void this.activateControlPanel();
     });
 
@@ -144,7 +144,7 @@ export default class EngramPlugin
   private async syncEmbeddings(): Promise<void> {
     if (this.settings.embeddingProvider === "none") return;
     try {
-      new Notice("Claude Code Engram: updating embeddings…");
+      new Notice("Coder Engram: updating embeddings…");
       await this.engine.syncEmbeddings();
       new Notice(`Embeddings updated. Retrieval mode: ${this.engine.getRetrievalMode()}.`);
       this.refreshControlPanel();
@@ -168,12 +168,12 @@ export default class EngramPlugin
         const state = `up:${addr.host}:${addr.port}`;
         if (state !== this.lastServerState) {
           this.lastServerState = state;
-          new Notice(`Claude Code Engram server listening on ${addr.host}:${addr.port}.`);
+          new Notice(`Coder Engram server listening on ${addr.host}:${addr.port}.`);
         }
       } else if (this.server.isRunning()) {
         await this.server.stop();
         this.lastServerState = "down";
-        new Notice("Claude Code Engram server stopped.");
+        new Notice("Coder Engram server stopped.");
       }
     } catch (err) {
       // A bad config (e.g. non-localhost without opt-in, port in use) must not
@@ -213,7 +213,7 @@ export default class EngramPlugin
       return;
     }
     this.reindexing = true;
-    new Notice("Claude Code Engram: reindexing…");
+    new Notice("Coder Engram: reindexing…");
     try {
       const { noteCount, chunkCount } = await this.engine.reindex();
       new Notice(`Indexed ${noteCount} notes (${chunkCount} chunks).`);
@@ -432,7 +432,7 @@ export default class EngramPlugin
       new Notice("No active note to summarize.");
       return;
     }
-    new Notice("Claude Code Engram: summarizing…");
+    new Notice("Coder Engram: summarizing…");
     void this.engine
       .summarizeNote(file.path)
       .then((summary) => {

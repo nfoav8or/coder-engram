@@ -50,11 +50,11 @@ function pending(overrides: Partial<PendingEntry> = {}): PendingEntry {
 
 describe("formatTags", () => {
   it("leads with the base tag, dedupes, and strips leading #", () => {
-    expect(formatTags(["#foo", "bar"])).toBe("#claude-code-engram #foo #bar");
+    expect(formatTags(["#foo", "bar"])).toBe("#coder-engram #foo #bar");
   });
 
   it("does not duplicate the base tag if supplied", () => {
-    expect(formatTags([BASE_TAG, "x"])).toBe("#claude-code-engram #x");
+    expect(formatTags([BASE_TAG, "x"])).toBe("#coder-engram #x");
   });
 });
 
@@ -77,6 +77,16 @@ describe("parsePendingInbox round-trip with formatMemoryEntry", () => {
     expect(e.relatedPaths).toEqual(["docs/architecture.md", "src/indexer.ts"]);
     expect(e.status).toBe("pending");
     expect(e.timestampLabel).toBe(formatTimestamp(FIXED_TS));
+  });
+
+  it("strips the pre-rename legacy base tag at parse (old inbox blocks round-trip)", () => {
+    // Blocks written by ≤0.4.0 carry #claude-code-engram in the tag line; it
+    // must be treated like the base tag, not surfaced as a user tag.
+    const rendered = INBOX_HEADER + formatMemoryEntry(memEntry({ tags: ["decision"] }));
+    const legacy = rendered.replace("#coder-engram", "#claude-code-engram");
+    const parsed = parsePendingInbox(legacy);
+    expect(parsed.entries).toHaveLength(1);
+    expect(parsed.entries[0].tags).toEqual(["decision"]);
   });
 
   it("parses multiple entries in order with ascending indices", () => {
@@ -191,7 +201,7 @@ describe("formatAppliedBlock", () => {
     expect(block).toContain("## Decision — 2026-07-03 10:29");
     expect(block).not.toContain("Status: pending");
     // Provenance footer carries the tags (base tag first).
-    expect(block).toContain("#claude-code-engram");
+    expect(block).toContain("#coder-engram");
     expect(block).toContain("#indexing");
   });
 

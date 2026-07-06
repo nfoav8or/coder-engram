@@ -1,6 +1,6 @@
 # Security model
 
-Claude Code Engram is local-first and privacy-preserving by default. It requires no cloud service or API key, keeps every read and write inside the active vault, and defaults to reviewable, append-only memory writes.
+Coder Engram is local-first and privacy-preserving by default. It requires no cloud service or API key, keeps every read and write inside the active vault, and defaults to reviewable, append-only memory writes.
 
 ## Principles
 

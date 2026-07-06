@@ -27,7 +27,7 @@ function makeDeps(seed: Record<string, string> = {}): ProtocolDeps {
   return {
     registry: new ToolRegistry(),
     toolContext,
-    serverInfo: { name: "claude-code-engram", version: "0.1.0" },
+    serverInfo: { name: "coder-engram", version: "0.1.0" },
     logger: NULL_LOGGER,
   };
 }
@@ -41,7 +41,7 @@ describe("handleRpcMessage", () => {
     expect(res?.result).toMatchObject({
       protocolVersion: "2025-06-18",
       capabilities: { tools: {} },
-      serverInfo: { name: "claude-code-engram" },
+      serverInfo: { name: "coder-engram" },
     });
   });
 

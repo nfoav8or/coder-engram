@@ -56,14 +56,14 @@ if (!obsidian) skip("Obsidian binary not found (set $OBSIDIAN_BIN)");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "engram-e2e-"));
 const vault = path.join(tmp, "vault");
 const udd = path.join(tmp, "udd");
-const pluginDir = path.join(vault, ".obsidian", "plugins", "claude-code-engram");
+const pluginDir = path.join(vault, ".obsidian", "plugins", "coder-engram");
 fs.mkdirSync(pluginDir, { recursive: true });
 fs.mkdirSync(path.join(vault, "Notes"), { recursive: true });
 fs.mkdirSync(udd, { recursive: true });
 for (const f of ["main.js", "manifest.json", "styles.css"]) {
   fs.copyFileSync(path.join(REPO, f), path.join(pluginDir, f));
 }
-fs.writeFileSync(path.join(vault, ".obsidian", "community-plugins.json"), '["claude-code-engram"]');
+fs.writeFileSync(path.join(vault, ".obsidian", "community-plugins.json"), '["coder-engram"]');
 // The "restart"/"art" sentence is the discriminating case: substring highlighting
 // would wrongly split "restart" into rest<mark>art</mark>.
 fs.writeFileSync(
@@ -108,7 +108,7 @@ async function waitEndpoint() {
 }
 
 async function runSearch(page, query) {
-  await page.evaluate(() => window.app.commands.executeCommandById("claude-code-engram:search-memory"));
+  await page.evaluate(() => window.app.commands.executeCommandById("coder-engram:search-memory"));
   const input = page.locator(".modal input[type=text]").first();
   await input.waitFor({ timeout: 10000 });
   await input.fill(query);
@@ -146,22 +146,22 @@ try {
     // registered to one instance while pm.plugins holds the other, each with
     // its own engine. Poll first; force-enable only if genuinely absent.
     if (pm.setEnable) pm.setEnable(true);
-    for (let i = 0; i < 50 && !pm.plugins["claude-code-engram"]; i++) {
+    for (let i = 0; i < 50 && !pm.plugins["coder-engram"]; i++) {
       await new Promise((r) => setTimeout(r, 100));
     }
-    if (!pm.plugins["claude-code-engram"]) {
-      await (pm.enablePluginAndSave?.("claude-code-engram") ?? pm.enablePlugin?.("claude-code-engram"));
+    if (!pm.plugins["coder-engram"]) {
+      await (pm.enablePluginAndSave?.("coder-engram") ?? pm.enablePlugin?.("coder-engram"));
     }
   });
-  await page.waitForFunction(() => !!window.app.plugins.plugins["claude-code-engram"], null, { timeout: 15000 });
-  check("plugin loaded in Obsidian", await page.evaluate(() => !!window.app.plugins.plugins["claude-code-engram"]));
+  await page.waitForFunction(() => !!window.app.plugins.plugins["coder-engram"], null, { timeout: 15000 });
+  check("plugin loaded in Obsidian", await page.evaluate(() => !!window.app.plugins.plugins["coder-engram"]));
 
   // Poll the real search UI until the reindex has produced results (gates on the
   // actual rendered path rather than engine internals).
   let ollama = [];
   for (let i = 0; i < 25 && ollama.length === 0; i++) {
     if (i % 8 === 0) {
-      await page.evaluate(() => window.app.commands.executeCommandById("claude-code-engram:reindex-vault"));
+      await page.evaluate(() => window.app.commands.executeCommandById("coder-engram:reindex-vault"));
     }
     await page.waitForTimeout(1000);
     ollama = await runSearch(page, "ollama");
@@ -177,7 +177,7 @@ try {
   );
 
   // Line-span surfacing + open-at-line.
-  await page.evaluate(() => window.app.commands.executeCommandById("claude-code-engram:search-memory"));
+  await page.evaluate(() => window.app.commands.executeCommandById("coder-engram:search-memory"));
   const uInput = page.locator(".modal input[type=text]").first();
   await uInput.waitFor({ timeout: 10000 });
   await uInput.fill("uniqueword");
@@ -201,7 +201,7 @@ try {
   // drive it with JSON-RPC from this process.
   const TOKEN = "e2e-token-0123456789abcdef0123456789abcdef";
   const addr = await page.evaluate(async (token) => {
-    const plugin = window.app.plugins.plugins["claude-code-engram"];
+    const plugin = window.app.plugins.plugins["coder-engram"];
     plugin.settings.server = { ...plugin.settings.server, enabled: true, port: 0, token };
     return await plugin.server.start(plugin.settings);
   }, TOKEN);

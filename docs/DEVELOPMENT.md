@@ -15,13 +15,13 @@ npm run dev      # esbuild watch build → main.js
 `npm run dev` rebuilds `main.js` on change. To load it in Obsidian, make the build outputs visible under your test vault:
 
 ```
-<vault>/.obsidian/plugins/claude-code-engram/
+<vault>/.obsidian/plugins/coder-engram/
   main.js
   manifest.json
   styles.css
 ```
 
-Copy or symlink `main.js`, `manifest.json`, and `styles.css` there, then enable **Claude Code Engram** under Settings → Community plugins. After a rebuild, use **Reload plugins** (or the "Hot Reload" community plugin) to pick up changes.
+Copy or symlink `main.js`, `manifest.json`, and `styles.css` there, then enable **Coder Engram** under Settings → Community plugins. After a rebuild, use **Reload plugins** (or the "Hot Reload" community plugin) to pick up changes.
 
 ## npm scripts
 

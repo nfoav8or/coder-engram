@@ -1,6 +1,6 @@
 # Roadmap
 
-Claude Code Engram is built in milestones. Milestones 1 through 8 are complete (through v0.4.0); further work is tracked under "Deferred / future" below.
+Coder Engram is built in milestones. Milestones 1 through 8 are complete (through v0.4.0); further work is tracked under "Deferred / future" below.
 
 ## Milestone 1 — local memory + lexical RAG (done)
 

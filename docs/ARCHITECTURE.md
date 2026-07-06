@@ -1,6 +1,6 @@
 # Architecture
 
-Claude Code Engram is a layered TypeScript Obsidian plugin. The guiding rule is that the service and core layers never import `obsidian` directly: they reach the outside world through narrow injected boundaries — `VaultAdapter` for the file system and (from M3) `HttpClient` for outbound requests. Only the UI layer and those two thin adapter shells (`ObsidianVaultAdapter`, `ObsidianHttpClient`) touch a host API. That keeps the indexing, retrieval, and memory logic Obsidian-agnostic and unit-testable, and it lets the local server (M2) reuse the same `EngramEngine` verbatim.
+Coder Engram is a layered TypeScript Obsidian plugin. The guiding rule is that the service and core layers never import `obsidian` directly: they reach the outside world through narrow injected boundaries — `VaultAdapter` for the file system and (from M3) `HttpClient` for outbound requests. Only the UI layer and those two thin adapter shells (`ObsidianVaultAdapter`, `ObsidianHttpClient`) touch a host API. That keeps the indexing, retrieval, and memory logic Obsidian-agnostic and unit-testable, and it lets the local server (M2) reuse the same `EngramEngine` verbatim.
 
 ## Layers
 

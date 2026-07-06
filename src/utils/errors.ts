@@ -1,5 +1,5 @@
 /**
- * Typed error hierarchy for Claude Code Engram.
+ * Typed error hierarchy for Coder Engram.
  *
  * Using discrete error classes lets callers distinguish user-actionable
  * problems (bad settings, unsafe paths) from internal failures, and lets the

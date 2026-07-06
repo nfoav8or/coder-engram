@@ -19,11 +19,14 @@ import { MemoryPaths, resolveProjectPaths } from "./memory-types";
 /** The header written above the first entry when the inbox file is created. */
 export const INBOX_HEADER =
   "# Pending Memory Inbox\n\n" +
-  "Reviewable memory proposed by Claude Code Engram. Apply or discard entries as you see fit.\n\n" +
+  "Reviewable memory proposed by Coder Engram. Apply or discard entries as you see fit.\n\n" +
   "---\n\n";
 
 /** Base tag applied to every proposed/graduated memory entry. */
-export const BASE_TAG = "claude-code-engram";
+export const BASE_TAG = "coder-engram";
+/** Tag written by pre-rename releases (≤0.4.0); still stripped at parse so
+ * existing inbox blocks round-trip without surfacing it as a user tag. */
+const LEGACY_BASE_TAG = "claude-code-engram";
 
 const HEADING_PREFIX = "## Pending Memory: ";
 
@@ -201,7 +204,7 @@ function parseBlock(raw: string, index: number): PendingEntry | null {
   const tags = tagsRaw
     .split(/\s+/)
     .map((t) => t.replace(/^#+/, "").trim())
-    .filter((t) => t && t !== BASE_TAG);
+    .filter((t) => t && t !== BASE_TAG && t !== LEGACY_BASE_TAG);
 
   const statusLine = statusIdx >= 0 ? lines[statusIdx] : "";
   const status = statusLine.replace(/^Status:\s?/, "").trim() || "pending";
@@ -312,7 +315,7 @@ export function formatAppliedBlock(entry: PendingEntry): string {
   if (entry.source) footer.push(`source: ${entry.source}`);
   footer.push(`tags: ${formatTags(entry.tags)}`);
   lines.push("");
-  lines.push(`_Applied from Claude Code Engram review · ${footer.join(" · ")}_`);
+  lines.push(`_Applied from Coder Engram review · ${footer.join(" · ")}_`);
   lines.push("");
   return lines.join("\n");
 }

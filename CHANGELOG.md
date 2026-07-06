@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Claude Code Engram are documented in this file.
+All notable changes to Coder Engram are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The plugin is now Coder Engram (`coder-engram`).** Renamed from Claude Code Engram ahead of the community-catalog submission (plugin ids are immutable once listed, and the old name leaned on a third-party trademark). The GitHub repository moved to `nfoav8or/coder-engram` (old URLs redirect). **Breaking for existing manual installs:** the plugin folder is now `.obsidian/plugins/coder-engram/` — reinstall under the new id (or rename the folder) and re-enable; your vault data is untouched (the memory root is still `Claude Code/` by default, and pending-inbox blocks written under the old name still parse — the legacy `#claude-code-engram` tag is recognized and stripped).
 - **Community-catalog compliance pass** against Obsidian's current plugin guidelines and developer policies: command names and modal titles use sentence case; modals use `setTitle()` and settings sections use `Setting.setHeading()` instead of raw heading elements (the plugin-name heading in settings is gone); the last hardcoded styles moved to a CSS class (`engram-full-width`) so themes can override; the manifest description now opens with an action statement and `authorUrl` points at the author, not the plugin repo; the README gained an explicit **Network use** disclosure (no connections by default; opt-in embeddings and the localhost server described with what is sent where, and a no-telemetry statement).
 
 ### Fixed
@@ -97,7 +98,7 @@ Milestone 6 — retrieval quality. A focused round of relevance, navigation, and
 
 ## [0.1.0] — 2026-07-03
 
-First tagged release of Claude Code Engram — a local-first memory + RAG layer for Claude Code, storing memory as Markdown inside your Obsidian vault. It comprises Milestones 1–5, detailed below: the memory + lexical RAG core (M1), the local MCP/HTTP server (M2), embedding providers with vector + hybrid retrieval (M3), the pending-memory review UI plus extractive `summarize_note` (M4), and CI + release packaging (M5). See [docs/ROADMAP.md](docs/ROADMAP.md).
+First tagged release of Coder Engram — a local-first memory + RAG layer for Claude Code, storing memory as Markdown inside your Obsidian vault. It comprises Milestones 1–5, detailed below: the memory + lexical RAG core (M1), the local MCP/HTTP server (M2), embedding providers with vector + hybrid retrieval (M3), the pending-memory review UI plus extractive `summarize_note` (M4), and CI + release packaging (M5). See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Milestone 5 — CI + release/packaging
 
@@ -207,8 +208,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/claude-code-engram/compare/0.3.0...HEAD
-[0.4.0]: https://github.com/nfoav8or/claude-code-engram/releases/tag/0.4.0
-[0.3.0]: https://github.com/nfoav8or/claude-code-engram/releases/tag/0.3.0
-[0.2.0]: https://github.com/nfoav8or/claude-code-engram/releases/tag/0.2.0
-[0.1.0]: https://github.com/nfoav8or/claude-code-engram/releases/tag/0.1.0
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.3.0...HEAD
+[0.4.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.4.0
+[0.3.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.3.0
+[0.2.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.2.0
+[0.1.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.1.0

@@ -16,10 +16,10 @@
 2. Copy `main.js`, `manifest.json`, and `styles.css` into your vault:
 
    ```
-   <vault>/.obsidian/plugins/claude-code-engram/
+   <vault>/.obsidian/plugins/coder-engram/
    ```
 
-3. In Obsidian, enable **Claude Code Engram** under Settings → Community plugins.
+3. In Obsidian, enable **Coder Engram** under Settings → Community plugins.
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for a watch-build workflow.
 
@@ -40,7 +40,7 @@ The server is a standard HTTP MCP endpoint. Add it to Claude Code with either
 the CLI or your MCP config file. Use the token you generated:
 
 ```bash
-claude mcp add --transport http claude-code-engram http://127.0.0.1:3999 \
+claude mcp add --transport http coder-engram http://127.0.0.1:3999 \
   --header "Authorization: Bearer <your-token>"
 ```
 
@@ -49,7 +49,7 @@ Or, in an MCP JSON config:
 ```json
 {
   "mcpServers": {
-    "claude-code-engram": {
+    "coder-engram": {
       "type": "http",
       "url": "http://127.0.0.1:3999",
       "headers": {
@@ -103,7 +103,7 @@ Everything works without the server, entirely inside your vault.
 
 ### Bootstrap a project
 
-- Run **Claude Code Engram: Create Project Memory Folder** and name your project.
+- Run **Coder Engram: Create Project Memory Folder** and name your project.
   This scaffolds `Claude Code/Memory/Projects/<name>/` with `overview.md`,
   `architecture.md`, `decisions.md`, `tasks.md`, `open-questions.md`, and a
   `sessions/` folder. Existing files are never overwritten.

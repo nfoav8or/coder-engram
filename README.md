@@ -1,8 +1,8 @@
-# Claude Code Engram
+# Coder Engram
 
 Safe, reviewable memory for Claude Code — stored as plain Markdown in your own vault.
 
-**Claude Code Engram is the safe memory layer for Claude Code.** It turns your Obsidian vault into persistent, structured memory an AI coding agent can search and *propose to* — but every agent-written memory lands in a review inbox you approve or discard, so nothing is ever silently written to or edited in your notes. Everything is plain Markdown inside a `Claude Code/` folder in your vault; the retrieval index is a rebuildable local cache. No cloud API key is required for the default experience, and the optional local server is off by default, binds `127.0.0.1`, and is token-authenticated.
+**Coder Engram is the safe memory layer for Claude Code.** It turns your Obsidian vault into persistent, structured memory an AI coding agent can search and *propose to* — but every agent-written memory lands in a review inbox you approve or discard, so nothing is ever silently written to or edited in your notes. Everything is plain Markdown inside a `Claude Code/` folder in your vault; the retrieval index is a rebuildable local cache. No cloud API key is required for the default experience, and the optional local server is off by default, binds `127.0.0.1`, and is token-authenticated.
 
 ## What makes it different
 
@@ -15,7 +15,7 @@ Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an a
 
 > **Status:** v0.4.0 (Milestones 1–8). Local memory + lexical (BM25) retrieval (M1), a local MCP/HTTP server that Claude Code can query and propose memory to (M2), embedding-based vector + hybrid retrieval (M3), a richer pending-memory review UI plus an honest extractive `summarize_note` (M4), CI + release packaging (M5), and retrieval-quality polish — precise chunk line spans with open-at-line, densest-window snippets, per-note result diversity, and a ~7× faster lexical query path (M6). M7 deepens the Claude Code memory loop: a `get_note_context` tool to read a hit's full passage, `find_related_notes` link-graph navigation, and `add_memory` de-duplication so a looping agent can't flood the review inbox. M8 sharpens it: ranged reads (`startLine`/`endLine`), dated + de-duplicated + backfilled search pages, a `[PENDING REVIEW]` label on unreviewed inbox hits, output caps and rate limits on the session-priming tools, O(changed) refresh I/O, and an embedding-settings fix that removes the need for a plugin reload. The server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too: the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## What Claude Code Engram does
+## What Coder Engram does
 
 - Scans your vault's Markdown notes and builds a local, rebuildable JSON index.
 - Chunks notes into retrieval-friendly, heading-aware segments.
@@ -84,9 +84,9 @@ Embedding happens at index time (reindex/refresh) and is cached in `Index/embedd
 ## Installation (from a release)
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from a release.
-2. Create the folder `<vault>/.obsidian/plugins/claude-code-engram/`.
+2. Create the folder `<vault>/.obsidian/plugins/coder-engram/`.
 3. Copy the three files into that folder.
-4. In Obsidian: **Settings → Community plugins → Reload plugins**, then enable **Claude Code Engram**.
+4. In Obsidian: **Settings → Community plugins → Reload plugins**, then enable **Coder Engram**.
 
 This is a desktop-only plugin (`isDesktopOnly: true`, minimum Obsidian 1.5.0).
 
@@ -96,10 +96,10 @@ This is a desktop-only plugin (`isDesktopOnly: true`, minimum Obsidian 1.5.0).
 2. Copy the build outputs — `main.js`, `manifest.json`, and `styles.css` — into:
 
    ```
-   <vault>/.obsidian/plugins/claude-code-engram/
+   <vault>/.obsidian/plugins/coder-engram/
    ```
 
-3. Reload plugins in Obsidian and enable **Claude Code Engram**.
+3. Reload plugins in Obsidian and enable **Coder Engram**.
 
 ## Development setup
 
@@ -108,7 +108,7 @@ npm install
 npm run dev      # esbuild watch build
 ```
 
-`npm run dev` rebuilds `main.js` on change. Point it at a test vault by copying (or symlinking) the outputs into that vault's `.obsidian/plugins/claude-code-engram/` folder. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
+`npm run dev` rebuilds `main.js` on change. Point it at a test vault by copying (or symlinking) the outputs into that vault's `.obsidian/plugins/coder-engram/` folder. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
 
 ## Building
 
@@ -143,7 +143,7 @@ the workflow fails its verification step before publishing.
 
 ## Configuration
 
-Settings live under **Settings → Claude Code Engram**. Key settings and their safe defaults:
+Settings live under **Settings → Coder Engram**. Key settings and their safe defaults:
 
 | Setting | Default | Notes |
 | --- | --- | --- |
@@ -176,18 +176,18 @@ The memory root is validated on entry: a value that would escape the vault is re
 
 The plugin registers twelve commands (command-palette names shown):
 
-1. **Claude Code Engram: Open Control Panel**
-2. **Claude Code Engram: Reindex Vault**
-3. **Claude Code Engram: Search Memory**
-4. **Claude Code Engram: Summarize Current Note**
-5. **Claude Code Engram: Add Memory**
-6. **Claude Code Engram: Add Current Note to Project Memory**
-7. **Claude Code Engram: Create Project Memory Folder**
-8. **Claude Code Engram: Show Project Context**
-9. **Claude Code Engram: Review Pending Memory**
-10. **Claude Code Engram: Start Session Note**
-11. **Claude Code Engram: End Session Note**
-12. **Claude Code Engram: Restart Local Server**
+1. **Coder Engram: Open Control Panel**
+2. **Coder Engram: Reindex Vault**
+3. **Coder Engram: Search Memory**
+4. **Coder Engram: Summarize Current Note**
+5. **Coder Engram: Add Memory**
+6. **Coder Engram: Add Current Note to Project Memory**
+7. **Coder Engram: Create Project Memory Folder**
+8. **Coder Engram: Show Project Context**
+9. **Coder Engram: Review Pending Memory**
+10. **Coder Engram: Start Session Note**
+11. **Coder Engram: End Session Note**
+12. **Coder Engram: Restart Local Server**
 
 The **Control Panel** (right sidebar, also on the ribbon "brain-circuit" icon) shows the memory root, indexed-note and chunk counts, last-indexed time, and server status, plus quick buttons: Reindex, Search, Add memory, Review inbox, New project, Project context.
 
