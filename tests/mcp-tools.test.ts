@@ -216,6 +216,59 @@ describe("RateLimiter.enforceWindow", () => {
     expect(out.length).toBeLessThan(maxChars + 300);
   });
 
+  it("get_note_context reaches a passage deep in a long note via startLine/endLine", async () => {
+    // 40 sections × ~1000 chars: a plain read at maxChars=1000 truncates long
+    // before the last section — the ranged read is the only way to reach it.
+    const filler = Array.from({ length: 39 }, (_, i) => `## Section ${i}\n\n${"word ".repeat(200)}`).join("\n\n");
+    const target = "## Target\n\nThe needle passage about embedding identity lives here.";
+    const { engine, ctx } = makeContext({ "Notes/long.md": `# Long\n\n${filler}\n\n${target}` });
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    const plain = await registry.call("get_note_context", { path: "Notes/long.md", maxChars: 1000 }, ctx);
+    expect(plain).toContain("truncated");
+    expect(plain).not.toContain("needle passage");
+    // The target's line: filler is 39 sections × 3 lines + heading/blanks; just
+    // derive it from the source instead of hardcoding.
+    const targetLine = `# Long\n\n${filler}\n\n${target}`.split("\n").indexOf("## Target") + 1;
+    const ranged = await registry.call(
+      "get_note_context",
+      { path: "Notes/long.md", startLine: targetLine, maxChars: 1000 },
+      ctx,
+    );
+    expect(ranged).toContain("needle passage");
+    expect(ranged).toContain("overlapping the requested lines");
+  });
+
+  it("get_note_context reports the indexed span when a range matches nothing", async () => {
+    const { engine, ctx } = makeContext({ "Notes/rag.md": "# RAG\n\nShort note body." });
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    const out = await registry.call(
+      "get_note_context",
+      { path: "Notes/rag.md", startLine: 500, endLine: 600 },
+      ctx,
+    );
+    expect(out).toMatch(/No indexed passages .* overlap lines 500–600/);
+    expect(out).toMatch(/span lines \d+–\d+/);
+  });
+
+  it("get_note_context rejects an inverted range and keeps the indexed-only gate first", async () => {
+    const { engine, ctx } = makeContext(
+      { "Secret/keys.md": "# Keys\n\nsensitive content", "Notes/a.md": "# A\n\nalpha" },
+      { excludedFolders: ["Secret"] },
+    );
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    await expect(
+      registry.call("get_note_context", { path: "Notes/a.md", startLine: 10, endLine: 5 }, ctx),
+    ).rejects.toThrow(/endLine/);
+    // An excluded note with a range is refused as NOT INDEXED — never leaks
+    // whether any lines exist there.
+    await expect(
+      registry.call("get_note_context", { path: "Secret/keys.md", startLine: 1, endLine: 5 }, ctx),
+    ).rejects.toThrow(/not indexed/i);
+  });
+
   it("search_vault_memory collapses near-duplicate hits and returns a lean, line-ranged format", async () => {
     const decision = "We chose a local JSON index for indexing performance and offline retrieval.";
     const { engine, ctx } = makeContext({

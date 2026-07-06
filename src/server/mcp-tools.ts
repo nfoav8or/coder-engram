@@ -379,8 +379,10 @@ const getNoteContextTool: Tool = {
     description:
       "Return the full INDEXED text of a single note, passage by passage, each " +
       "with its heading and line range — the natural follow-up to a search hit, " +
-      "which only returns a short snippet. Only notes present in the index are " +
-      "returned; an excluded or unindexed note is refused, so this is not a " +
+      "which only returns a short snippet. Pass startLine/endLine (e.g. from a " +
+      "search hit's line range) to read just the passages overlapping that span — " +
+      "essential for hits deep in a long note. Only notes present in the index " +
+      "are returned; an excluded or unindexed note is refused, so this is not a " +
       "general file-read.",
     inputSchema: {
       type: "object",
@@ -391,6 +393,14 @@ const getNoteContextTool: Tool = {
           description:
             `Max characters returned (1000–${NOTE_CONTEXT_MAX_CHARS}, default ` +
             `${NOTE_CONTEXT_DEFAULT_MAX_CHARS}); the note is truncated past this.`,
+        },
+        startLine: {
+          type: "number",
+          description: "Only passages ending at/after this 1-based line (e.g. a search hit's start).",
+        },
+        endLine: {
+          type: "number",
+          description: "Only passages starting at/before this 1-based line.",
         },
       },
       required: ["path"],
@@ -408,14 +418,43 @@ const getNoteContextTool: Tool = {
       }),
     );
 
+    // 1-based, matching the line ranges shown by search_vault_memory; 0 = unset
+    // (the fallback bypasses min-validation by design).
+    const startLine = Math.trunc(optionalNumber(obj, "startLine", 0, { min: 1, max: 100_000_000 }));
+    const endLine = Math.trunc(optionalNumber(obj, "endLine", 0, { min: 1, max: 100_000_000 }));
+    if (startLine > 0 && endLine > 0 && endLine < startLine) {
+      throw new ValidationError(`Field "endLine" must be >= "startLine"`);
+    }
+
     // Indexed-only gate (same as summarize_note): an excluded/unindexed note has
     // no chunks and is refused, so this can never read a note the exclusion
     // filters were meant to keep out.
-    const chunks = ctx.engine.getNoteChunks(path);
-    if (chunks.length === 0) {
+    const allChunks = ctx.engine.getNoteChunks(path);
+    if (allChunks.length === 0) {
       throw new ValidationError(
         `Note "${path}" is not indexed (it may be excluded or outside the vault). ` +
           `Only indexed notes can be read.`,
+      );
+    }
+
+    // Range filter: keep passages overlapping [startLine, endLine]. Runs AFTER
+    // the indexed-only gate so an excluded note is refused, never "empty range".
+    // Chunk spans are 0-based; the tool's line numbers are 1-based.
+    const chunks =
+      startLine > 0 || endLine > 0
+        ? allChunks.filter(
+            (c) =>
+              (endLine === 0 || c.startLine + 1 <= endLine) &&
+              (startLine === 0 || c.endLine + 1 >= startLine),
+          )
+        : allChunks;
+    if (chunks.length === 0) {
+      const first = allChunks[0].startLine + 1;
+      const last = allChunks[allChunks.length - 1].endLine + 1;
+      return (
+        `No indexed passages of "${path}" overlap lines ` +
+        `${startLine > 0 ? startLine : 1}–${endLine > 0 ? endLine : "end"}; ` +
+        `the note's indexed passages span lines ${first}–${last}.`
       );
     }
 
@@ -442,10 +481,14 @@ const getNoteContextTool: Tool = {
       used += sep + block.length;
     }
 
-    const header = `${chunks[0].notePath} — ${chunks.length} indexed passage(s):`;
+    const scope =
+      chunks.length === allChunks.length
+        ? `${chunks.length} indexed passage(s)`
+        : `${chunks.length} of ${allChunks.length} indexed passage(s) overlapping the requested lines`;
+    const header = `${chunks[0].notePath} — ${scope}:`;
     const body = blocks.join("\n\n");
     return truncated
-      ? `${header}\n\n${body}\n\n…(truncated at ${maxChars} chars; narrow with search_vault_memory)`
+      ? `${header}\n\n${body}\n\n…(truncated at ${maxChars} chars; narrow with startLine/endLine)`
       : `${header}\n\n${body}`;
   },
 };
