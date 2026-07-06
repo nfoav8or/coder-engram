@@ -68,8 +68,13 @@ Or, in an MCP JSON config:
 
 Once connected, Claude Code can call:
 
-- `search_vault_memory` — query-scoped BM25 retrieval (paths, headings, snippets).
-- `add_memory` — propose a memory entry (appended to the review inbox).
+- `search_vault_memory` — query-scoped retrieval (lexical by default, vector/hybrid
+  when embeddings are configured): note paths, headings, line ranges, snippets;
+  near-duplicates collapsed, inbox hits labelled pending.
+- `get_note_context` — the full **indexed** text of one note, passage by passage;
+  pass a search hit's `startLine`/`endLine` to read just that region.
+- `find_related_notes` — link-graph neighbours of an indexed note (links out + backlinks).
+- `add_memory` — propose a memory entry (appended to the review inbox, de-duplicated).
 - `get_project_context` / `get_global_context` — concatenated memory reads.
 - `list_projects`, `get_recent_sessions` — project navigation.
 - `reindex_vault` — rebuild the index (rate-limited).
@@ -83,9 +88,14 @@ Full descriptions and the security model are in [MCP_SERVER.md](MCP_SERVER.md).
   project you are working in to prime Claude Code with durable memory.
 - **During work:** call `search_vault_memory` to pull in relevant prior notes,
   decisions, and session history.
+- **To read a hit in depth:** pass its path and line range to `get_note_context`
+  for the full passage (a search result is only a snippet), and walk
+  `find_related_notes` to reach linked decisions and follow-ups.
 - **When something is worth remembering:** call `add_memory`. It lands in
   `Claude Code/Memory/Inbox/pending-memory.md` for you to review in Obsidian —
-  nothing is overwritten, and nothing is applied without your say-so.
+  nothing is overwritten, and nothing is applied without your say-so. Until you
+  accept it, search returns it labelled `[PENDING REVIEW]`, so the agent never
+  mistakes its own proposal for settled memory.
 
 ## Option B — use the Markdown folder directly (no server)
 
