@@ -12,7 +12,7 @@
 
 import { VaultAdapter } from "../core/vault-adapter";
 import { chunkMarkdown, ChunkOptions } from "../core/markdown-chunker";
-import { ScannedNote } from "./vault-scanner";
+import { ScannedNote, ScanResult, isUnchangedNote } from "./vault-scanner";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 
 export const INDEX_VERSION = 1;
@@ -113,6 +113,21 @@ export class IndexManager {
     return this.index?.chunks ?? [];
   }
 
+  /**
+   * mtimes of the notes in the current index, for the scanner's skip-unchanged
+   * fast path. Falls back to chunk-derived mtimes right after load() (zero-chunk
+   * notes are then absent, so they are re-read once and settle — same contract
+   * as refresh()).
+   */
+  getNoteMtimes(): Map<string, number> {
+    if (this.noteMtimes) return this.noteMtimes;
+    const map = new Map<string, number>();
+    for (const chunk of this.getChunks()) {
+      if (!map.has(chunk.notePath)) map.set(chunk.notePath, chunk.mtime);
+    }
+    return map;
+  }
+
   /** Full rebuild from the given notes, replacing any in-memory index. */
   build(notes: ScannedNote[]): VaultIndex {
     const chunks: IndexedChunk[] = [];
@@ -136,7 +151,7 @@ export class IndexManager {
    * Incremental refresh. Notes with an unchanged mtime keep their chunks;
    * changed/new notes are re-chunked; notes absent from `notes` are removed.
    */
-  refresh(notes: ScannedNote[]): RefreshResult {
+  refresh(notes: ScanResult[]): RefreshResult {
     const existing = this.index?.chunks ?? [];
     const existingByNote = new Map<string, IndexedChunk[]>();
     for (const chunk of existing) {
@@ -162,9 +177,14 @@ export class IndexManager {
     for (const note of notes) {
       seenNotes.add(note.path);
       const priorMtime = priorMtimes.get(note.path);
-      if (priorMtime === note.mtime) {
+      if (priorMtime === note.mtime || isUnchangedNote(note)) {
+        // A content-less stub with a mismatched mtime is impossible when the
+        // caller passes THIS manager's getNoteMtimes() to the scanner, but if
+        // one ever arrives, keeping the prior chunks is the only safe option —
+        // there is no content to re-chunk.
         nextChunks.push(...(existingByNote.get(note.path) ?? []));
-        result.unchanged++;
+        if (priorMtime === note.mtime) result.unchanged++;
+        else result.updated++;
       } else {
         nextChunks.push(...chunkNote(note, this.chunkOptions));
         if (priorMtime !== undefined) result.updated++;

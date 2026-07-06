@@ -32,8 +32,8 @@ Chunk options default to `{ maxChars: 1200, overlapChars: 150 }` and receive `bo
 - **Records.** Each `IndexedChunk` carries `id` (`<notePath>::<ordinal>`), `notePath`, `heading`, `headingPath`, `text`, `startLine`/`endLine`, `tags`, `aliases`, `links`, and `mtime`.
 - **Files.** `chunks.json` (the chunk records), `metadata.json` (`version`, `builtAt`, `noteCount`, `chunkCount`), and `embeddings.json` (an empty shell until an embedding provider is configured: `{ "model": null, "dim": 0, "vectors": {} }`, then populated with cached vectors).
 - **Build.** `build(notes)` re-chunks every note and replaces the in-memory index.
-- **Incremental refresh.** `refresh(notes)` compares by `mtime`: notes whose mtime is unchanged keep their existing chunks; new/modified notes are re-chunked; notes absent from the scan are dropped. Returns counts of `added` / `updated` / `removed` / `unchanged`.
-- **Persist.** Writes each file through the adapter (atomic where the platform allows). The `embeddings.json` shell is only written if it does not already exist.
+- **Incremental refresh.** `refresh(notes)` compares by `mtime` (a per-note mtime map, so even zero-chunk empty notes track correctly): notes whose mtime is unchanged keep their existing chunks; new/modified notes are re-chunked; notes absent from the scan are dropped. Returns counts of `added` / `updated` / `removed` / `unchanged`. The scan itself is incremental too: the engine passes the manager's known mtimes to `VaultScanner.scan`, which returns content-less stubs for unchanged notes **without reading them from disk** — so a debounced refresh is O(changed) in file I/O, not O(vault). The fast path is invalidated whenever the scan config changes (a new exclusion must re-check every note, not trust verdicts scanned under the old config). An all-unchanged refresh keeps the chunks-array identity (preserving the corpus-stats memo below) and skips the persist entirely.
+- **Persist.** Writes each file through the adapter (atomic where the platform allows). The `embeddings.json` shell is only written if it does not already exist. A refresh that changed nothing does not persist — the index files live inside the vault, so writing them would re-fire the vault watcher and schedule the next refresh forever (the watcher additionally ignores the plugin's own `Index/`/`Config/` paths).
 - **Load.** `load()` returns a persisted index, or `null` (triggering a rebuild) if it is missing, unparseable, or its `version` does not match `INDEX_VERSION`.
 
 The engine loads a persisted index on layout-ready without blocking plugin load; **Reindex Vault** does a full rebuild; auto-index-on-change (off by default) does a debounced (~2.5s) incremental refresh.
@@ -58,10 +58,10 @@ Retrieval is measured by an on-demand benchmark (`npm run bench`, `tests/scale.b
 
 | corpus | chunks | full build | incremental refresh | lexical query p50/p95 | hybrid query p50/p95 |
 | --- | --- | --- | --- | --- | --- |
-| 2,000 notes | ~19k | ~55 ms | ~3 ms (10 changed) | 21 / 25 ms | 37 / 41 ms |
+| 2,000 notes | ~19k | ~55 ms | scan ~2 ms + refresh ~8 ms (10 changed) | 21 / 25 ms | 37 / 41 ms |
 | 5,000 notes | ~48k | ~120 ms | ~10 ms (10 changed) | 55 / 63 ms | 102 / 114 ms |
 
-Notes: incremental refresh reuses unchanged chunk objects, so it is independent of vault size (only the changed notes are re-chunked). Lexical scoring iterates the whole candidate set per query (O(corpus)); the memoization above removes the per-query re-tokenization cost but not that linear scan, and the hybrid vector stage is O(chunks × dim) per query. Both stay interactive to tens of thousands of chunks; beyond that the levers are an inverted index (lexical) and approximate-nearest-neighbour search (vector) — deliberately not built yet, since real vaults sit well inside the measured range. Run `BENCH_NOTES=5000 npm run bench` to reproduce.
+Notes: incremental refresh reuses unchanged chunk objects and skips reading unchanged files entirely (the skip-unchanged scan cut the re-scan from ~60 ms to ~2 ms at 2k notes even on the in-memory adapter; on a real vault the saving is disk I/O, which is the part that matters). Lexical scoring iterates the whole candidate set per query (O(corpus)); the memoization above removes the per-query re-tokenization cost but not that linear scan, and the hybrid vector stage is O(chunks × dim) per query. Both stay interactive to tens of thousands of chunks; beyond that the levers are an inverted index (lexical) and approximate-nearest-neighbour search (vector) — deliberately not built yet, since real vaults sit well inside the measured range. Run `BENCH_NOTES=5000 npm run bench` to reproduce.
 
 ### Embedding abstraction
 

@@ -169,7 +169,10 @@ describe(`scale benchmark (${NOTES} notes, dim ${DIM}, ${QUERIES} queries)`, () 
       for (let i = 0; i < TOUCHED; i++) {
         adapter.touch(`Notes/note-${i}.md`, makeNote(i) + `\n\n## extra\n\n${words(makeRng(i + 1), 20)}\n`);
       }
-      const [rescanned, rescanMs] = await timedAsync(() => scanner.scan(SCAN_CONFIG));
+      // Pass the manager's known mtimes, as engine.refresh does in production:
+      // unchanged notes are skipped without a read, so this measures the real
+      // debounced-refresh path (O(changed) in file I/O), not a full re-read.
+      const [rescanned, rescanMs] = await timedAsync(() => scanner.scan(SCAN_CONFIG, im.getNoteMtimes()));
       const [refreshResult, refreshMs] = timed(() => im.refresh(rescanned));
 
       // --- build query set drawn from the same vocab (so results are non-empty) ---

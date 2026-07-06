@@ -57,6 +57,69 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
     expect(await adapter.getMtime("Claude Code/Index/chunks.json")).not.toBe(chunksMtime);
   });
 
+  it("a refresh reads only changed notes from disk", async () => {
+    const { adapter, engine } = makeEngine({
+      "Notes/a.md": "# A\nalpha content",
+      "Notes/b.md": "# B\nbeta content",
+    });
+    await engine.reindex();
+    let reads = 0;
+    const orig = adapter.read.bind(adapter);
+    adapter.read = async (p: string) => {
+      reads++;
+      return orig(p);
+    };
+
+    await engine.refresh(); // nothing changed → no file reads at all
+    expect(reads).toBe(0);
+
+    adapter.touch("Notes/b.md", "# B\nquasar telemetry");
+    await engine.refresh();
+    expect(reads).toBe(1); // only the changed note
+    expect((await engine.search({ query: "quasar telemetry" })).length).toBeGreaterThan(0);
+  });
+
+  it("applies a new tag exclusion to unchanged notes on the next refresh", async () => {
+    // The skip-unchanged fast path must be invalidated by a scan-config change:
+    // known mtimes encode eligibility verdicts under the OLD config, and a note
+    // a new exclusion should hide has not changed on disk.
+    const { engine } = makeEngine({
+      "Notes/a.md": "# A\nalpha content",
+      "Notes/p.md": "#private\n\nsensitive payload here",
+    });
+    await engine.reindex();
+    expect((await engine.search({ query: "sensitive payload" })).length).toBeGreaterThan(0);
+
+    engine.updateSettings({ ...DEFAULT_SETTINGS, excludedTags: ["private"] });
+    await engine.refresh();
+    expect((await engine.search({ query: "sensitive payload" })).length).toBe(0);
+  });
+
+  it("re-checks exclusions after loading a persisted index from a moved-back root", async () => {
+    const { engine } = makeEngine({
+      "Notes/a.md": "# A\nalpha content",
+      "Notes/p.md": "#private\n\nsensitive payload here",
+    });
+    // Index persisted at the default root WITHOUT exclusions: it legitimately
+    // contains the #private note.
+    await engine.reindex();
+
+    // Move roots and adopt the exclusion; the empty new root reindexes under
+    // the exclusion config and snapshots its scan key.
+    engine.updateSettings({ ...DEFAULT_SETTINGS, memoryRoot: "Elsewhere", excludedTags: ["private"] });
+    await engine.refresh();
+    expect((await engine.search({ query: "sensitive payload" })).length).toBe(0);
+
+    // Move back: loadIndex adopts the OLD index (built before the exclusion).
+    // The scan config hasn't changed since the key was snapshotted, so without
+    // a key reset the fast path would stub the unchanged #private note and
+    // keep serving it despite the exclusion.
+    engine.updateSettings({ ...DEFAULT_SETTINGS, memoryRoot: "Claude Code", excludedTags: ["private"] });
+    expect(await engine.loadIndex()).toBe(true);
+    await engine.refresh();
+    expect((await engine.search({ query: "sensitive payload" })).length).toBe(0);
+  });
+
   it("adds memory to the pending inbox by default", async () => {
     const { adapter, engine } = makeEngine({});
     const { path } = await engine.addMemory({

@@ -93,6 +93,13 @@ export class EngramEngine {
   /** Serializes embedding passes so overlapping reindex/refresh/sync can't
    * interleave (last-writer-wins persist / mid-pass index mutation). */
   private embedChain: Promise<void> = Promise.resolve();
+  /** Scan config in effect at the last completed scan. The skip-unchanged scan
+   * fast path is only valid while the config is unchanged: known mtimes encode
+   * eligibility verdicts under the config they were scanned with, and a note
+   * that a NEW exclusion should hide must be re-checked, not skipped. String
+   * snapshot (not object compare) for the same aliasing reason as
+   * lastEmbeddingKey. Empty = no scan yet → next refresh reads everything. */
+  private lastScanConfigKey = "";
 
   constructor(
     private readonly adapter: VaultAdapter,
@@ -248,6 +255,12 @@ export class EngramEngine {
   async loadIndex(): Promise<boolean> {
     const loaded = (await this.index.load()) !== null;
     if (loaded) {
+      // A loaded index's eligibility verdicts were scanned under an UNKNOWN
+      // config (e.g. a moved-back root's index persisted before an exclusion
+      // was added). Reset the scan-key so the next refresh re-reads and
+      // re-checks every note instead of trusting stubs against foreign
+      // verdicts.
+      this.lastScanConfigKey = "";
       // Bring the vector cache back into memory and rebuild the retriever so a
       // reloaded index can serve vector/hybrid results immediately.
       await this.embeddingStore.load();
@@ -258,7 +271,9 @@ export class EngramEngine {
 
   /** Full rebuild of the index from the current vault, then persist + embed. */
   async reindex(): Promise<{ noteCount: number; chunkCount: number }> {
-    const notes = await this.scanner.scan(toScanConfig(this.settings));
+    const scanConfig = toScanConfig(this.settings);
+    const notes = await this.scanner.scan(scanConfig);
+    this.lastScanConfigKey = JSON.stringify(scanConfig);
     const built = this.index.build(notes);
     await this.index.persist();
     this.logger.info("Reindexed vault", {
@@ -275,7 +290,16 @@ export class EngramEngine {
       await this.reindex();
       return { added: this.index.getChunks().length, updated: 0, removed: 0, unchanged: 0 };
     }
-    const notes = await this.scanner.scan(toScanConfig(this.settings));
+    const scanConfig = toScanConfig(this.settings);
+    const scanKey = JSON.stringify(scanConfig);
+    // Skip-unchanged scanning keeps a debounced refresh O(changed) in file
+    // I/O — but only while the scan config still matches the one the known
+    // mtimes were scanned under (see lastScanConfigKey).
+    const notes =
+      scanKey === this.lastScanConfigKey
+        ? await this.scanner.scan(scanConfig, this.index.getNoteMtimes())
+        : await this.scanner.scan(scanConfig);
+    this.lastScanConfigKey = scanKey;
     const result = this.index.refresh(notes);
     // Persist only when something changed: a no-op persist re-serializes the
     // whole index (tens of MB at scale) on the main thread, and — because the

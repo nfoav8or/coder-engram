@@ -33,6 +33,23 @@ export interface ScannedNote {
   metadata: NoteMetadata;
 }
 
+/**
+ * A note the incremental fast path skipped: its mtime matched the caller's
+ * known-mtimes map, so its content was NOT read from disk. Unchanged content
+ * implies unchanged tags, so the note's prior eligibility verdict still holds.
+ */
+export interface UnchangedNote {
+  path: string;
+  mtime: number;
+  unchanged: true;
+}
+
+export type ScanResult = ScannedNote | UnchangedNote;
+
+export function isUnchangedNote(note: ScanResult): note is UnchangedNote {
+  return "unchanged" in note && note.unchanged === true;
+}
+
 function normalizeFolder(folder: string): string {
   const trimmed = folder.trim().replace(/^\/+|\/+$/g, "");
   return trimmed;
@@ -106,13 +123,27 @@ export class VaultScanner {
   /**
    * Scan the vault and return eligible notes with content + metadata.
    * Read/parse failures on individual notes are logged and skipped, never fatal.
+   *
+   * With `knownMtimes` (the incremental path), a file whose mtime matches the
+   * map is returned as a content-less {@link UnchangedNote} WITHOUT touching
+   * disk — this is what keeps a debounced refresh O(changed) in file I/O
+   * instead of re-reading the whole vault. The tag-exclusion check needs
+   * content, but an unchanged note's tags are unchanged too, so its prior
+   * verdict stands; a note the caller doesn't know (e.g. previously
+   * tag-excluded, so absent from the map) is always read and re-checked.
    */
-  async scan(config: ScanConfig): Promise<ScannedNote[]> {
+  async scan(config: ScanConfig): Promise<ScannedNote[]>;
+  async scan(config: ScanConfig, knownMtimes: Map<string, number>): Promise<ScanResult[]>;
+  async scan(config: ScanConfig, knownMtimes?: Map<string, number>): Promise<ScanResult[]> {
     const files = await this.adapter.listMarkdownFiles();
     const eligible = files.filter((f) => this.isPathEligible(f.path, config));
-    const out: ScannedNote[] = [];
+    const out: ScanResult[] = [];
 
     for (const file of eligible) {
+      if (knownMtimes?.get(file.path) === file.mtime) {
+        out.push({ path: file.path, mtime: file.mtime, unchanged: true });
+        continue;
+      }
       try {
         // eslint-disable-next-line no-await-in-loop
         const content = await this.adapter.read(normalizeVaultRelativePath(file.path));
