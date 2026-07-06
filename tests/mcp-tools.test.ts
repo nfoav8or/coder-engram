@@ -308,6 +308,27 @@ describe("RateLimiter.enforceWindow", () => {
     expect(out.split(decision).length - 1).toBe(1);
   });
 
+  it("search_vault_memory marks hits from the pending-review inbox as not-yet-accepted", async () => {
+    const { engine, ctx } = makeContext({
+      "Notes/accepted.md": "# Accepted\n\nWe standardized on parquet snapshots for exports.",
+    });
+    const registry = new ToolRegistry();
+    // An agent proposal lands in the inbox; after a reindex it is searchable
+    // vault Markdown like anything else — but it must not read as settled memory.
+    await registry.call(
+      "add_memory",
+      { content: "We standardized on parquet snapshots for archival too.", type: "decision" },
+      ctx,
+    );
+    await engine.reindex();
+    const out = await registry.call("search_vault_memory", { query: "standardized parquet snapshots" }, ctx);
+    const inboxLine = out.split("\n").find((l: string) => l.includes("pending-memory.md"));
+    const acceptedLine = out.split("\n").find((l: string) => l.includes("Notes/accepted.md"));
+    expect(inboxLine).toContain("[PENDING REVIEW");
+    expect(acceptedLine).toBeDefined();
+    expect(acceptedLine).not.toContain("PENDING REVIEW");
+  });
+
   it("find_related_notes returns forward links and backlinks between indexed notes", async () => {
     const { engine, ctx } = makeContext({
       "Notes/a.md": "# A\n\nSee [[b]] for details.",

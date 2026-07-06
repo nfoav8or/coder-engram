@@ -177,12 +177,17 @@ const searchTool: Tool = {
     // locate or fetch the passage, then the snippet. No score float (rank order
     // already conveys it) — every token returned should aid recall.
     const distinct = diversifyByNote(dropNearDuplicates(results), limit);
+    // Hits from the review inbox are agent PROPOSALS awaiting human review, not
+    // accepted memory — mark them so an agent's own unreviewed write can't come
+    // back through search looking like the user's settled knowledge.
+    const pendingPath = ctx.engine.getPaths().pendingMemoryFile;
     const blocks = distinct.map((r, i) => {
       const heading = r.chunk.headingPath.length ? r.chunk.headingPath.join(" › ") : r.chunk.heading || "(top)";
       const start = r.chunk.startLine + 1;
       const end = Math.max(start, r.chunk.endLine + 1);
       const lines = start === end ? `L${start}` : `L${start}–${end}`;
-      return `${i + 1}. ${r.chunk.notePath} › ${heading} (${lines})\n${r.snippet}`;
+      const pending = r.chunk.notePath === pendingPath ? " [PENDING REVIEW — proposed, not yet accepted]" : "";
+      return `${i + 1}. ${r.chunk.notePath} › ${heading} (${lines})${pending}\n${r.snippet}`;
     });
     return `${distinct.length} result(s):\n\n${blocks.join("\n\n")}`;
   },
