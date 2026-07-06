@@ -235,6 +235,26 @@ describe("RateLimiter.enforceWindow", () => {
     expect(out).not.toMatch(/score \d/);
   });
 
+  it("search_vault_memory backfills the page with distinct results when duplicates are dropped", async () => {
+    const decision = "We chose a local JSON index for indexing performance and offline retrieval.";
+    const { engine, ctx } = makeContext({
+      // The duplicated decision matches the query best, so both copies occupy
+      // the top of the ranking — a shallow fetch would return only these two
+      // and dedup would leave a one-result page.
+      "Projects/x/decisions.md": `# Decisions\n\n${decision}`,
+      "Sessions/2026-07-05.md": `# Session\n\n${decision}`,
+      "Notes/pipeline.md": "# Pipeline\n\nThe local index rebuild is incremental.",
+      "Notes/cache.md": "# Cache\n\nThe JSON cache under Index is rebuildable.",
+    });
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    const out = await registry.call("search_vault_memory", { query: "local JSON index", limit: 2 }, ctx);
+    // Page is full despite the dropped duplicate, and never exceeds `limit`
+    // even though the handler fetched a deeper candidate pool.
+    expect(out).toMatch(/^2 result/);
+    expect(out.split(decision).length - 1).toBe(1);
+  });
+
   it("find_related_notes returns forward links and backlinks between indexed notes", async () => {
     const { engine, ctx } = makeContext({
       "Notes/a.md": "# A\n\nSee [[b]] for details.",

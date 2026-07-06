@@ -28,7 +28,7 @@ import {
   optionalNumber,
 } from "../utils/validation";
 import { MemoryEntry } from "../memory/memory-types";
-import { dropNearDuplicates } from "../retrieval/ranking";
+import { dropNearDuplicates, diversifyByNote } from "../retrieval/ranking";
 
 /** JSON-Schema-shaped tool description advertised via `tools/list`. */
 export interface ToolDefinition {
@@ -156,9 +156,12 @@ const searchTool: Tool = {
     const sinceDays = optionalNumber(obj, "sinceDays", 0, { min: 0, max: 36_500 });
     const sinceMtime = sinceDays > 0 ? ctx.clock() - sinceDays * MS_PER_DAY : undefined;
 
+    // Fetch a deeper candidate pool than the page so the near-duplicate drop
+    // below can backfill with distinct results instead of leaving the page
+    // short of `limit`.
     const results = await ctx.engine.search({
       query,
-      limit,
+      limit: limit * 2,
       filters: { folder, tag, project, sinceMtime },
     });
 
@@ -166,11 +169,14 @@ const searchTool: Tool = {
       return `No results for "${query}".`;
     }
     // Drop near-duplicate hits so the agent isn't fed (and charged tokens for)
-    // the same memory twice — e.g. a decision copied into a session note. The
-    // format is deliberately lean: note path, heading, and line range so the
-    // agent can locate or fetch the passage, then the snippet. No score float
-    // (rank order already conveys it) — every token returned should aid recall.
-    const distinct = dropNearDuplicates(results);
+    // the same memory twice — e.g. a decision copied into a session note. Then
+    // re-apply the per-note cap at the page size (the deep fetch diversified at
+    // a looser cap scaled to the candidate count — same binding-pass pattern as
+    // HybridRetriever) and cut the pool back down to `limit`. The format is
+    // deliberately lean: note path, heading, and line range so the agent can
+    // locate or fetch the passage, then the snippet. No score float (rank order
+    // already conveys it) — every token returned should aid recall.
+    const distinct = diversifyByNote(dropNearDuplicates(results), limit);
     const blocks = distinct.map((r, i) => {
       const heading = r.chunk.headingPath.length ? r.chunk.headingPath.join(" › ") : r.chunk.heading || "(top)";
       const start = r.chunk.startLine + 1;
