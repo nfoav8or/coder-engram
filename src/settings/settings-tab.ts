@@ -150,6 +150,21 @@ export class EngramSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
+      .setName("Index attachments (PDF)")
+      .setDesc(
+        "Extract and index text from PDF attachments using Obsidian's built-in PDF " +
+          "engine. Fully local. Indexed attachment text becomes searchable and " +
+          "readable over the local server, like any note; excluded folders and " +
+          "patterns apply to attachments too.",
+      )
+      .addToggle((t) =>
+        t.setValue(this.s.indexAttachments).onChange(async (v) => {
+          this.s.indexAttachments = v;
+          await this.commit();
+        }),
+      );
+
+    new Setting(containerEl)
       .setName("Auto-index on file change")
       .setDesc("Debounced refresh when notes change. Off by default.")
       .addToggle((t) =>

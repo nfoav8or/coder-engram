@@ -7,7 +7,10 @@
 
 import { VaultAdapter } from "./core/vault-adapter";
 import { HttpClient } from "./core/http-client";
-import { VaultScanner } from "./indexing/vault-scanner";
+import { VaultScanner, ScannedNote } from "./indexing/vault-scanner";
+import { TextExtractor } from "./extract/text-extractor";
+import { ExtractionCache } from "./extract/extraction-cache";
+import { extractMetadata } from "./core/metadata-extractor";
 import { IndexManager, IndexedChunk, RefreshResult } from "./indexing/index-manager";
 import { relatedNotes, RelatedNotes } from "./indexing/link-graph";
 import { LexicalRetriever } from "./retrieval/lexical-retriever";
@@ -34,13 +37,15 @@ import {
   toMemoryLayout,
   toEmbeddingConfig,
 } from "./settings/settings";
-import { normalizeVaultRelativePath, isInsideRoot } from "./utils/paths";
+import { normalizeVaultRelativePath, isInsideRoot, resolveInVault } from "./utils/paths";
 import { ConfigError } from "./utils/errors";
 import { Logger } from "./utils/logger";
 
-/** Optional injected dependencies (production wires the Obsidian HTTP client). */
+/** Optional injected dependencies (production wires the Obsidian adapters). */
 export interface EngramEngineDeps {
   http?: HttpClient;
+  /** Attachment text extractors (production: PDF via Obsidian's pdf.js). */
+  extractors?: TextExtractor[];
 }
 
 /** Result of an extractive note summary. `sentences` are verbatim excerpts. */
@@ -90,6 +95,10 @@ export class EngramEngine {
    * so `this.settings` may alias the object passed to updateSettings. */
   private lastEmbeddingKey: string;
   private readonly http?: HttpClient;
+  private readonly extractors: TextExtractor[];
+  private extractionCache: ExtractionCache;
+  /** One-shot guard so the disabled-path cache clear runs once, not per refresh. */
+  private extractionCacheCleared = false;
   /** Serializes embedding passes so overlapping reindex/refresh/sync can't
    * interleave (last-writer-wins persist / mid-pass index mutation). */
   private embedChain: Promise<void> = Promise.resolve();
@@ -117,6 +126,7 @@ export class EngramEngine {
     this.lastEmbeddingKey = embeddingKey(settings);
     this.lastScanSettingsKey = JSON.stringify(toScanConfig(settings));
     this.http = deps.http;
+    this.extractors = deps.extractors ?? [];
     this.paths = EngramEngine.resolvePaths(settings);
     this.scanner = new VaultScanner(adapter, logger.child("scanner"));
     // Path-dependent components (built by wire()).
@@ -124,6 +134,7 @@ export class EngramEngine {
     this.store = new MemoryStore(adapter, this.paths, logger.child("memory"));
     this.writer = this.buildWriter();
     this.embeddingStore = this.newEmbeddingStore();
+    this.extractionCache = this.newExtractionCache();
     this.embeddingProvider = this.buildProvider();
     this.retriever = this.buildRetriever();
   }
@@ -153,6 +164,76 @@ export class EngramEngine {
       this.paths.embeddingsFile,
       this.logger.child("embeddings"),
     );
+  }
+
+  private newExtractionCache(): ExtractionCache {
+    return new ExtractionCache(
+      this.adapter,
+      resolveInVault(this.paths.index, "extracted.json"),
+      this.logger.child("extract"),
+    );
+  }
+
+  /**
+   * Attachment pass: extract text from eligible binary attachments and emit
+   * them as ordinary ScannedNotes, so chunking, incremental refresh, exclusion
+   * gating, retrieval, and every MCP tool treat them exactly like notes.
+   * Extraction runs once per (path, mtime) — results (including "no text")
+   * are cached in Index/extracted.json, so refreshes and plugin reloads
+   * re-emit from cache without re-parsing.
+   */
+  private async scanAttachments(scanConfig: ReturnType<typeof toScanConfig>): Promise<ScannedNote[]> {
+    if (!this.settings.indexAttachments || this.extractors.length === 0) {
+      // Don't RETAIN extracted text after the feature is turned off — the
+      // cache may hold content from sensitive PDFs. Cleared once per engine
+      // lifetime while disabled (cheap no-op when already empty).
+      if (!this.extractionCacheCleared) {
+        this.extractionCacheCleared = true;
+        await this.extractionCache.load();
+        this.extractionCache.prune(new Set());
+        await this.extractionCache.persist();
+      }
+      return [];
+    }
+    this.extractionCacheCleared = false;
+    const extensions = this.extractors.flatMap((x) => x.extensions);
+    const files = await this.adapter.listFilesByExtension(extensions);
+    const eligible = files.filter((f) => this.scanner.isPathEligible(f.path, scanConfig));
+    await this.extractionCache.load();
+
+    const out: ScannedNote[] = [];
+    const live = new Set<string>();
+    for (const f of eligible) {
+      live.add(f.path);
+      let entry = this.extractionCache.get(f.path, f.mtime);
+      if (entry === undefined) {
+        const lower = f.path.toLowerCase();
+        const extractor = this.extractors.find((x) => x.extensions.some((e) => lower.endsWith(e)));
+        let text: string | null = null;
+        if (extractor) {
+          try {
+            text = await extractor.extract(f.path, await this.adapter.readBinary(f.path));
+          } catch (err) {
+            this.logger.warn(`Attachment extraction failed: ${f.path}`, {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+        this.extractionCache.set(f.path, f.mtime, text);
+        entry = { mtime: f.mtime, text };
+      }
+      if (entry.text) {
+        const metadata = extractMetadata(entry.text);
+        // Tag exclusions apply to extracted text exactly as to notes; checked
+        // at emit time (not cached), so a tag-config change re-evaluates
+        // without re-extraction.
+        if (!this.scanner.isMetadataEligible(metadata, scanConfig)) continue;
+        out.push({ path: f.path, mtime: f.mtime, content: entry.text, metadata });
+      }
+    }
+    this.extractionCache.prune(live);
+    await this.extractionCache.persist();
+    return out;
   }
 
   /** Build the configured provider (null => lexical-only). */
@@ -229,6 +310,7 @@ export class EngramEngine {
       this.index = this.newIndexManager();
       this.store = new MemoryStore(this.adapter, this.paths, this.logger.child("memory"));
       this.embeddingStore = this.newEmbeddingStore();
+      this.extractionCache = this.newExtractionCache();
       this.embeddingProvider = this.buildProvider();
       this.retriever = this.buildRetriever();
     } else if (embeddingChanged) {
@@ -287,7 +369,10 @@ export class EngramEngine {
   /** Full rebuild of the index from the current vault, then persist + embed. */
   async reindex(): Promise<{ noteCount: number; chunkCount: number }> {
     const scanConfig = toScanConfig(this.settings);
-    const notes = await this.scanner.scan(scanConfig);
+    const notes: ScannedNote[] = [
+      ...(await this.scanner.scan(scanConfig)),
+      ...(await this.scanAttachments(scanConfig)),
+    ];
     this.lastScanConfigKey = JSON.stringify(scanConfig);
     const built = this.index.build(notes);
     await this.index.persist();
@@ -310,10 +395,13 @@ export class EngramEngine {
     // Skip-unchanged scanning keeps a debounced refresh O(changed) in file
     // I/O — but only while the scan config still matches the one the known
     // mtimes were scanned under (see lastScanConfigKey).
-    const notes =
+    const mdNotes =
       scanKey === this.lastScanConfigKey
         ? await this.scanner.scan(scanConfig, this.index.getNoteMtimes())
         : await this.scanner.scan(scanConfig);
+    // Attachments do their own mtime short-circuit via the extraction cache,
+    // so the fast path stays O(changed) for them too.
+    const notes = [...mdNotes, ...(await this.scanAttachments(scanConfig))];
     this.lastScanConfigKey = scanKey;
     const result = this.index.refresh(notes);
     // Persist only when something changed: a no-op persist re-serializes the

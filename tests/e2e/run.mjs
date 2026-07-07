@@ -80,6 +80,34 @@ fs.writeFileSync(
   path.join(vault, "Notes", "lines.md"),
   "# Alpha\n\nalpha section body about ranking.\n\n## Bravo\n\nuniqueword marker lives in the bravo section only.\n",
 );
+// A minimal but structurally valid single-page PDF (correct xref offsets) so
+// the real Obsidian's loadPdfJs() extraction path can be exercised end-to-end.
+function minimalPdf(text) {
+  const esc = text.replace(/([()\\])/g, "\\$1");
+  const objects = [];
+  objects[1] = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+  objects[2] = "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n";
+  objects[3] =
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R " +
+    "/Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n";
+  const stream = `BT /F1 12 Tf 72 720 Td (${esc}) Tj ET`;
+  objects[4] = `4 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}\nendstream\nendobj\n`;
+  objects[5] = "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n";
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  for (let i = 1; i <= 5; i++) {
+    offsets[i] = pdf.length;
+    pdf += objects[i];
+  }
+  const xrefPos = pdf.length;
+  pdf += "xref\n0 6\n0000000000 65535 f \n";
+  for (let i = 1; i <= 5; i++) pdf += String(offsets[i]).padStart(10, "0") + " 00000 n \n";
+  pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`;
+  return Buffer.from(pdf, "latin1");
+}
+fs.mkdirSync(path.join(vault, "Papers"), { recursive: true });
+fs.writeFileSync(path.join(vault, "Papers", "telemetry.pdf"), minimalPdf("Peregrine falcon telemetry protocols"));
+
 const vaultId = Math.random().toString(16).slice(2) + Date.now().toString(16);
 fs.writeFileSync(
   path.join(udd, "obsidian.json"),
@@ -252,6 +280,15 @@ try {
   const proposal = "Proposed decision: adopt engram zebra-cadence for session memory.";
   const add = await rpc("tools/call", { name: "add_memory", arguments: { content: proposal, type: "decision" } });
   check("MCP add_memory lands in the review inbox", /pending-memory\.md/.test(toolText(add)), toolText(add));
+
+  // Enable attachment indexing BEFORE the single server-side reindex (the
+  // reindex tool has a 15s cooldown), so one reindex covers the inbox
+  // proposal AND the PDF fixture.
+  await page.evaluate(async () => {
+    const plugin = window.app.plugins.plugins["coder-engram"];
+    plugin.settings.indexAttachments = true;
+    await plugin.onSettingsChanged();
+  });
   await rpc("tools/call", { name: "reindex_vault", arguments: {} });
   const echo = await rpc("tools/call", {
     name: "search_vault_memory",
@@ -262,6 +299,28 @@ try {
     "unreviewed proposal comes back labelled PENDING REVIEW",
     /zebra-cadence/.test(echoText) && /\[PENDING REVIEW/.test(echoText),
     echoText.split("\n")[1] ?? "",
+  );
+
+  // PDF attachment: extracted via the real Obsidian's loadPdfJs() and indexed
+  // like a note (searchable with a Page breadcrumb, readable by path).
+  const pdfSearch = await rpc("tools/call", {
+    name: "search_vault_memory",
+    arguments: { query: "peregrine falcon telemetry" },
+  });
+  const pdfText = toolText(pdfSearch);
+  check(
+    "PDF attachment text is indexed and searchable (loadPdfJs)",
+    /Papers\/telemetry\.pdf/.test(pdfText) && /Page 1/.test(pdfText),
+    pdfText.split("\n")[2] ?? "",
+  );
+  const pdfRead = await rpc("tools/call", {
+    name: "get_note_context",
+    arguments: { path: "Papers/telemetry.pdf" },
+  });
+  check(
+    "PDF attachment is readable via get_note_context",
+    /Peregrine falcon telemetry protocols/.test(toolText(pdfRead)),
+    toolText(pdfRead).split("\n")[0] ?? "",
   );
 
   await page.screenshot({ path: path.join(tmp, "search.png") });

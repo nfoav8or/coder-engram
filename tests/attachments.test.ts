@@ -1,0 +1,203 @@
+import { describe, it, expect } from "vitest";
+import { EngramEngine } from "../src/engine";
+import { InMemoryVaultAdapter } from "../src/core/vault-adapter";
+import { DEFAULT_SETTINGS, EngramSettings, migrateSettings } from "../src/settings/settings";
+import { NULL_LOGGER } from "../src/utils/logger";
+import { TextExtractor, renderPdfMarkdown, joinPdfTextItems } from "../src/extract/text-extractor";
+import { ExtractionCache } from "../src/extract/extraction-cache";
+
+/** Extracts "pages" from the file's bytes (tests seed text under a .pdf path). */
+class FakePdfExtractor implements TextExtractor {
+  readonly extensions = [".pdf"];
+  calls = 0;
+  async extract(path: string, data: ArrayBuffer): Promise<string | null> {
+    this.calls++;
+    const text = new TextDecoder().decode(data).trim();
+    if (!text) return null;
+    const basename = path.slice(path.lastIndexOf("/") + 1).replace(/\.pdf$/i, "");
+    return renderPdfMarkdown(basename, [text]);
+  }
+}
+
+function makeEngine(seed: Record<string, string>, overrides: Partial<EngramSettings> = {}) {
+  const adapter = new InMemoryVaultAdapter("v", seed);
+  const settings: EngramSettings = { ...DEFAULT_SETTINGS, indexAttachments: true, ...overrides };
+  const extractor = new FakePdfExtractor();
+  let t = 10_000;
+  const engine = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++, {
+    extractors: [extractor],
+  });
+  return { adapter, engine, extractor };
+}
+
+describe("attachment indexing (fake PDF extractor)", () => {
+  it("indexes attachment text; search and note reads treat it like a note", async () => {
+    const { engine } = makeEngine({
+      "Notes/a.md": "# A\nordinary note content",
+      "Papers/telemetry.pdf": "peregrine falcon telemetry protocols and results",
+    });
+    const stats = await engine.reindex();
+    expect(stats.noteCount).toBe(2);
+
+    const results = await engine.search({ query: "peregrine telemetry" });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].chunk.notePath).toBe("Papers/telemetry.pdf");
+    // The page pseudo-structure flows through: "Page 1" is the chunk heading.
+    expect(results[0].chunk.heading).toBe("Page 1");
+
+    const chunks = engine.getNoteChunks("Papers/telemetry.pdf");
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks.map((c) => c.text).join("\n")).toContain("falcon telemetry");
+  });
+
+  it("is off by default and gated by excluded folders/patterns", async () => {
+    const seed = {
+      "Secret/hidden.pdf": "classified sturgeon data",
+      "Papers/open.pdf": "public heron data",
+    };
+    const off = makeEngine(seed, { indexAttachments: false });
+    await off.engine.reindex();
+    expect((await off.engine.search({ query: "heron" })).length).toBe(0);
+    expect(off.extractor.calls).toBe(0);
+
+    const gated = makeEngine(seed, { excludedFolders: ["Secret"] });
+    await gated.engine.reindex();
+    expect((await gated.engine.search({ query: "sturgeon" })).length).toBe(0);
+    expect((await gated.engine.search({ query: "heron" })).length).toBeGreaterThan(0);
+  });
+
+  it("extracts once per (path, mtime): refreshes and reindexes reuse the cache", async () => {
+    const { adapter, engine, extractor } = makeEngine({
+      "Papers/doc.pdf": "original osprey content",
+    });
+    await engine.reindex();
+    expect(extractor.calls).toBe(1);
+
+    await engine.refresh(); // nothing changed
+    await engine.reindex(); // full rebuild still reuses the extraction cache
+    expect(extractor.calls).toBe(1);
+
+    adapter.touch("Papers/doc.pdf", "updated osprey content with kestrel note");
+    await engine.refresh();
+    expect(extractor.calls).toBe(2);
+    expect((await engine.search({ query: "kestrel" })).length).toBeGreaterThan(0);
+  });
+
+  it("persists the extraction cache: a fresh engine re-emits without re-extracting", async () => {
+    const seed = { "Papers/doc.pdf": "goshawk migration notes" };
+    const first = makeEngine(seed);
+    await first.engine.reindex();
+    expect(first.extractor.calls).toBe(1);
+
+    // New engine over the SAME adapter (same vault state, same Index/ files).
+    const extractor2 = new FakePdfExtractor();
+    let t = 50_000;
+    const engine2 = new EngramEngine(
+      first.adapter,
+      { ...DEFAULT_SETTINGS, indexAttachments: true },
+      NULL_LOGGER,
+      () => t++,
+      { extractors: [extractor2] },
+    );
+    await engine2.reindex();
+    expect(extractor2.calls).toBe(0); // served from Index/extracted.json
+    expect((await engine2.search({ query: "goshawk" })).length).toBeGreaterThan(0);
+  });
+
+  it("caches negative results so a no-text attachment is not re-parsed", async () => {
+    const { adapter, engine, extractor } = makeEngine({});
+    adapter.touch("Papers/scanned.pdf", "   "); // extractor yields null
+    await engine.reindex();
+    await engine.refresh();
+    expect(extractor.calls).toBe(1); // null result cached by mtime
+    expect(engine.getNoteChunks("Papers/scanned.pdf").length).toBe(0);
+  });
+
+  it("applies excluded-tag gating to extracted attachment text", async () => {
+    const { engine } = makeEngine(
+      { "Papers/tagged.pdf": "#confidential merlin sighting data" },
+      { excludedTags: ["confidential"] },
+    );
+    await engine.reindex();
+    expect((await engine.search({ query: "merlin sighting" })).length).toBe(0);
+    expect(engine.getNoteChunks("Papers/tagged.pdf").length).toBe(0);
+  });
+
+  it("clears the extraction cache when the feature is turned off", async () => {
+    const seed = { "Papers/doc.pdf": "harrier survey notes" };
+    const { adapter, engine } = makeEngine(seed);
+    await engine.reindex();
+    expect(await adapter.read("Claude Code/Index/extracted.json")).toContain("harrier");
+
+    engine.updateSettings({ ...DEFAULT_SETTINGS, indexAttachments: false });
+    await engine.refresh();
+    // Extracted text of possibly-sensitive PDFs must not be retained on disk.
+    expect(await adapter.read("Claude Code/Index/extracted.json")).not.toContain("harrier");
+    expect((await engine.search({ query: "harrier" })).length).toBe(0);
+  });
+
+  it("migrates a pre-v4 settings blob to indexAttachments=false", () => {
+    const migrated = migrateSettings({ schemaVersion: 3, indexingEnabled: true });
+    expect(migrated.indexAttachments).toBe(false);
+  });
+});
+
+describe("pdf markdown rendering (pure)", () => {
+  it("renders one section per non-empty page and null when no page has text", () => {
+    const md = renderPdfMarkdown("Report", ["intro text", "", "conclusion text"]);
+    expect(md).toContain("# Report");
+    expect(md).toContain("## Page 1\n\nintro text");
+    expect(md).not.toContain("## Page 2\n\n\n");
+    expect(md).toContain("## Page 3\n\nconclusion text");
+    expect(renderPdfMarkdown("Empty", ["", "  "])).toBeNull();
+  });
+
+  it("joins pdf.js text items honoring hasEOL and collapsing blank runs", () => {
+    const joined = joinPdfTextItems([
+      { str: "first line", hasEOL: true },
+      { str: "second " },
+      { str: "line", hasEOL: true },
+      { str: "", hasEOL: true },
+      { str: "", hasEOL: true },
+      { str: "after gap" },
+    ]);
+    expect(joined).toContain("first line\nsecond line");
+    expect(joined).toContain("\n\nafter gap");
+  });
+});
+
+describe("ExtractionCache", () => {
+  it("round-trips entries, prunes dead paths, and persists only when dirty", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const file = "Index/extracted.json";
+    const cache = new ExtractionCache(adapter, file);
+    await cache.load();
+    cache.set("a.pdf", 100, "text a");
+    cache.set("b.pdf", 200, null);
+    await cache.persist();
+    const mtimeAfterFirst = await adapter.getMtime(file);
+
+    // Unchanged persist is a no-op write.
+    await cache.persist();
+    expect(await adapter.getMtime(file)).toBe(mtimeAfterFirst);
+
+    const cache2 = new ExtractionCache(adapter, file);
+    await cache2.load();
+    expect(cache2.get("a.pdf", 100)?.text).toBe("text a");
+    expect(cache2.get("a.pdf", 999)).toBeUndefined(); // mtime mismatch
+    expect(cache2.get("b.pdf", 200)?.text).toBeNull(); // negative cache
+
+    cache2.prune(new Set(["a.pdf"]));
+    await cache2.persist();
+    const cache3 = new ExtractionCache(adapter, file);
+    await cache3.load();
+    expect(cache3.get("b.pdf", 200)).toBeUndefined();
+  });
+
+  it("tolerates a corrupt cache file", async () => {
+    const adapter = new InMemoryVaultAdapter("v", { "Index/extracted.json": "{not json" });
+    const cache = new ExtractionCache(adapter, "Index/extracted.json");
+    await cache.load();
+    expect(cache.get("x.pdf", 1)).toBeUndefined();
+  });
+});

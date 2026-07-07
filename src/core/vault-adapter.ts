@@ -48,6 +48,15 @@ export interface VaultAdapter {
   /** List all Markdown files in the vault with their mtimes. */
   listMarkdownFiles(): Promise<VaultFile[]>;
 
+  /**
+   * List vault files whose (lowercased) extension is in `extensions`
+   * (e.g. [".pdf"]). Used by attachment indexing.
+   */
+  listFilesByExtension(extensions: string[]): Promise<VaultFile[]>;
+
+  /** Read a file's raw bytes. Rejects if it does not exist. */
+  readBinary(path: string): Promise<ArrayBuffer>;
+
   /** Mtime (ms epoch) of a single file, or null if it does not exist. */
   getMtime(path: string): Promise<number | null>;
 }
@@ -140,12 +149,50 @@ export class InMemoryVaultAdapter implements VaultAdapter {
     return out;
   }
 
+  async listFilesByExtension(extensions: string[]): Promise<VaultFile[]> {
+    const exts = extensions.map((e) => e.toLowerCase());
+    const out: VaultFile[] = [];
+    for (const [path, { content, mtime }] of this.files) {
+      if (exts.some((e) => path.toLowerCase().endsWith(e))) {
+        out.push({ path, mtime, size: content.length });
+      }
+    }
+    for (const [path, { bytes, mtime }] of this.binaryFiles) {
+      if (exts.some((e) => path.toLowerCase().endsWith(e))) {
+        out.push({ path, mtime, size: bytes.byteLength });
+      }
+    }
+    return out;
+  }
+
+  async readBinary(path: string): Promise<ArrayBuffer> {
+    assertRelative(path);
+    const bin = this.binaryFiles.get(path);
+    if (bin) {
+      // Copy into a plain ArrayBuffer (a Uint8Array may view a SharedArrayBuffer).
+      const copy = new Uint8Array(bin.bytes.byteLength);
+      copy.set(bin.bytes);
+      return copy.buffer;
+    }
+    const text = this.files.get(path);
+    if (text) return new TextEncoder().encode(text.content).buffer;
+    throw new Error(`readBinary: no such file: ${path}`);
+  }
+
   async getMtime(path: string): Promise<number | null> {
     assertRelative(path);
-    return this.files.get(path)?.mtime ?? null;
+    return this.files.get(path)?.mtime ?? this.binaryFiles.get(path)?.mtime ?? null;
   }
 
   // --- test helpers ---
+
+  private binaryFiles = new Map<string, { bytes: Uint8Array; mtime: number }>();
+
+  /** Seed a binary attachment (test helper). */
+  seedBinary(path: string, bytes: Uint8Array): void {
+    this.binaryFiles.set(path, { bytes, mtime: this.tick() });
+    this.registerFolders(path);
+  }
 
   /** Touch a file's content and bump its mtime (simulates an external edit). */
   touch(path: string, content: string): void {

@@ -78,6 +78,19 @@ export class ObsidianVaultAdapter implements VaultAdapter {
     }));
   }
 
+  async listFilesByExtension(extensions: string[]): Promise<VaultFile[]> {
+    const exts = extensions.map((e) => e.replace(/^\./, "").toLowerCase());
+    return this.app.vault
+      .getFiles()
+      .filter((f) => exts.includes(f.extension.toLowerCase()))
+      .map((f) => ({ path: f.path, mtime: f.stat.mtime, size: f.stat.size }));
+  }
+
+  async readBinary(path: string): Promise<ArrayBuffer> {
+    assertRelative(path);
+    return this.app.vault.adapter.readBinary(normalizePath(path));
+  }
+
   async getMtime(path: string): Promise<number | null> {
     assertRelative(path);
     const stat = await this.app.vault.adapter.stat(normalizePath(path));

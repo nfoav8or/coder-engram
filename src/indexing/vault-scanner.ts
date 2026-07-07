@@ -24,6 +24,12 @@ export interface ScanConfig {
   excludedTags: string[];
   /** Glob (`*`, `**`) or substring patterns matched against the full path. */
   excludedPathPatterns: string[];
+  /**
+   * Whether binary attachments are indexed. Consumed by the ENGINE's
+   * attachment pass, not this scanner — it lives here so the scan-config key
+   * (fast-path invalidation + settings-change refresh) covers toggling it.
+   */
+  indexAttachments?: boolean;
 }
 
 export interface ScannedNote {
@@ -118,6 +124,12 @@ export class VaultScanner {
     if (excludedTags.length === 0) return false;
     const noteTags = new Set(metadata.tags.map((t) => t.toLowerCase().replace(/^#/, "")));
     return excludedTags.some((t) => noteTags.has(t.toLowerCase().replace(/^#/, "")));
+  }
+
+  /** Content-level eligibility (tag exclusions) — used by the engine's
+   * attachment pass so extracted text obeys the same rules as notes. */
+  isMetadataEligible(metadata: NoteMetadata, config: ScanConfig): boolean {
+    return !this.hasExcludedTag(metadata, config.excludedTags);
   }
 
   /**

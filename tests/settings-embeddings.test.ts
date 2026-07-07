@@ -6,9 +6,10 @@ import {
   SETTINGS_SCHEMA_VERSION,
 } from "../src/settings/settings";
 
-describe("M3 settings schema (v3)", () => {
-  it("is schema version 3", () => {
-    expect(SETTINGS_SCHEMA_VERSION).toBe(3);
+describe("M3+ settings schema", () => {
+  it("is schema version 4", () => {
+    // v4 added indexAttachments (default false).
+    expect(SETTINGS_SCHEMA_VERSION).toBe(4);
   });
 
   it("has safe M3 defaults", () => {

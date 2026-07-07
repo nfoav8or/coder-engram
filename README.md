@@ -165,6 +165,7 @@ Settings live under **Settings → Coder Engram**. Key settings and their safe d
 | Excluded folders | *(empty)* | Folders to skip. |
 | Excluded tags | *(empty)* | Notes with any of these tags are never indexed. |
 | Excluded path patterns | *(empty)* | Glob (`*`, `**`) or substring patterns for sensitive notes. |
+| Index attachments (PDF) | `false` | Extract and index PDF text locally via Obsidian's bundled PDF engine. Exclusions apply; extracted text is searchable/readable over the local server like any note. |
 | Auto-index on file change | `false` | Debounced (~2.5s) refresh when notes change. |
 | Default project | *(empty)* | Used by project-context and add-to-project commands. |
 | Embedding provider | `none` | Lexical BM25 always works with `none`. `ollama` and `openai-compatible` enable vector/hybrid retrieval; `mock` is a deterministic dev provider. |
@@ -257,13 +258,13 @@ By default the plugin makes **no network connections at all**: search is offline
 - **Embeddings (opt-in).** If you set the embedding provider to **Ollama**, the plugin sends indexed note text to your configured Ollama endpoint (local by default, `http://127.0.0.1:11434`) to compute embeddings. If you set it to **OpenAI-compatible**, indexed note text is sent to the endpoint you configure (which may be a remote service such as OpenAI) for the same purpose; the API key is sent only in the `Authorization` header and never logged. Notes excluded from indexing are never embedded, so their content is never sent anywhere.
 - **Local MCP/HTTP server (opt-in).** When enabled, the plugin listens on `127.0.0.1` so local tools such as Claude Code can query memory and propose entries to the review inbox. It makes no outbound connections; binding a non-localhost address requires an explicit second opt-in plus a token.
 
-There is no telemetry of any kind, and nothing is read or written outside the vault.
+Attachment (PDF) text extraction, when enabled, also runs entirely locally via Obsidian's bundled PDF engine. There is no telemetry of any kind, and nothing is read or written outside the vault.
 
 ## Limitations
 
 - **`summarize_note` is extractive, not abstractive.** It selects the note's own sentences; there is no LLM/generative backend, so it never rewrites or paraphrases. It also only works on notes that are in the index.
 - **Desktop only.** `isDesktopOnly: true`.
-- Binary attachments are not indexed.
+- Attachment indexing covers born-digital **PDF text only** (opt-in, via Obsidian's bundled PDF engine). Scanned/image-only PDFs, images (no OCR), and office formats are not yet indexed.
 
 ## Roadmap
 

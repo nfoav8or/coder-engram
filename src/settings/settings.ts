@@ -14,7 +14,7 @@ import { ScanConfig } from "../indexing/vault-scanner";
 import { clamp } from "../utils/validation";
 import { normalizeVaultRelativePath } from "../utils/paths";
 
-export const SETTINGS_SCHEMA_VERSION = 3;
+export const SETTINGS_SCHEMA_VERSION = 4;
 
 export type EmbeddingProviderId = "none" | "mock" | "ollama" | "openai-compatible";
 
@@ -57,6 +57,10 @@ export interface EngramSettings {
   excludedPathPatterns: string[];
   defaultProject: string;
   autoIndexOnChange: boolean;
+  /** Index binary attachments (v1: PDF text via Obsidian's bundled pdf.js).
+   * Off by default: extraction is local-only, but indexing attachment text
+   * makes it searchable and readable over the MCP server like any note. */
+  indexAttachments: boolean;
   embeddingProvider: EmbeddingProviderId;
   embeddingModel: string;
   /** Base URL for network providers (Ollama / OpenAI-compatible). */
@@ -83,6 +87,7 @@ export const DEFAULT_SETTINGS: EngramSettings = {
   excludedPathPatterns: [],
   defaultProject: "",
   autoIndexOnChange: false,
+  indexAttachments: false,
   embeddingProvider: "none",
   embeddingModel: "",
   embeddingEndpoint: "",
@@ -167,6 +172,7 @@ export function migrateSettings(raw: unknown): EngramSettings {
   // default false, protective flags (appendOnly) default true.
   merged.indexingEnabled = coerceBool(data.indexingEnabled, DEFAULT_SETTINGS.indexingEnabled);
   merged.autoIndexOnChange = coerceBool(data.autoIndexOnChange, DEFAULT_SETTINGS.autoIndexOnChange);
+  merged.indexAttachments = coerceBool(data.indexAttachments, DEFAULT_SETTINGS.indexAttachments);
   merged.allowDirectWrites = coerceBool(data.allowDirectWrites, DEFAULT_SETTINGS.allowDirectWrites);
   merged.appendOnly = coerceBool(data.appendOnly, DEFAULT_SETTINGS.appendOnly);
   merged.debugLogging = coerceBool(data.debugLogging, DEFAULT_SETTINGS.debugLogging);
@@ -211,6 +217,9 @@ export function toScanConfig(settings: EngramSettings): ScanConfig {
     excludedFolders: settings.excludedFolders,
     excludedTags: settings.excludedTags,
     excludedPathPatterns: settings.excludedPathPatterns,
+    // In ScanConfig so the scan-config key machinery invalidates the
+    // skip-unchanged fast path and fires the config refresh when toggled.
+    indexAttachments: settings.indexAttachments,
   };
 }
 
