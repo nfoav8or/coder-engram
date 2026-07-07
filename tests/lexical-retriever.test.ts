@@ -83,6 +83,38 @@ describe("LexicalRetriever", () => {
     expect(r2.map((r) => r.chunk.id)).toEqual(["z"]);
   });
 
+  it("ranks a note whose FILENAME matches the query even when its body doesn't", () => {
+    const c: IndexedChunk[] = [
+      chunk({ id: "f", notePath: "Ref/Quartzine Protocol.md", text: "generic body words only here" }),
+      chunk({ id: "o", notePath: "Notes/other.md", text: "more generic body words here" }),
+    ];
+    const results = lexicalSearch("quartzine protocol", c);
+    expect(results.map((r) => r.chunk.id)).toEqual(["f"]);
+    expect(results[0].matchedTerms).toEqual(["quartzine", "protocol"]);
+  });
+
+  it("ranks a note whose frontmatter ALIAS matches the query", () => {
+    const c: IndexedChunk[] = [
+      chunk({ id: "a1", notePath: "Areas/area.md", aliases: ["bramblewood"], text: "generic body words only" }),
+      chunk({ id: "o1", notePath: "Notes/other.md", text: "more generic body words" }),
+    ];
+    const results = lexicalSearch("bramblewood", c);
+    expect(results.map((r) => r.chunk.id)).toEqual(["a1"]);
+  });
+
+  it("a strong body match outranks a field-only match; both still surface", () => {
+    // Field credit is calibrated to ONE average-length-body occurrence, so a
+    // repeated body term must win. (A field-only match MAY outrank a single
+    // mention buried in a very long chunk — that is deliberate.)
+    const c: IndexedChunk[] = [
+      chunk({ id: "body", notePath: "Notes/a.md", text: "the quartzine threshold is nine and quartzine applies" }),
+      chunk({ id: "name", notePath: "Ref/Quartzine.md", text: "generic body words only here" }),
+    ];
+    const results = lexicalSearch("quartzine", c);
+    expect(results[0].chunk.id).toBe("body");
+    expect(results.map((r) => r.chunk.id)).toContain("name");
+  });
+
   it("does not let one long note flood the page and bury another relevant note", () => {
     const flooded: IndexedChunk[] = [
       chunk({ id: "a1", notePath: "Notes/long.md", text: "indexing pipeline detail one" }),

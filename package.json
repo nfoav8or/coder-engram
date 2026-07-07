@@ -19,10 +19,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "node tests/e2e/run.mjs",
-    "bench": "vitest run --config vitest.bench.config.ts",
+    "bench": "vitest run --config vitest.bench.config.ts tests/scale.bench.ts",
     "lint": "eslint . --ext .ts",
     "typecheck": "tsc --noEmit --skipLibCheck",
-    "version": "node version-bump.mjs && git add manifest.json versions.json"
+    "version": "node version-bump.mjs && git add manifest.json versions.json",
+    "eval": "vitest run --config vitest.bench.config.ts tests/relevance.bench.ts"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

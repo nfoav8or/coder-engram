@@ -20,6 +20,19 @@ import { tokenize, tokenizeChunk, applyFilters, buildSnippet, diversifyByNote } 
 const K1 = 1.5;
 const B = 0.75;
 const HEADING_BOOST = 1.15;
+/**
+ * Score credited for a query term found only in a chunk's FIELD terms (note
+ * filename, frontmatter aliases, ancestor headings) — text that names the note
+ * but is absent from the chunk body, which plain BM25 therefore scores 0: a
+ * query for "Quartzine Protocol" never ranked `Quartzine Protocol.md` unless
+ * the body repeated the words. 1.0 × idf equals the BM25 score of ONE
+ * occurrence in an AVERAGE-length body — so a field-only match can outrank a
+ * single mention buried in a long chunk (deliberate: a note named for the
+ * query is at least that relevant) but loses to any stronger body match.
+ * Note: df counts body terms only, so a name-only term scores at maximum idf
+ * — accepted; folding fields into df isn't worth the complexity yet.
+ */
+const FIELD_MATCH_WEIGHT = 1.0;
 
 export interface LexicalRetrieverOptions {
   projectRootResolver?: (project: string) => string;
@@ -35,15 +48,27 @@ interface CorpusStats {
   chunks: IndexedChunk[];
   tf: Map<string, number>[];
   headingTerms: Set<string>[];
+  /** Filename + alias + ancestor-heading tokens (see FIELD_MATCH_WEIGHT). The
+   * chunk's OWN heading line is part of its text, so it needs no field entry. */
+  fieldTerms: Set<string>[];
   docLengths: number[];
   df: Map<string, number>;
   avgdl: number;
   N: number;
 }
 
+function fieldTermsFor(chunk: IndexedChunk): Set<string> {
+  const basename = chunk.notePath.slice(chunk.notePath.lastIndexOf("/") + 1).replace(/\.md$/i, "");
+  const field = new Set(tokenize(basename));
+  for (const alias of chunk.aliases) for (const t of tokenize(alias)) field.add(t);
+  for (const h of chunk.headingPath) for (const t of tokenize(h)) field.add(t);
+  return field;
+}
+
 function buildStats(chunks: IndexedChunk[]): CorpusStats {
   const tf: Map<string, number>[] = [];
   const headingTerms: Set<string>[] = [];
+  const fieldTerms: Set<string>[] = [];
   const docLengths: number[] = [];
   const df = new Map<string, number>();
   let totalLen = 0;
@@ -56,8 +81,18 @@ function buildStats(chunks: IndexedChunk[]): CorpusStats {
     totalLen += doc.length;
     for (const term of counts.keys()) df.set(term, (df.get(term) ?? 0) + 1);
     headingTerms.push(new Set(tokenize(chunk.heading)));
+    fieldTerms.push(fieldTermsFor(chunk));
   }
-  return { chunks, tf, headingTerms, docLengths, df, avgdl: totalLen / (chunks.length || 1), N: chunks.length };
+  return {
+    chunks,
+    tf,
+    headingTerms,
+    fieldTerms,
+    docLengths,
+    df,
+    avgdl: totalLen / (chunks.length || 1),
+    N: chunks.length,
+  };
 }
 
 export class LexicalRetriever implements Retriever {
@@ -98,13 +133,18 @@ export class LexicalRetriever implements Retriever {
 
     const scored: Array<{ chunk: IndexedChunk; score: number; i: number }> = [];
     for (let i = 0; i < filtered.length; i++) {
-      if (stats.docLengths[i] === 0) continue;
+      // A chunk whose body tokenizes to nothing can still deserve field credit
+      // (e.g. a non-Latin body under an ASCII filename).
+      if (stats.docLengths[i] === 0 && stats.fieldTerms[i].size === 0) continue;
       const tf = stats.tf[i];
       let score = 0;
       for (let t = 0; t < uniqueQueryTerms.length; t++) {
         const term = uniqueQueryTerms[t];
         const f = tf.get(term);
-        if (!f) continue;
+        if (!f) {
+          if (stats.fieldTerms[i].has(term)) score += idf[t] * FIELD_MATCH_WEIGHT;
+          continue;
+        }
         const denom = f + K1 * (1 - B + (B * stats.docLengths[i]) / stats.avgdl);
         let termScore = (idf[t] * (f * (K1 + 1))) / denom;
         if (stats.headingTerms[i].has(term)) termScore *= HEADING_BOOST;
@@ -124,7 +164,7 @@ export class LexicalRetriever implements Retriever {
       chunk: s.chunk,
       score: s.score,
       snippet: buildSnippet(s.chunk.text, uniqueQueryTerms),
-      matchedTerms: uniqueQueryTerms.filter((t) => stats.tf[s.i].has(t)),
+      matchedTerms: uniqueQueryTerms.filter((t) => stats.tf[s.i].has(t) || stats.fieldTerms[s.i].has(t)),
     }));
   }
 }
