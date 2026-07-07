@@ -1,6 +1,6 @@
 # Roadmap
 
-Coder Engram is built in milestones. Milestones 1 through 8 are complete (through v0.4.0); further work is tracked under "Deferred / future" below.
+Coder Engram is built in milestones. Milestones 1 through 9 are complete (through v0.5.0); further work is tracked under "Deferred / future" below.
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -71,6 +71,14 @@ Coder Engram is built in milestones. Milestones 1 through 8 are complete (throug
 - O(changed) refresh file I/O (skip-unchanged scanning, config-keyed) and truly free no-op refreshes; the watcher ignores the plugin's own index writes.
 - Fixed: embedding-provider settings changes now apply without a plugin reload; exclusion changes trigger their own refresh.
 - Full-delta security audit before release; e2e coverage of the MCP server over the wire.
+
+## Milestone 9 — rename + catalog readiness (done, v0.5.0)
+
+- Renamed to **Coder Engram** (`coder-engram`); repository moved to `nfoav8or/coder-engram`. Breaking for manual installs (plugin folder id); vault data untouched, legacy inbox tags still parse.
+- Community-catalog compliance: sentence-case UI text, `Modal.setTitle()` / `Setting.setHeading()`, CSS-class styling, action-statement manifest description, README network-use disclosure.
+- Settings/UI correctness: text fields commit on blur (no per-keystroke server rebinds or index reloads), server auth uses a committed settings snapshot, real restart lever preserved, shared reindex guard, superseded-search rendering fix, modified dates in UI search results.
+- Exclusion changes trigger their own refresh (0.4.0 audit follow-up).
+- e2e coverage of the MCP server over the wire (14 checks), including the inbox → `[PENDING REVIEW]` safety loop.
 
 ## Deferred / future
 

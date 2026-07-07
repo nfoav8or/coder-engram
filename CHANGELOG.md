@@ -5,7 +5,9 @@ All notable changes to Coder Engram are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] — 2026-07-07
+
+Milestone 9 — a new name and catalog readiness. The plugin is now **Coder Engram** (breaking for manual installs: the plugin folder id changed; vault data is untouched and old inbox blocks still parse). A compliance pass aligns the plugin with Obsidian's current community-catalog guidelines, and a settings/UI correctness bundle fixes real bugs a UI review surfaced — including per-keystroke server restarts and half-typed tokens being enforced live by server auth. No settings-schema changes; the upgrade is in place apart from the folder rename.
 
 ### Added
 
@@ -209,6 +211,7 @@ First working local memory + lexical RAG layer.
 - No cloud services or API keys required for the default experience.
 
 [Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.3.0...HEAD
+[0.5.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.5.0
 [0.4.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.4.0
 [0.3.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.3.0
 [0.2.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.2.0
