@@ -165,6 +165,21 @@ async function extractXlsx(title: string, data: Uint8Array): Promise<string | nu
       .filter(Boolean);
     if (items.length) sections.push(items.join("\n"));
   }
+  // Streaming exporters skip sharedStrings and write cell text INLINE in the
+  // worksheets (<c t="inlineStr"><is><t>…</t></is></c>); without this pass
+  // such files would extract as text-free.
+  const sheets = readZipDirectory(data)
+    .filter((e) => /^xl\/worksheets\/sheet\d+\.xml$/.test(e.name))
+    .sort((a, b) => Number(/\d+/.exec(a.name)![0]) - Number(/\d+/.exec(b.name)![0]));
+  const inline: string[] = [];
+  for (const sheet of sheets) {
+    const xml = new TextDecoder("utf-8").decode(await readZipEntry(data, sheet));
+    for (const is of xmlBlocks(xml, "is")) {
+      const text = textRuns(is.inner, "t").join("").trim();
+      if (text) inline.push(text);
+    }
+  }
+  if (inline.length) sections.push(inline.join("\n"));
   return assemble(title, sections);
 }
 

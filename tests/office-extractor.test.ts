@@ -157,6 +157,23 @@ describe("OfficeExtractor", () => {
     expect(md).toContain("split run");
   });
 
+  it("xlsx: inline-string cells (streaming exporters, no sharedStrings)", async () => {
+    const md = await x.extract(
+      "Sheets/Export.xlsx",
+      buf(
+        makeZip({
+          "xl/worksheets/sheet1.xml":
+            `<worksheet><sheetData><row>` +
+            `<c t="inlineStr"><is><t>kokako export row</t></is></c>` +
+            `<c><v>42</v></c>` +
+            `</row></sheetData></worksheet>`,
+        }),
+      ),
+    );
+    expect(md).toContain("kokako export row");
+    expect(md).not.toContain("42"); // numeric cells stay skipped
+  });
+
   it("odt: headings by outline level and paragraphs with spans", async () => {
     const xml =
       `<office:document-content><office:body><office:text>` +
