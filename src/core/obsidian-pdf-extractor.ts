@@ -12,7 +12,7 @@
  */
 
 import { loadPdfJs } from "obsidian";
-import { TextExtractor, renderPdfMarkdown, joinPdfTextItems } from "../extract/text-extractor";
+import { TextExtractor, attachmentTitle, renderPdfMarkdown, joinPdfTextItems } from "../extract/text-extractor";
 
 /** Bound on pages extracted per PDF, so one huge scan can't stall a refresh. */
 const MAX_PAGES = 500;
@@ -36,8 +36,7 @@ export class ObsidianPdfExtractor implements TextExtractor {
         const content = await page.getTextContent();
         pages.push(joinPdfTextItems(content.items));
       }
-      const basename = path.slice(path.lastIndexOf("/") + 1).replace(/\.pdf$/i, "");
-      const md = renderPdfMarkdown(basename, pages);
+      const md = renderPdfMarkdown(attachmentTitle(path), pages);
       // The truncation note must never COUNT as text: an image-only PDF over
       // the page cap still has no extractable content and stays null.
       if (md === null) return null;

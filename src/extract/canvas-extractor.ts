@@ -12,7 +12,7 @@
  * Pure JSON parsing — no dependencies, nothing leaves the machine.
  */
 
-import { TextExtractor } from "./text-extractor";
+import { TextExtractor, attachmentTitle } from "./text-extractor";
 
 interface CanvasNode {
   id?: string;
@@ -65,8 +65,7 @@ export class CanvasExtractor implements TextExtractor {
 
     if (cards.length === 0 && groups.length === 0 && labeledEdges.length === 0) return null;
 
-    const basename = path.slice(path.lastIndexOf("/") + 1).replace(/\.canvas$/i, "");
-    const parts: string[] = [`# ${basename}`];
+    const parts: string[] = [`# ${attachmentTitle(path)}`];
     if (groups.length) parts.push(`Groups: ${groups.join(" · ")}`);
     parts.push(...cards);
     if (labeledEdges.length) parts.push(`Connections: ${labeledEdges.join(" · ")}`);

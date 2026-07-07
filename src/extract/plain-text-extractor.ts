@@ -7,7 +7,7 @@
  * rows keeps ranged reads faithful to the file.
  */
 
-import { TextExtractor } from "./text-extractor";
+import { TextExtractor, attachmentTitle } from "./text-extractor";
 
 export class PlainTextExtractor implements TextExtractor {
   readonly extensions = [".txt", ".csv"];
@@ -15,7 +15,6 @@ export class PlainTextExtractor implements TextExtractor {
   async extract(path: string, data: ArrayBuffer): Promise<string | null> {
     const text = new TextDecoder("utf-8").decode(data).trim();
     if (!text) return null;
-    const basename = path.slice(path.lastIndexOf("/") + 1).replace(/\.[a-z0-9]+$/i, "");
-    return `# ${basename}\n\n${text}`;
+    return `# ${attachmentTitle(path)}\n\n${text}`;
   }
 }

@@ -18,7 +18,7 @@
  * retrieval can usefully match.
  */
 
-import { TextExtractor } from "./text-extractor";
+import { TextExtractor, attachmentTitle } from "./text-extractor";
 import { readZipDirectory, readZipEntry, readZipText } from "./zip";
 
 /** Decode the five XML entities plus numeric character references. */
@@ -112,10 +112,6 @@ function tagAttrValues(xml: string, tag: string, attr: string): string[] {
     i = tagEnd + 1;
   }
   return out;
-}
-
-function basenameOf(path: string): string {
-  return path.slice(path.lastIndexOf("/") + 1).replace(/\.[a-z0-9]+$/i, "");
 }
 
 function assemble(title: string, sections: string[]): string | null {
@@ -243,7 +239,7 @@ export class OfficeExtractor implements TextExtractor {
 
   async extract(path: string, data: ArrayBuffer): Promise<string | null> {
     const bytes = new Uint8Array(data);
-    const title = basenameOf(path);
+    const title = attachmentTitle(path);
     const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
     try {
       switch (ext) {

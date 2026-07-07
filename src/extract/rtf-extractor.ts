@@ -10,7 +10,7 @@
  * `\binN` raw-binary runs are jumped over.
  */
 
-import { TextExtractor } from "./text-extractor";
+import { TextExtractor, attachmentTitle } from "./text-extractor";
 
 /** Destinations whose group content is never body text. */
 const SKIP_DESTINATIONS = new Set([
@@ -151,8 +151,7 @@ export class RtfExtractor implements TextExtractor {
     try {
       const text = rtfToText(raw);
       if (!text) return null;
-      const basename = path.slice(path.lastIndexOf("/") + 1).replace(/\.rtf$/i, "");
-      return `# ${basename}\n\n${text}`;
+      return `# ${attachmentTitle(path)}\n\n${text}`;
     } catch {
       return null;
     }

@@ -26,6 +26,11 @@ export interface TextExtractor {
   extract(path: string, data: ArrayBuffer): Promise<string | null>;
 }
 
+/** Attachment title: the basename with its extension dropped. */
+export function attachmentTitle(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1).replace(/\.[a-z0-9]+$/i, "");
+}
+
 /**
  * Render extracted PDF page texts as markdown with one `## Page N` section per
  * page. The page headings give the chunker real sections, so search results
