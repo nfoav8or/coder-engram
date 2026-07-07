@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Truncated reads now say exactly where to continue.** A truncated `get_note_context` names the `startLine` to resume from and the note's full span (previously: generic "narrow with startLine/endLine" advice, whose cheapest recovery was re-reading everything already received). The bulk context reads (`get_project_context`, `get_global_context`, `get_recent_sessions`) now label every file with its vault path, clip at file boundaries, and **name the omitted files** — previously a clipped project context silently dropped the tail files (tasks, open questions) with no trace, a genuine recall hole, and the agent never learned the paths needed for targeted follow-up reads.
 - **Heading breadcrumbs now include the section's own heading.** `headingPath` stores ancestors only, so search results and note reads labeled a nested section by its ancestors alone ("Doc" instead of "Doc › Alpha"); the most specific level — usually the most informative one — was dropped.
 
+### Performance
+
+- **Lexical queries are ~25% faster** (p50 21 → 15 ms at 19k chunks; hybrid 38 → 31 ms): per-term IDF is now computed once per query instead of per (chunk, term) pair, and the matched-terms array is built only for the page's survivors instead of allocated for every scoring chunk. Behavior-identical — same scores, same order, same matched terms.
+
 ## [0.5.0] — 2026-07-07
 
 Milestone 9 — a new name and catalog readiness. The plugin is now **Coder Engram** (breaking for manual installs: the plugin folder id changed; vault data is untouched and old inbox blocks still parse). A compliance pass aligns the plugin with Obsidian's current community-catalog guidelines, and a settings/UI correctness bundle fixes real bugs a UI review surfaced — including per-keystroke server restarts and half-typed tokens being enforced live by server auth. No settings-schema changes; the upgrade is in place apart from the folder rename.

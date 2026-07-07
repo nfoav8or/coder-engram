@@ -58,7 +58,7 @@ Retrieval is measured by an on-demand benchmark (`npm run bench`, `tests/scale.b
 
 | corpus | chunks | full build | incremental refresh | lexical query p50/p95 | hybrid query p50/p95 |
 | --- | --- | --- | --- | --- | --- |
-| 2,000 notes | ~19k | ~55 ms | scan ~2 ms + refresh ~8 ms (10 changed) | 21 / 25 ms | 37 / 41 ms |
+| 2,000 notes | ~19k | ~55 ms | scan ~2 ms + refresh ~8 ms (10 changed) | 15 / 19 ms | 31 / 34 ms |
 | 5,000 notes | ~48k | ~120 ms | scan ~4 ms + refresh ~19 ms (10 changed) | 55 / 63 ms | 102 / 114 ms |
 
 Notes: incremental refresh reuses unchanged chunk objects and skips reading unchanged files entirely (the skip-unchanged scan cut the re-scan from ~60 ms to ~2 ms at 2k notes even on the in-memory adapter; on a real vault the saving is disk I/O, which is the part that matters). Lexical scoring iterates the whole candidate set per query (O(corpus)); the memoization above removes the per-query re-tokenization cost but not that linear scan, and the hybrid vector stage is O(chunks × dim) per query. Both stay interactive to tens of thousands of chunks; beyond that the levers are an inverted index (lexical) and approximate-nearest-neighbour search (vector) — deliberately not built yet, since real vaults sit well inside the measured range. Run `BENCH_NOTES=5000 npm run bench` to reproduce.
