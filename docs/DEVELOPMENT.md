@@ -90,6 +90,8 @@ src/
     extraction-cache.ts         mtime-keyed extracted-text cache
     canvas-extractor.ts         Canvas text-card extraction (pure JSON)
     office-extractor.ts         Office/OpenDocument extraction (ZIP+XML)
+    rtf-extractor.ts            RTF single-pass parser
+    plain-text-extractor.ts     txt/csv passthrough
     zip.ts                      minimal ZIP reader (DecompressionStream)
   core/
     vault-adapter.ts            VaultAdapter interface + in-memory impl

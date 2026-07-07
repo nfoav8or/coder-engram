@@ -14,6 +14,8 @@ import { ObsidianHttpClient } from "./core/obsidian-http-client";
 import { ObsidianPdfExtractor } from "./core/obsidian-pdf-extractor";
 import { CanvasExtractor } from "./extract/canvas-extractor";
 import { OfficeExtractor } from "./extract/office-extractor";
+import { PlainTextExtractor } from "./extract/plain-text-extractor";
+import { RtfExtractor } from "./extract/rtf-extractor";
 import {
   DEFAULT_SETTINGS,
   EngramSettings,
@@ -58,7 +60,13 @@ export default class EngramPlugin
     const adapter = new ObsidianVaultAdapter(this.app);
     this.engine = new EngramEngine(adapter, this.settings, this.logger, undefined, {
       http: new ObsidianHttpClient(),
-      extractors: [new ObsidianPdfExtractor(), new OfficeExtractor(), new CanvasExtractor()],
+      extractors: [
+        new ObsidianPdfExtractor(),
+        new OfficeExtractor(),
+        new RtfExtractor(),
+        new PlainTextExtractor(),
+        new CanvasExtractor(),
+      ],
     });
     this.server = new LocalServer({
       engine: this.engine,
