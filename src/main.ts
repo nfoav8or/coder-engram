@@ -12,6 +12,7 @@ import { isPluginArtifact } from "./memory/memory-types";
 import { ObsidianVaultAdapter } from "./core/obsidian-vault-adapter";
 import { ObsidianHttpClient } from "./core/obsidian-http-client";
 import { ObsidianPdfExtractor } from "./core/obsidian-pdf-extractor";
+import { CanvasExtractor } from "./extract/canvas-extractor";
 import {
   DEFAULT_SETTINGS,
   EngramSettings,
@@ -56,7 +57,7 @@ export default class EngramPlugin
     const adapter = new ObsidianVaultAdapter(this.app);
     this.engine = new EngramEngine(adapter, this.settings, this.logger, undefined, {
       http: new ObsidianHttpClient(),
-      extractors: [new ObsidianPdfExtractor()],
+      extractors: [new ObsidianPdfExtractor(), new CanvasExtractor()],
     });
     this.server = new LocalServer({
       engine: this.engine,

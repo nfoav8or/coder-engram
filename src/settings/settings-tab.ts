@@ -150,12 +150,12 @@ export class EngramSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Index attachments (PDF)")
+      .setName("Index attachments (PDF, Canvas)")
       .setDesc(
-        "Extract and index text from PDF attachments using Obsidian's built-in PDF " +
-          "engine. Fully local. Indexed attachment text becomes searchable and " +
-          "readable over the local server, like any note; excluded folders and " +
-          "patterns apply to attachments too.",
+        "Extract and index text from PDF attachments (via Obsidian's built-in PDF " +
+          "engine) and Canvas text cards. Fully local. Indexed attachment text " +
+          "becomes searchable and readable over the local server, like any note; " +
+          "exclusions apply to attachments too.",
       )
       .addToggle((t) =>
         t.setValue(this.s.indexAttachments).onChange(async (v) => {

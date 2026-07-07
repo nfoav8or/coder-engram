@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS, EngramSettings, migrateSettings } from "../src/settin
 import { NULL_LOGGER } from "../src/utils/logger";
 import { TextExtractor, renderPdfMarkdown, joinPdfTextItems } from "../src/extract/text-extractor";
 import { ExtractionCache } from "../src/extract/extraction-cache";
+import { CanvasExtractor } from "../src/extract/canvas-extractor";
 
 /** Extracts "pages" from the file's bytes (tests seed text under a .pdf path). */
 class FakePdfExtractor implements TextExtractor {
@@ -139,6 +140,56 @@ describe("attachment indexing (fake PDF extractor)", () => {
   it("migrates a pre-v4 settings blob to indexAttachments=false", () => {
     const migrated = migrateSettings({ schemaVersion: 3, indexingEnabled: true });
     expect(migrated.indexAttachments).toBe(false);
+  });
+});
+
+describe("CanvasExtractor (real, pure JSON)", () => {
+  const extract = (obj: unknown) =>
+    new CanvasExtractor().extract("Boards/plan.canvas", new TextEncoder().encode(JSON.stringify(obj)).buffer);
+
+  it("renders text cards in reading order with groups, edge labels, and embeds", async () => {
+    const md = await extract({
+      nodes: [
+        { id: "b", type: "text", text: "second card kingfisher", x: 0, y: 200 },
+        { id: "a", type: "text", text: "first card cormorant", x: 0, y: 0 },
+        { id: "g", type: "group", label: "Phase one", x: 0, y: 0 },
+        { id: "f", type: "file", file: "Notes/spec.md", x: 50, y: 50 },
+      ],
+      edges: [{ fromNode: "a", toNode: "b", label: "leads to" }],
+    });
+    expect(md).toContain("# plan");
+    expect(md).toContain("Groups: Phase one");
+    expect(md!.indexOf("cormorant")).toBeLessThan(md!.indexOf("kingfisher")); // y-order
+    expect(md).toContain("Connections: leads to");
+    expect(md).toContain("Embedded files: Notes/spec.md");
+  });
+
+  it("returns null for empty canvases and invalid JSON", async () => {
+    expect(await extract({ nodes: [], edges: [] })).toBeNull();
+    expect(await extract({ nodes: [{ type: "file", file: "a.md" }] })).toBeNull(); // embeds alone aren't text
+    const bad = new CanvasExtractor().extract("x.canvas", new TextEncoder().encode("{nope").buffer);
+    expect(await bad).toBeNull();
+  });
+
+  it("indexes canvas cards end-to-end through the engine", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {
+      "Boards/roadmap.canvas": JSON.stringify({
+        nodes: [{ id: "1", type: "text", text: "ship the wagtail milestone next", x: 0, y: 0 }],
+        edges: [],
+      }),
+    });
+    let t = 10_000;
+    const engine = new EngramEngine(
+      adapter,
+      { ...DEFAULT_SETTINGS, indexAttachments: true },
+      NULL_LOGGER,
+      () => t++,
+      { extractors: [new CanvasExtractor()] },
+    );
+    await engine.reindex();
+    const results = await engine.search({ query: "wagtail milestone" });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].chunk.notePath).toBe("Boards/roadmap.canvas");
   });
 });
 
