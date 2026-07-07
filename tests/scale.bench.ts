@@ -188,6 +188,14 @@ describe(`scale benchmark (${NOTES} notes, dim ${DIM}, ${QUERIES} queries)`, () 
         lexical.retrieve({ query: q, limit: 8 }, chunks);
       }, queryTerms);
 
+      // --- filtered lexical query latency (folder/project-scoped searches) ---
+      // An active filter breaks the chunks-array identity, so corpus stats are
+      // rebuilt per query; this measures that cost (the folder matches every
+      // note, i.e. worst-case rebuild size).
+      const lexFilteredStats = measureQueries((q) => {
+        lexical.retrieve({ query: q, limit: 8, filters: { folder: "Notes" } }, chunks);
+      }, queryTerms);
+
       // --- synthetic vectors + hybrid query latency ---
       const [vectors, vecBuildMs] = timed(() => {
         const m = new Map<string, number[]>();
@@ -215,6 +223,7 @@ describe(`scale benchmark (${NOTES} notes, dim ${DIM}, ${QUERIES} queries)`, () 
       console.log(`vectors (dim ${DIM}): ~${mb(vectorsBytes)} MB (built in ${vecBuildMs.toFixed(0)} ms)`);
       console.log(`heapUsed:        ${mb(heap)} MB (approx, no forced gc)`);
       console.log(`lexical query:   p50 ${lexStats.p50.toFixed(2)} ms  p95 ${lexStats.p95.toFixed(2)} ms  mean ${lexStats.mean.toFixed(2)} ms`);
+      console.log(`lexical filtered: p50 ${lexFilteredStats.p50.toFixed(2)} ms  p95 ${lexFilteredStats.p95.toFixed(2)} ms  mean ${lexFilteredStats.mean.toFixed(2)} ms`);
       console.log(`hybrid query:    p50 ${hybridStats.p50.toFixed(2)} ms  p95 ${hybridStats.p95.toFixed(2)} ms  mean ${hybridStats.mean.toFixed(2)} ms`);
       console.log(`==================================\n`);
       /* eslint-enable no-console */

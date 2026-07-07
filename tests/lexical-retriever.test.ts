@@ -83,6 +83,22 @@ describe("LexicalRetriever", () => {
     expect(r2.map((r) => r.chunk.id)).toEqual(["z"]);
   });
 
+  it("repeated same-filter queries reuse cached subset stats without changing results", () => {
+    const c: IndexedChunk[] = [
+      chunk({ id: "o1", notePath: "One/a.md", text: "indexing pipeline in folder one" }),
+      chunk({ id: "o2", notePath: "One/b.md", text: "another indexing note in folder one" }),
+      chunk({ id: "t1", notePath: "Two/c.md", text: "indexing note in folder two" }),
+    ];
+    const retriever = new LexicalRetriever();
+    const r1 = retriever.retrieve({ query: "indexing", filters: { folder: "One" } }, c);
+    const r2 = retriever.retrieve({ query: "indexing", filters: { folder: "One" } }, c); // cache hit
+    expect(r2.map((r) => [r.chunk.id, r.score])).toEqual(r1.map((r) => [r.chunk.id, r.score]));
+    expect(r1.map((r) => r.chunk.notePath).every((p) => p.startsWith("One/"))).toBe(true);
+    // A different filter must not reuse the cached subset.
+    const r3 = retriever.retrieve({ query: "indexing", filters: { folder: "Two" } }, c);
+    expect(r3.map((r) => r.chunk.id)).toEqual(["t1"]);
+  });
+
   it("ranks a note whose FILENAME matches the query even when its body doesn't", () => {
     const c: IndexedChunk[] = [
       chunk({ id: "f", notePath: "Ref/Quartzine Protocol.md", text: "generic body words only here" }),

@@ -65,6 +65,39 @@ function fieldTermsFor(chunk: IndexedChunk): Set<string> {
   return field;
 }
 
+/** Per-chunk statistics — corpus-INDEPENDENT, so they survive any filtering. */
+interface ChunkStats {
+  tf: Map<string, number>;
+  docLength: number;
+  headingTerms: Set<string>;
+  fieldTerms: Set<string>;
+}
+
+/**
+ * Memoized by chunk object identity: IndexManager reuses unchanged chunk
+ * objects across refreshes (same self-eviction contract as `tokenizeChunk`).
+ * This is what keeps FILTERED queries cheap — a folder/project-scoped search
+ * previously rebuilt every per-chunk tf map on every query (~160 ms p50 at
+ * 19k chunks); only the subset-dependent df/avgdl pass remains per query.
+ */
+const chunkStatsCache = new WeakMap<IndexedChunk, ChunkStats>();
+
+function chunkStatsFor(chunk: IndexedChunk): ChunkStats {
+  const hit = chunkStatsCache.get(chunk);
+  if (hit) return hit;
+  const doc = tokenizeChunk(chunk); // memoized by chunk identity
+  const tf = new Map<string, number>();
+  for (const term of doc) tf.set(term, (tf.get(term) ?? 0) + 1);
+  const stats: ChunkStats = {
+    tf,
+    docLength: doc.length,
+    headingTerms: new Set(tokenize(chunk.heading)),
+    fieldTerms: fieldTermsFor(chunk),
+  };
+  chunkStatsCache.set(chunk, stats);
+  return stats;
+}
+
 function buildStats(chunks: IndexedChunk[]): CorpusStats {
   const tf: Map<string, number>[] = [];
   const headingTerms: Set<string>[] = [];
@@ -73,15 +106,13 @@ function buildStats(chunks: IndexedChunk[]): CorpusStats {
   const df = new Map<string, number>();
   let totalLen = 0;
   for (const chunk of chunks) {
-    const doc = tokenizeChunk(chunk); // memoized by chunk identity
-    const counts = new Map<string, number>();
-    for (const term of doc) counts.set(term, (counts.get(term) ?? 0) + 1);
-    tf.push(counts);
-    docLengths.push(doc.length);
-    totalLen += doc.length;
-    for (const term of counts.keys()) df.set(term, (df.get(term) ?? 0) + 1);
-    headingTerms.push(new Set(tokenize(chunk.heading)));
-    fieldTerms.push(fieldTermsFor(chunk));
+    const cs = chunkStatsFor(chunk);
+    tf.push(cs.tf);
+    docLengths.push(cs.docLength);
+    totalLen += cs.docLength;
+    for (const term of cs.tf.keys()) df.set(term, (df.get(term) ?? 0) + 1);
+    headingTerms.push(cs.headingTerms);
+    fieldTerms.push(cs.fieldTerms);
   }
   return {
     chunks,
@@ -101,14 +132,26 @@ export class LexicalRetriever implements Retriever {
    * IndexManager replaces on refresh), so repeated queries over an unchanged
    * vault reuse them instead of rebuilding tf/df from scratch each time. */
   private cached: CorpusStats | null = null;
+  /** Stats for the LAST filtered subset. An agent session scoped to one
+   * project repeats the same filter across queries; one entry captures that
+   * pattern (ever-changing filters like sinceMtime simply miss). Keyed by
+   * corpus identity + filter key; consumers score over `stats.chunks`, so
+   * index alignment is by construction, not by re-filter determinism. */
+  private filteredCached: { corpus: IndexedChunk[]; filterKey: string; stats: CorpusStats } | null = null;
 
   constructor(private readonly options: LexicalRetrieverOptions = {}) {}
 
-  private statsFor(chunks: IndexedChunk[], filtered: IndexedChunk[]): CorpusStats {
+  private statsFor(chunks: IndexedChunk[], filtered: IndexedChunk[], filterKey: string): CorpusStats {
     // Whole-vault search (the hot path): stats over `filtered` equal stats over
     // `chunks`, so memoize by identity. A filtered subset gets fresh stats so IDF
     // reflects exactly the searched set (unchanged from the per-query behavior).
-    if (filtered !== chunks) return buildStats(filtered);
+    if (filtered !== chunks) {
+      const hit = this.filteredCached;
+      if (hit && hit.corpus === chunks && hit.filterKey === filterKey) return hit.stats;
+      const stats = buildStats(filtered);
+      this.filteredCached = { corpus: chunks, filterKey, stats };
+      return stats;
+    }
     if (!this.cached || this.cached.chunks !== chunks) this.cached = buildStats(chunks);
     return this.cached;
   }
@@ -119,7 +162,10 @@ export class LexicalRetriever implements Retriever {
     const filtered = applyFilters(chunks, query.filters, this.options.projectRootResolver);
     if (queryTerms.length === 0 || filtered.length === 0) return [];
 
-    const stats = this.statsFor(chunks, filtered);
+    const stats = this.statsFor(chunks, filtered, JSON.stringify(query.filters ?? {}));
+    // Score over the array the stats were built from (a cached filtered subset
+    // may be a PREVIOUS applyFilters result — equal contents, different array).
+    const candidates = stats.chunks;
     const uniqueQueryTerms = Array.from(new Set(queryTerms));
 
     // IDF depends only on the term and the corpus — recomputing it per
@@ -132,7 +178,7 @@ export class LexicalRetriever implements Retriever {
     });
 
     const scored: Array<{ chunk: IndexedChunk; score: number; i: number }> = [];
-    for (let i = 0; i < filtered.length; i++) {
+    for (let i = 0; i < candidates.length; i++) {
       // A chunk whose body tokenizes to nothing can still deserve field credit
       // (e.g. a non-Latin body under an ASCII filename).
       if (stats.docLengths[i] === 0 && stats.fieldTerms[i].size === 0) continue;
@@ -151,7 +197,7 @@ export class LexicalRetriever implements Retriever {
         score += termScore;
       }
 
-      if (score > 0) scored.push({ chunk: filtered[i], score, i });
+      if (score > 0) scored.push({ chunk: candidates[i], score, i });
     }
 
     // Rank, diversify so a single long note can't flood the page, then build
