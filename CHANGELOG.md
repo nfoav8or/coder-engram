@@ -21,8 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Queries now match note filenames, frontmatter aliases, and ancestor headings.** Plain BM25 scored only chunk body text, so a query for "Quartzine Protocol" never ranked `Quartzine Protocol.md` unless the body repeated those words, and `aliases` were indexed but never used by ranking at all. A term found only in these fields is credited at the score of one occurrence in an average-length body — enough for a name match to rank, not enough to beat a stronger body match.
 - **A golden-query relevance eval harness** (`npm run eval`, local-only like the scale bench): planted invented-term needle notes, recall@8 + MRR per query class (body / filename / heading / alias / plural / phrase). Measured before/after for this release: filename and alias recall@8 went **0.00 → 1.00**; it also showed heading-only and plural/phrase queries were already near-ceiling (so stemming and proximity bonuses were deliberately *not* added).
 
+### Changed
+
+- **Full-note reads no longer resend the chunker's window overlap or repeat section headings.** Long sections index as overlapping windows (~150 carried characters each, plus the heading line per window); `get_note_context` rendered each window verbatim, resending ~12% of every long section. Consecutive windows of one section now merge under a single heading label with the carry stripped — the strip removes a prefix only when the previous window's text verifiably ends with it, so nothing unseen is ever dropped, and the text now agrees with the advertised line ranges (the carry was never part of a window's span). Outlines likewise show one line per section instead of one per window.
+
 ### Performance
 
+- **Filtered (folder/tag/project-scoped) searches are ~8× faster** (p50 162 → 21 ms at 19k chunks — measured by a new filtered-query section in `npm run bench`): per-chunk statistics (term frequencies, lengths, heading/field terms) are corpus-independent and now memoized by chunk identity, surviving any filter; repeated same-filter queries additionally reuse the whole subset's statistics. Unfiltered queries and ranking behavior are unchanged.
 - **Lexical queries are ~25% faster** (p50 21 → 15 ms at 19k chunks; hybrid 38 → 31 ms): per-term IDF is now computed once per query instead of per (chunk, term) pair, and the matched-terms array is built only for the page's survivors instead of allocated for every scoring chunk. Behavior-identical — same scores, same order, same matched terms.
 
 ## [0.5.0] — 2026-07-07

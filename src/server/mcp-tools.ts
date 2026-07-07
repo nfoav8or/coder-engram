@@ -123,6 +123,35 @@ function chunkHeadingLabel(c: IndexedChunk): string {
   return parts.length ? parts.join(" › ") : "(top)";
 }
 
+/**
+ * De-duplicate a same-section follow-on window's text against the previous
+ * window: strip the repeated markdown heading line and the chunker's ~150-char
+ * window-carry overlap. The carry is an INDEXING artifact — it is excluded
+ * from the chunk's line span by the chunker — so removing it makes the text
+ * agree with the advertised line ranges. The strip rule is lossless by
+ * construction: a prefix is removed only when the previous window's text ends
+ * with it (verbatim), i.e. the reader has those characters immediately above.
+ */
+function dedupWindowText(prevText: string, c: IndexedChunk): { text: string; carried: boolean } {
+  let rest = c.text;
+  const header = c.heading ? `${"#".repeat(c.headingPath.length + 1)} ${c.heading}` : "";
+  if (header && rest.startsWith(header)) rest = rest.slice(header.length).trimStart();
+  const MAX_CARRY = 200; // overlapChars (150) + separators, with headroom
+  const probe = rest.slice(0, MAX_CARRY);
+  for (let len = probe.length; len >= 12; len--) {
+    const candidate = probe.slice(0, len).trimEnd();
+    // ≥12-char anchor so a coincidental short suffix/prefix match can't strip.
+    if (candidate.length >= 12 && prevText.endsWith(candidate)) {
+      return { text: rest.slice(len).trimStart(), carried: true };
+    }
+  }
+  return { text: rest, carried: false };
+}
+
+function sameSection(a: IndexedChunk, b: IndexedChunk): boolean {
+  return a.heading === b.heading && a.headingPath.join("\u0000") === b.headingPath.join("\u0000");
+}
+
 /** Clip `text` to `maxChars`, flagging the cut with a follow-up hint. */
 function clipContext(text: string, maxChars: number, hint: string): string {
   if (text.length <= maxChars) return text;
@@ -577,9 +606,9 @@ const getNoteContextTool: Tool = {
       );
     }
 
-    const lineLabel = (c: IndexedChunk) => {
-      const start = c.startLine + 1;
-      const end = Math.max(start, c.endLine + 1);
+    const rangeLabel = (startLine0: number, endLine0: number) => {
+      const start = startLine0 + 1;
+      const end = Math.max(start, endLine0 + 1);
       return start === end ? `Line ${start}` : `Lines ${start}–${end}`;
     };
     const headingLabel = chunkHeadingLabel;
@@ -589,10 +618,38 @@ const getNoteContextTool: Tool = {
         ? `${chunks.length} indexed passage(s)`
         : `${chunks.length} of ${allChunks.length} indexed passage(s) overlapping the requested lines`;
 
-    // Outline mode: a cheap structural map (one line per passage, no body) so
+    // Group consecutive windows of ONE section: they repeat the section's
+    // heading and each carries ~150 chars of the previous window's text, so
+    // rendering them individually resends both per window. A window joins the
+    // previous group only when its carry verifiably matches (dedupWindowText),
+    // which distinguishes true continuation windows from ADJACENT SIBLING
+    // sections that merely share a heading (e.g. repeated "## Entry" logs) —
+    // those have no carry and must stay separate blocks.
+    interface WindowGroup {
+      chunks: IndexedChunk[];
+      pieces: string[]; // per-window text, carry/heading de-duplicated
+    }
+    const groups: WindowGroup[] = [];
+    for (const c of chunks) {
+      const g = groups[groups.length - 1];
+      if (g && sameSection(g.chunks[g.chunks.length - 1], c)) {
+        const deduped = dedupWindowText(g.chunks[g.chunks.length - 1].text, c);
+        if (deduped.carried) {
+          g.chunks.push(c);
+          g.pieces.push(deduped.text);
+          continue;
+        }
+      }
+      groups.push({ chunks: [c], pieces: [c.text] });
+    }
+    const groupRange = (g: WindowGroup) =>
+      rangeLabel(g.chunks[0].startLine, g.chunks[g.chunks.length - 1].endLine);
+    const groupLabel = (g: WindowGroup) => `[${groupRange(g)}] ${headingLabel(g.chunks[0])}`;
+
+    // Outline mode: a cheap structural map (one line per section, no body) so
     // the agent can target a ranged read instead of paging a full note.
     if (outline) {
-      const lines = chunks.map((c) => `${lineLabel(c)}  ${headingLabel(c)}`).join("\n");
+      const lines = groups.map((g) => `${groupRange(g)}  ${headingLabel(g.chunks[0])}`).join("\n");
       const header = `${chunks[0].notePath} — outline of ${scope} (note spans ${noteSpan}):`;
       return clipContext(`${header}\n\n${lines}`, maxChars, "narrow with startLine/endLine");
     }
@@ -608,20 +665,31 @@ const getNoteContextTool: Tool = {
     // INSIDE the first passage (re-reading the same startLine with a larger
     // maxChars is then the only way forward).
     let continueAt: number | null = null;
-    for (const c of chunks) {
-      const block = `[${lineLabel(c)}] ${headingLabel(c)}\n${c.text}`;
-      const sep = blocks.length > 0 ? 2 : 0; // "\n\n" between blocks
-      if (used + sep + block.length > maxChars) {
-        if (blocks.length === 0) {
-          blocks.push(block.slice(0, maxChars));
-        } else {
-          continueAt = c.startLine + 1;
+    for (const g of groups) {
+      if (truncated) break;
+      const label = groupLabel(g);
+      let blockText = "";
+      for (let k = 0; k < g.pieces.length; k++) {
+        const piece = g.pieces[k];
+        const addition = (blockText ? "\n\n" : "") + piece;
+        // First piece also pays for the label line and the inter-block gap.
+        const overhead = blockText ? 0 : label.length + 1 + (blocks.length > 0 ? 2 : 0);
+        if (used + overhead + addition.length > maxChars) {
+          if (blocks.length === 0 && blockText === "") {
+            blockText = piece.slice(0, Math.max(0, maxChars - label.length - 1));
+            used += label.length + 1 + blockText.length;
+          } else {
+            // Truncation mid-group leaves the group label spanning the whole
+            // section; the continuation pointer below is the accurate cursor.
+            continueAt = g.chunks[k].startLine + 1;
+          }
+          truncated = true;
+          break;
         }
-        truncated = true;
-        break;
+        blockText += addition;
+        used += overhead + addition.length;
       }
-      blocks.push(block);
-      used += sep + block.length;
+      if (blockText) blocks.push(`${label}\n${blockText}`);
     }
 
     const header = `${chunks[0].notePath} — ${scope}:`;

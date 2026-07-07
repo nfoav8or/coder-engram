@@ -310,6 +310,50 @@ describe("RateLimiter.enforceWindow", () => {
     expect(clipped).not.toContain("# Decisions"); // clipped at the part boundary
   });
 
+  it("get_note_context does not resend window-carry overlap or repeat section headings", async () => {
+    // One long section → several overlapping windows. Rendered naively, each
+    // window repeats the section heading and ~150 chars of the previous
+    // window's tail; the assembly must send each source paragraph exactly once
+    // under a single section label.
+    const paras = Array.from(
+      { length: 30 },
+      (_, i) => `pmarker${i} ${"content ".repeat(20)}end${i}.`,
+    );
+    const { engine, ctx } = makeContext({
+      "Notes/longsec.md": `# Longsec\n\n${paras.join("\n\n")}`,
+    });
+    await engine.reindex();
+    // Sanity: the note actually windowed into several chunks.
+    expect(engine.getNoteChunks("Notes/longsec.md").length).toBeGreaterThan(2);
+
+    const registry = new ToolRegistry();
+    const out = await registry.call("get_note_context", { path: "Notes/longsec.md", maxChars: 50000 }, ctx);
+    for (let i = 0; i < paras.length; i++) {
+      const occurrences = out.split(`pmarker${i} `).length - 1;
+      expect(occurrences, `pmarker${i} sent exactly once`).toBe(1);
+    }
+    // One label for the whole section, not one per window.
+    expect(out.match(/\[Lines /g)?.length ?? 0).toBe(1);
+    expect(out.match(/Longsec/g)?.length ?? 0).toBeLessThanOrEqual(2); // header + label
+  });
+
+  it("get_note_context keeps adjacent same-named sibling sections as separate blocks", async () => {
+    // Repeated "## Entry" siblings share heading AND headingPath but are
+    // distinct sections (no window carry) — they must not merge into one block.
+    const { engine, ctx } = makeContext({
+      "Logs/log.md":
+        "# Log\n\n## Entry\n\nfirst sibling body alpha.\n\n## Entry\n\nsecond sibling body beta.\n\n## Entry\n\nthird sibling body gamma.",
+    });
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    const out = await registry.call("get_note_context", { path: "Logs/log.md" }, ctx);
+    // Every sibling's body present, each under its own line-ranged label.
+    expect(out).toContain("alpha");
+    expect(out).toContain("beta");
+    expect(out).toContain("gamma");
+    expect(out.match(/\[Lines? \d/g)?.length ?? 0).toBeGreaterThanOrEqual(4); // top + 3 entries
+  });
+
   it("get_note_context reaches a passage deep in a long note via startLine/endLine", async () => {
     // 40 sections × ~1000 chars: a plain read at maxChars=1000 truncates long
     // before the last section — the ranged read is the only way to reach it.
