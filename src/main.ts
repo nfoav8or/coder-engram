@@ -259,8 +259,9 @@ export default class EngramPlugin
     }
     void this.engine
       .getProjectContext(project)
-      .then((ctx) => {
-        new TextDisplayModal(this.app, `Project context: ${project}`, ctx).open();
+      .then((parts) => {
+        const text = parts.map((p) => `${p.path}:\n${p.content}`).join("\n\n---\n\n");
+        new TextDisplayModal(this.app, `Project context: ${project}`, text).open();
       })
       .catch((err) => new Notice(`Could not load project context: ${toMessage(err)}`));
   }

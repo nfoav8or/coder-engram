@@ -56,6 +56,19 @@ export function optionalString(
   return value;
 }
 
+export function optionalBoolean(
+  obj: Record<string, unknown>,
+  key: string,
+  fallback = false,
+): boolean {
+  const value = obj[key];
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "boolean") {
+    throw new ValidationError(`Field "${key}" must be a boolean when provided`);
+  }
+  return value;
+}
+
 export function optionalStringArray(
   obj: Record<string, unknown>,
   key: string,

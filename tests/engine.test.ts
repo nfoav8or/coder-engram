@@ -153,7 +153,8 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
     const folder = await engine.createProject("Demo");
     expect(folder).toBe("Claude Code/Memory/Projects/Demo");
     expect(await engine.listProjects()).toContain("Demo");
-    expect(await engine.getProjectContext("Demo")).toContain("Overview");
+    const parts = await engine.getProjectContext("Demo");
+    expect(parts.map((p) => p.content).join("\n")).toContain("Overview");
   });
 
   it("rejects a memory root that escapes the vault at settings-update time", () => {

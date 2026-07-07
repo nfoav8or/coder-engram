@@ -92,8 +92,10 @@ describe("MemoryStore", () => {
     const store = new MemoryStore(adapter, paths);
     await store.projects.createProject("Demo");
     expect(await store.listProjects()).toContain("Demo");
-    const ctx = await store.getProjectContext("Demo");
-    expect(ctx).toContain("Demo — Overview");
+    const parts = await store.getProjectContext("Demo");
+    // Parts are path-labeled so consumers can make targeted follow-up reads.
+    expect(parts.map((p) => p.content).join("\n")).toContain("Demo — Overview");
+    expect(parts[0].path).toBe("Claude Code/Memory/Projects/Demo/overview.md");
   });
 
   it("does not overwrite an existing project file", async () => {

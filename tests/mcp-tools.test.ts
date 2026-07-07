@@ -227,20 +227,22 @@ describe("RateLimiter.enforceWindow", () => {
     await engine.reindex();
     const registry = new ToolRegistry();
 
+    // A single file bigger than the budget: still hard-capped, and flagged as
+    // truncated by name in the omitted list.
     const project = await registry.call("get_project_context", { project: "Demo", maxChars: 1000 }, ctx);
-    expect(project).toContain("truncated at 1000");
-    expect(project.length).toBeLessThan(1300);
+    expect(project).toMatch(/clipped at 1000 chars; omitted: .*overview\.md \(truncated\)/);
+    expect(project.length).toBeLessThan(1400);
 
     const global = await registry.call("get_global_context", { maxChars: 1000 }, ctx);
-    expect(global).toContain("truncated at 1000");
+    expect(global).toContain("clipped at 1000");
 
     const sessions = await registry.call(
       "get_recent_sessions",
       { project: "Demo", maxChars: 1000 },
       ctx,
     );
-    expect(sessions).toContain("truncated at 1000");
-    expect(sessions.length).toBeLessThan(1300);
+    expect(sessions).toContain("clipped at 1000");
+    expect(sessions.length).toBeLessThan(1400);
   });
 
   it("bulk context reads are rate-limited per window", async () => {
@@ -251,6 +253,61 @@ describe("RateLimiter.enforceWindow", () => {
       await registry.call("get_global_context", {}, ctx);
     }
     await expect(registry.call("get_global_context", {}, ctx)).rejects.toThrow(/rate/i);
+  });
+
+  it("get_note_context outline mode returns a headings-only map, no body text", async () => {
+    const { engine, ctx } = makeContext({
+      "Notes/doc.md":
+        "# Doc\n\nintro body paragraph here.\n\n## Alpha\n\nalpha body secret-body-marker.\n\n## Beta\n\nbeta body text.",
+    });
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    const out = await registry.call("get_note_context", { path: "Notes/doc.md", outline: true }, ctx);
+    expect(out).toContain("outline of");
+    expect(out).toMatch(/Lines \d+–\d+\s+Doc › Alpha/);
+    expect(out).not.toContain("secret-body-marker"); // structure only, no body
+  });
+
+  it("get_note_context truncation names the exact line to continue from", async () => {
+    const filler = Array.from({ length: 20 }, (_, i) => `## S${i}\n\n${"word ".repeat(150)}`).join("\n\n");
+    const { engine, ctx } = makeContext({ "Notes/long.md": `# Long\n\n${filler}` });
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    const out = await registry.call("get_note_context", { path: "Notes/long.md", maxChars: 2000 }, ctx);
+    const m = out.match(/continue with startLine=(\d+); note spans L1–(\d+)/);
+    expect(m).not.toBeNull();
+    // The continuation line resumes exactly where the output stopped: it must
+    // be past every line already returned.
+    const returnedEnds = [...out.matchAll(/\[Lines \d+–(\d+)\]/g)].map((x) => Number(x[1]));
+    expect(Number(m![1])).toBeGreaterThan(Math.max(...returnedEnds));
+    // ...and a follow-up read from there returns fresh passages.
+    const next = await registry.call(
+      "get_note_context",
+      { path: "Notes/long.md", startLine: Number(m![1]), maxChars: 2000 },
+      ctx,
+    );
+    expect(next).toContain(`[Lines ${m![1]}`);
+  });
+
+  it("bulk context reads label each file and name omitted files when clipped", async () => {
+    const big = "word ".repeat(400); // ~2k chars per file
+    const { engine, ctx } = makeContext({
+      "Claude Code/Memory/Projects/Demo/overview.md": `# Overview\n\n${big}`,
+      "Claude Code/Memory/Projects/Demo/decisions.md": `# Decisions\n\n${big}`,
+      "Claude Code/Memory/Projects/Demo/tasks.md": `# Tasks\n\n${big}`,
+    });
+    await engine.reindex();
+    const registry = new ToolRegistry();
+
+    const full = await registry.call("get_project_context", { project: "Demo" }, ctx);
+    expect(full).toContain("Claude Code/Memory/Projects/Demo/overview.md:");
+    expect(full).toContain("Claude Code/Memory/Projects/Demo/decisions.md:");
+
+    // Clipped: whole tail files are OMITTED BY NAME, never silently dropped.
+    const clipped = await registry.call("get_project_context", { project: "Demo", maxChars: 2500 }, ctx);
+    expect(clipped).toContain("overview.md:");
+    expect(clipped).toMatch(/omitted: .*decisions\.md.*tasks\.md.*read with get_note_context/);
+    expect(clipped).not.toContain("# Decisions"); // clipped at the part boundary
   });
 
   it("get_note_context reaches a passage deep in a long note via startLine/endLine", async () => {

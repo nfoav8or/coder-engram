@@ -16,6 +16,12 @@ export interface SessionNote {
   content: string;
 }
 
+/** One memory file's content, labeled with its vault path. */
+export interface ContextPart {
+  path: string;
+  content: string;
+}
+
 const GLOBAL_TEMPLATES: Record<string, string> = {
   profile: "# Profile\n\nWho the user is, their role, and working context.\n",
   preferences: "# Preferences\n\nHow the user likes to work. Coding style, tools, conventions.\n",
@@ -67,18 +73,23 @@ export class MemoryStore {
     }
   }
 
-  /** Concatenated global memory (profile + preferences + conventions). */
-  async getGlobalContext(): Promise<string> {
-    const parts: string[] = [];
+  /**
+   * Global memory (profile + preferences + conventions) as labeled parts.
+   * Each part carries its vault path so consumers can make targeted follow-up
+   * reads — and so a clipped assembly can say WHICH files were omitted instead
+   * of silently dropping the tail.
+   */
+  async getGlobalContext(): Promise<ContextPart[]> {
+    const parts: ContextPart[] = [];
     for (const file of Object.values(this.paths.globalFiles)) {
       const content = await this.readIfExists(file);
-      if (content && content.trim()) parts.push(content.trim());
+      if (content && content.trim()) parts.push({ path: file, content: content.trim() });
     }
-    return parts.join("\n\n---\n\n");
+    return parts;
   }
 
-  /** Concatenated project memory (overview → architecture → decisions → tasks → open questions). */
-  async getProjectContext(name: string): Promise<string> {
+  /** Project memory (overview → architecture → decisions → tasks → open questions) as labeled parts. */
+  async getProjectContext(name: string): Promise<ContextPart[]> {
     const project = resolveProjectPaths(this.paths, name);
     const order = [
       project.overview,
@@ -87,12 +98,12 @@ export class MemoryStore {
       project.tasks,
       project.openQuestions,
     ];
-    const parts: string[] = [];
+    const parts: ContextPart[] = [];
     for (const file of order) {
       const content = await this.readIfExists(file);
-      if (content && content.trim()) parts.push(content.trim());
+      if (content && content.trim()) parts.push({ path: file, content: content.trim() });
     }
-    return parts.join("\n\n---\n\n");
+    return parts;
   }
 
   async listProjects(): Promise<string[]> {

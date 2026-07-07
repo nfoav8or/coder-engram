@@ -23,7 +23,7 @@ import {
   MemoryEntry,
   resolveProjectPaths,
 } from "./memory/memory-types";
-import { MemoryStore, SessionNote } from "./memory/memory-store";
+import { MemoryStore, SessionNote, ContextPart } from "./memory/memory-store";
 import { MemoryWriter } from "./memory/memory-writer";
 import { ParsedInbox, PendingEntry } from "./memory/pending-inbox";
 import { extractiveSummary, splitIntoSentences, SummaryMethod } from "./summarize/extractive";
@@ -599,11 +599,11 @@ export class EngramEngine {
     return this.store.listProjects();
   }
 
-  async getProjectContext(name: string): Promise<string> {
+  async getProjectContext(name: string): Promise<ContextPart[]> {
     return this.store.getProjectContext(name);
   }
 
-  async getGlobalContext(): Promise<string> {
+  async getGlobalContext(): Promise<ContextPart[]> {
     return this.store.getGlobalContext();
   }
 

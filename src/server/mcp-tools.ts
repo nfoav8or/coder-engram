@@ -26,9 +26,11 @@ import {
   optionalString,
   optionalStringArray,
   optionalNumber,
+  optionalBoolean,
 } from "../utils/validation";
 import { MemoryEntry } from "../memory/memory-types";
 import { dropNearDuplicates, diversifyByNote } from "../retrieval/ranking";
+import { IndexedChunk } from "../indexing/index-manager";
 
 /** JSON-Schema-shaped tool description advertised via `tools/list`. */
 export interface ToolDefinition {
@@ -111,10 +113,54 @@ const CONTEXT_MAX_PER_MINUTE = 60;
 const CONTEXT_DEFAULT_MAX_CHARS = 12_000;
 const CONTEXT_MAX_CHARS = 50_000;
 
+/**
+ * Full heading breadcrumb for a chunk. `headingPath` holds ANCESTORS only (the
+ * chunker excludes the section's own heading), so joining it alone drops the
+ * most specific level — "Doc" instead of "Doc › Alpha".
+ */
+function chunkHeadingLabel(c: IndexedChunk): string {
+  const parts = [...c.headingPath, c.heading].filter(Boolean);
+  return parts.length ? parts.join(" › ") : "(top)";
+}
+
 /** Clip `text` to `maxChars`, flagging the cut with a follow-up hint. */
 function clipContext(text: string, maxChars: number, hint: string): string {
   if (text.length <= maxChars) return text;
   return `${text.slice(0, maxChars)}\n\n…(truncated at ${maxChars} chars; ${hint})`;
+}
+
+/**
+ * Assemble path-labeled blocks under a `maxChars` budget, clipping at BLOCK
+ * boundaries and naming what was left out — a silently missing tail file is a
+ * recall hole (the agent can't follow up on content it never learned exists),
+ * and the paths give it the exact `get_note_context` reads to make next.
+ */
+function assembleLabeledBlocks(
+  blocks: Array<{ path: string; block: string }>,
+  maxChars: number,
+): string {
+  const kept: string[] = [];
+  const omitted: string[] = [];
+  let used = 0;
+  for (const { path, block } of blocks) {
+    const sep = kept.length > 0 ? 7 : 0; // "\n\n---\n\n"
+    if (omitted.length > 0 || used + sep + block.length > maxChars) {
+      // A single oversized first block is still clipped (hard ceiling).
+      if (kept.length === 0) {
+        kept.push(block.slice(0, maxChars));
+        omitted.push(`${path} (truncated)`);
+      } else {
+        omitted.push(path);
+      }
+      continue;
+    }
+    kept.push(block);
+    used += sep + block.length;
+  }
+  const body = kept.join("\n\n---\n\n");
+  return omitted.length === 0
+    ? body
+    : `${body}\n\n…(clipped at ${maxChars} chars; omitted: ${omitted.join(", ")} — read with get_note_context)`;
 }
 
 /** Parsed optional `maxChars` argument for the bulk context reads. */
@@ -213,7 +259,7 @@ const searchTool: Tool = {
     // back through search looking like the user's settled knowledge.
     const pendingPath = ctx.engine.getPaths().pendingMemoryFile;
     const blocks = distinct.map((r, i) => {
-      const heading = r.chunk.headingPath.length ? r.chunk.headingPath.join(" › ") : r.chunk.heading || "(top)";
+      const heading = chunkHeadingLabel(r.chunk);
       const start = r.chunk.startLine + 1;
       const end = Math.max(start, r.chunk.endLine + 1);
       const lines = start === end ? `L${start}` : `L${start}–${end}`;
@@ -298,9 +344,12 @@ const getProjectContextTool: Tool = {
     const obj = requireObject(args, "arguments");
     const project = requireString(obj, "project", { maxLength: 200 });
     const maxChars = contextMaxChars(obj);
-    const ctxText = (await ctx.engine.getProjectContext(project)).trim();
-    if (!ctxText) return `No project memory found for "${project}".`;
-    return clipContext(ctxText, maxChars, "use search_vault_memory + get_note_context for targeted recall");
+    const parts = await ctx.engine.getProjectContext(project);
+    if (parts.length === 0) return `No project memory found for "${project}".`;
+    return assembleLabeledBlocks(
+      parts.map((p) => ({ path: p.path, block: `${p.path}:\n${p.content}` })),
+      maxChars,
+    );
   },
 };
 
@@ -318,9 +367,12 @@ const getGlobalContextTool: Tool = {
     ctx.rateLimiter.enforceWindow("get_global_context", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
     const obj = requireObject(args ?? {}, "arguments");
     const maxChars = contextMaxChars(obj);
-    const text = (await ctx.engine.getGlobalContext()).trim();
-    if (!text) return "No global memory recorded yet.";
-    return clipContext(text, maxChars, "use search_vault_memory + get_note_context for targeted recall");
+    const parts = await ctx.engine.getGlobalContext();
+    if (parts.length === 0) return "No global memory recorded yet.";
+    return assembleLabeledBlocks(
+      parts.map((p) => ({ path: p.path, block: `${p.path}:\n${p.content}` })),
+      maxChars,
+    );
   },
 };
 
@@ -362,10 +414,10 @@ const getRecentSessionsTool: Tool = {
     const maxChars = contextMaxChars(obj);
     const sessions = await ctx.engine.getRecentSessions(project, limit);
     if (sessions.length === 0) return `No sessions found for "${project}".`;
-    const joined = sessions
-      .map((s) => `## ${s.path}\n\n${s.content.trim()}`)
-      .join("\n\n---\n\n");
-    return clipContext(joined, maxChars, "use a smaller limit, or search_vault_memory for targeted recall");
+    return assembleLabeledBlocks(
+      sessions.map((s) => ({ path: s.path, block: `## ${s.path}\n\n${s.content.trim()}` })),
+      maxChars,
+    );
   },
 };
 
@@ -439,9 +491,11 @@ const getNoteContextTool: Tool = {
       "with its heading and line range — the natural follow-up to a search hit, " +
       "which only returns a short snippet. Pass startLine/endLine (e.g. from a " +
       "search hit's line range) to read just the passages overlapping that span — " +
-      "essential for hits deep in a long note. Only notes present in the index " +
-      "are returned; an excluded or unindexed note is refused, so this is not a " +
-      "general file-read.",
+      "essential for hits deep in a long note. Pass outline=true for a cheap " +
+      "headings-only map of the note (one line per passage, no body) before " +
+      "committing to a full read. Only notes present in the index are returned; " +
+      "an excluded or unindexed note is refused, so this is not a general " +
+      "file-read.",
     inputSchema: {
       type: "object",
       properties: {
@@ -459,6 +513,12 @@ const getNoteContextTool: Tool = {
         endLine: {
           type: "number",
           description: "Only passages starting at/before this 1-based line.",
+        },
+        outline: {
+          type: "boolean",
+          description:
+            "Return only the heading outline (line range + heading per passage, no body) — " +
+            "a cheap map before a full read.",
         },
       },
       required: ["path"],
@@ -483,6 +543,7 @@ const getNoteContextTool: Tool = {
     if (startLine > 0 && endLine > 0 && endLine < startLine) {
       throw new ValidationError(`Field "endLine" must be >= "startLine"`);
     }
+    const outline = optionalBoolean(obj, "outline");
 
     // Indexed-only gate (same as summarize_note): an excluded/unindexed note has
     // no chunks and is refused, so this can never read a note the exclusion
@@ -516,6 +577,26 @@ const getNoteContextTool: Tool = {
       );
     }
 
+    const lineLabel = (c: IndexedChunk) => {
+      const start = c.startLine + 1;
+      const end = Math.max(start, c.endLine + 1);
+      return start === end ? `Line ${start}` : `Lines ${start}–${end}`;
+    };
+    const headingLabel = chunkHeadingLabel;
+    const noteSpan = `L${allChunks[0].startLine + 1}–${allChunks[allChunks.length - 1].endLine + 1}`;
+    const scope =
+      chunks.length === allChunks.length
+        ? `${chunks.length} indexed passage(s)`
+        : `${chunks.length} of ${allChunks.length} indexed passage(s) overlapping the requested lines`;
+
+    // Outline mode: a cheap structural map (one line per passage, no body) so
+    // the agent can target a ranged read instead of paging a full note.
+    if (outline) {
+      const lines = chunks.map((c) => `${lineLabel(c)}  ${headingLabel(c)}`).join("\n");
+      const header = `${chunks[0].notePath} — outline of ${scope} (note spans ${noteSpan}):`;
+      return clipContext(`${header}\n\n${lines}`, maxChars, "narrow with startLine/endLine");
+    }
+
     // Assemble passages until `maxChars` of note text is reached. `maxChars` is a
     // hard ceiling on the body: if even the first passage exceeds it (a single
     // giant chunk — e.g. a note that is one unbroken paragraph), it is clipped so
@@ -523,15 +604,19 @@ const getNoteContextTool: Tool = {
     const blocks: string[] = [];
     let used = 0;
     let truncated = false;
+    // 1-based line to continue from after a truncation; null when the cut fell
+    // INSIDE the first passage (re-reading the same startLine with a larger
+    // maxChars is then the only way forward).
+    let continueAt: number | null = null;
     for (const c of chunks) {
-      const start = c.startLine + 1;
-      const end = Math.max(start, c.endLine + 1);
-      const lines = start === end ? `Line ${start}` : `Lines ${start}–${end}`;
-      const heading = c.headingPath.length ? c.headingPath.join(" › ") : c.heading || "(top)";
-      const block = `[${lines}] ${heading}\n${c.text}`;
+      const block = `[${lineLabel(c)}] ${headingLabel(c)}\n${c.text}`;
       const sep = blocks.length > 0 ? 2 : 0; // "\n\n" between blocks
       if (used + sep + block.length > maxChars) {
-        if (blocks.length === 0) blocks.push(block.slice(0, maxChars));
+        if (blocks.length === 0) {
+          blocks.push(block.slice(0, maxChars));
+        } else {
+          continueAt = c.startLine + 1;
+        }
         truncated = true;
         break;
       }
@@ -539,15 +624,19 @@ const getNoteContextTool: Tool = {
       used += sep + block.length;
     }
 
-    const scope =
-      chunks.length === allChunks.length
-        ? `${chunks.length} indexed passage(s)`
-        : `${chunks.length} of ${allChunks.length} indexed passage(s) overlapping the requested lines`;
     const header = `${chunks[0].notePath} — ${scope}:`;
     const body = blocks.join("\n\n");
-    return truncated
-      ? `${header}\n\n${body}\n\n…(truncated at ${maxChars} chars; narrow with startLine/endLine)`
-      : `${header}\n\n${body}`;
+    if (!truncated) return `${header}\n\n${body}`;
+    // A continuation pointer beats generic advice: without it the agent's
+    // cheapest recovery is a full re-read of everything it already has. A
+    // range-bounded read keeps its endLine, or the continuation would silently
+    // widen the read past what the caller asked for.
+    const endBound = endLine > 0 ? `, endLine=${endLine}` : "";
+    const hint =
+      continueAt !== null
+        ? `continue with startLine=${continueAt}${endBound}; note spans ${noteSpan}`
+        : `this passage alone exceeds maxChars — retry with a larger maxChars`;
+    return `${header}\n\n${body}\n\n…(truncated at ${maxChars} chars; ${hint})`;
   },
 };
 
