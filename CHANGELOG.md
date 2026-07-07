@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Queries now match note filenames, frontmatter aliases, and ancestor headings.** Plain BM25 scored only chunk body text, so a query for "Quartzine Protocol" never ranked `Quartzine Protocol.md` unless the body repeated those words, and `aliases` were indexed but never used by ranking at all. A term found only in these fields is credited at the score of one occurrence in an average-length body — enough for a name match to rank, not enough to beat a stronger body match.
 - **A golden-query relevance eval harness** (`npm run eval`, local-only like the scale bench): planted invented-term needle notes, recall@8 + MRR per query class (body / filename / heading / alias / plural / phrase). Measured before/after for this release: filename and alias recall@8 went **0.00 → 1.00**; it also showed heading-only and plural/phrase queries were already near-ceiling (so stemming and proximity bonuses were deliberately *not* added).
 
+### Fixed
+
+- **Frontmatter-only notes (alias/link-hub notes) are now findable.** A note holding only frontmatter — aliases and tags, no body — produced zero chunks, so it was invisible to retrieval and its aliases could never match. Such notes now index one stub chunk naming the note and its aliases; truly empty notes stay unindexed.
+
 ### Changed
 
 - **Truncated reads now say exactly where to continue.** A truncated `get_note_context` names the `startLine` to resume from and the note's full span (previously: generic "narrow with startLine/endLine" advice, whose cheapest recovery was re-reading everything already received). The bulk context reads (`get_project_context`, `get_global_context`, `get_recent_sessions`) now label every file with its vault path, clip at file boundaries, and **name the omitted files** — previously a clipped project context silently dropped the tail files (tasks, open questions) with no trace, a genuine recall hole, and the agent never learned the paths needed for targeted follow-up reads.

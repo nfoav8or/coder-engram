@@ -26,6 +26,17 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
     expect(results[0].snippet.length).toBeGreaterThan(0);
   });
 
+  it("finds a frontmatter-only alias-hub note by its alias", async () => {
+    const { engine } = makeEngine({
+      "Hubs/Quartzine Protocol.md": "---\naliases: [QZP]\ntags: [protocol]\n---\n",
+      "Notes/filler.md": "# Filler\ngeneric body words here",
+    });
+    await engine.reindex();
+    const results = await engine.search({ query: "QZP" });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].chunk.notePath).toBe("Hubs/Quartzine Protocol.md");
+  });
+
   it("persists an index that a fresh engine can load", async () => {
     const { adapter, engine } = makeEngine({ "Notes/a.md": "# A\nalpha content" });
     await engine.reindex();

@@ -67,6 +67,25 @@ export function chunkNote(note: ScannedNote, chunkOptions?: ChunkOptions): Index
     ...chunkOptions,
     bodyStartLine: note.metadata.bodyStartLine,
   });
+  // A frontmatter-only note (alias/link-hub notes: aliases or tags, no body)
+  // yields zero chunks and is invisible to retrieval — its aliases and
+  // filename can never field-match. Give it one stub chunk naming the note,
+  // spanning the frontmatter lines. Truly empty notes stay unindexed.
+  if (
+    chunks.length === 0 &&
+    (note.metadata.aliases.length > 0 || note.metadata.tags.length > 0)
+  ) {
+    const basename = note.path.slice(note.path.lastIndexOf("/") + 1).replace(/\.md$/i, "");
+    const aliasLine =
+      note.metadata.aliases.length > 0 ? `\nAliases: ${note.metadata.aliases.join(", ")}` : "";
+    chunks.push({
+      heading: "",
+      headingPath: [],
+      text: `${basename}${aliasLine}`,
+      startLine: 0,
+      endLine: Math.max(0, note.metadata.bodyStartLine - 1),
+    });
+  }
   return chunks.map((c, ordinal) => ({
     id: `${note.path}::${ordinal}`,
     notePath: note.path,

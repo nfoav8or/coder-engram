@@ -147,3 +147,30 @@ describe("IndexManager incremental refresh", () => {
     expect(mgr.getChunks().map((c) => c.notePath)).toContain("Notes/empty.md");
   });
 });
+
+describe("frontmatter-only notes (alias hubs)", () => {
+  it("emits a stub chunk so aliases and filename are retrievable", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {
+      "Hubs/Quartzine Protocol.md":
+        "---\naliases:\n  - QZP\n  - The Quartzine Spec\ntags: [protocol]\n---\n",
+      "Notes/empty.md": "",
+      "Notes/plain.md": "---\ntitle: no tags no aliases\n---\n",
+    });
+    const scanner = new VaultScanner(adapter);
+    const notes = await scanner.scan(scanConfig());
+    const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
+    const index = mgr.build(notes);
+
+    const hub = index.chunks.filter((c) => c.notePath === "Hubs/Quartzine Protocol.md");
+    expect(hub.length).toBe(1);
+    expect(hub[0].text).toContain("Quartzine Protocol");
+    expect(hub[0].text).toContain("Aliases: QZP, The Quartzine Spec");
+    expect(hub[0].aliases).toEqual(["QZP", "The Quartzine Spec"]);
+    expect(hub[0].startLine).toBe(0);
+    expect(hub[0].endLine).toBeGreaterThanOrEqual(hub[0].startLine);
+
+    // Truly empty notes and metadata-free frontmatter stay unindexed.
+    expect(index.chunks.some((c) => c.notePath === "Notes/empty.md")).toBe(false);
+    expect(index.chunks.some((c) => c.notePath === "Notes/plain.md")).toBe(false);
+  });
+});
