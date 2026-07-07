@@ -83,5 +83,5 @@ Coder Engram is built in milestones. Milestones 1 through 9 are complete (throug
 ## Deferred / future
 
 - Non-desktop support (currently `isDesktopOnly`).
-- Indexing of binary attachments beyond PDF text (images/OCR, office formats; PDF text shipped as an opt-in in the post-0.5.0 cycle).
+- Image / scanned-PDF OCR (needs a vision endpoint or plugin interop — product call). Text-bearing attachment formats are done: PDF, docx/pptx/xlsx, odt/odp/ods, RTF, txt/csv, and Canvas all index opt-in as of the post-0.5.0 cycle, dependency-free.
 - Alternative local vector stores (SQLite, LanceDB, DuckDB) behind the storage model.
