@@ -78,6 +78,8 @@ const SUMMARY_MAX_SENTENCES = 20;
 /** Upper bound on sentence-units embedded for a single summary, so a huge note
  * can't fan out into an unbounded embedding request. */
 const SUMMARY_MAX_UNITS = 200;
+/** Attachments above this size are skipped (whole-file reads into memory). */
+const ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
 
 export class EngramEngine {
   private settings: EngramSettings;
@@ -198,7 +200,9 @@ export class EngramEngine {
     this.extractionCacheCleared = false;
     const extensions = this.extractors.flatMap((x) => x.extensions);
     const files = await this.adapter.listFilesByExtension(extensions);
-    const eligible = files.filter((f) => this.scanner.isPathEligible(f.path, scanConfig));
+    const eligible = files.filter(
+      (f) => f.size <= ATTACHMENT_MAX_BYTES && this.scanner.isPathEligible(f.path, scanConfig),
+    );
     await this.extractionCache.load();
 
     const out: ScannedNote[] = [];

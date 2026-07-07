@@ -165,7 +165,7 @@ Settings live under **Settings → Coder Engram**. Key settings and their safe d
 | Excluded folders | *(empty)* | Folders to skip. |
 | Excluded tags | *(empty)* | Notes with any of these tags are never indexed. |
 | Excluded path patterns | *(empty)* | Glob (`*`, `**`) or substring patterns for sensitive notes. |
-| Index attachments (PDF, Canvas) | `false` | Extract and index PDF text (via Obsidian's bundled PDF engine) and Canvas text cards, locally. Exclusions apply; extracted text is searchable/readable over the local server like any note. |
+| Index attachments (PDF, Office, Canvas) | `false` | Extract and index text from PDFs (Obsidian's bundled PDF engine), Office documents (docx/pptx/xlsx, odt/odp/ods — dependency-free ZIP+XML extraction), and Canvas cards, locally. Exclusions apply; extracted text is searchable/readable over the local server like any note. |
 | Auto-index on file change | `false` | Debounced (~2.5s) refresh when notes change. |
 | Default project | *(empty)* | Used by project-context and add-to-project commands. |
 | Embedding provider | `none` | Lexical BM25 always works with `none`. `ollama` and `openai-compatible` enable vector/hybrid retrieval; `mock` is a deterministic dev provider. |
@@ -264,7 +264,7 @@ Attachment (PDF) text extraction, when enabled, also runs entirely locally via O
 
 - **`summarize_note` is extractive, not abstractive.** It selects the note's own sentences; there is no LLM/generative backend, so it never rewrites or paraphrases. It also only works on notes that are in the index.
 - **Desktop only.** `isDesktopOnly: true`.
-- Attachment indexing covers born-digital **PDF text and Canvas text cards** (opt-in). Scanned/image-only PDFs, images (no OCR), and office formats are not yet indexed.
+- Attachment indexing covers born-digital **PDF text, Microsoft Office (docx/pptx/xlsx), LibreOffice (odt/odp/ods), and Canvas text cards** (opt-in). Scanned/image-only PDFs and images are not indexed (no OCR); spreadsheet numeric cells are skipped (text cells and sheet names are indexed).
 
 ## Roadmap
 

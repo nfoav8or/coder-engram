@@ -89,6 +89,8 @@ src/
     text-extractor.ts           attachment-to-text boundary + PDF rendering
     extraction-cache.ts         mtime-keyed extracted-text cache
     canvas-extractor.ts         Canvas text-card extraction (pure JSON)
+    office-extractor.ts         Office/OpenDocument extraction (ZIP+XML)
+    zip.ts                      minimal ZIP reader (DecompressionStream)
   core/
     vault-adapter.ts            VaultAdapter interface + in-memory impl
     obsidian-vault-adapter.ts   production adapter

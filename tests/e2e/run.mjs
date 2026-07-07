@@ -18,6 +18,7 @@
  */
 import playwright from "playwright-core";
 import { spawn, execSync, spawnSync } from "node:child_process";
+import { deflateRawSync } from "node:zlib";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -107,6 +108,60 @@ function minimalPdf(text) {
 }
 fs.mkdirSync(path.join(vault, "Papers"), { recursive: true });
 fs.writeFileSync(path.join(vault, "Papers", "telemetry.pdf"), minimalPdf("Peregrine falcon telemetry protocols"));
+
+// A minimal but valid docx (ZIP of one word/document.xml) so the dependency-
+// free office extraction path (DecompressionStream) runs in real Obsidian.
+function minimalZip(entries) {
+  const enc = new TextEncoder();
+  const chunks = [];
+  const central = [];
+  let offset = 0;
+  for (const [name, text] of Object.entries(entries)) {
+    const nameBytes = enc.encode(name);
+    const raw = enc.encode(text);
+    const data = new Uint8Array(deflateRawSync(raw));
+    const lfh = new Uint8Array(30);
+    const v = new DataView(lfh.buffer);
+    v.setUint32(0, 0x04034b50, true);
+    v.setUint16(8, 8, true);
+    v.setUint32(18, data.length, true);
+    v.setUint32(22, raw.length, true);
+    v.setUint16(26, nameBytes.length, true);
+    const lfhOffset = offset;
+    chunks.push(lfh, nameBytes, data);
+    offset += lfh.length + nameBytes.length + data.length;
+    const cd = new Uint8Array(46);
+    const cv = new DataView(cd.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(10, 8, true);
+    cv.setUint32(20, data.length, true);
+    cv.setUint32(24, raw.length, true);
+    cv.setUint16(28, nameBytes.length, true);
+    cv.setUint32(42, lfhOffset, true);
+    central.push(cd, nameBytes);
+  }
+  const cdStart = offset;
+  for (const c of central) {
+    chunks.push(c);
+    offset += c.length;
+  }
+  const eocd = new Uint8Array(22);
+  const ev = new DataView(eocd.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, Object.keys(entries).length, true);
+  ev.setUint16(10, Object.keys(entries).length, true);
+  ev.setUint32(12, offset - cdStart, true);
+  ev.setUint32(16, cdStart, true);
+  chunks.push(eocd);
+  return Buffer.concat(chunks.map((c) => Buffer.from(c)));
+}
+fs.writeFileSync(
+  path.join(vault, "Papers", "charter.docx"),
+  minimalZip({
+    "word/document.xml":
+      "<w:document><w:body><w:p><w:r><w:t>Wandering albatross charter obligations</w:t></w:r></w:p></w:body></w:document>",
+  }),
+);
 
 const vaultId = Math.random().toString(16).slice(2) + Date.now().toString(16);
 fs.writeFileSync(
@@ -321,6 +376,16 @@ try {
     "PDF attachment is readable via get_note_context",
     /Peregrine falcon telemetry protocols/.test(toolText(pdfRead)),
     toolText(pdfRead).split("\n")[0] ?? "",
+  );
+
+  const docxSearch = await rpc("tools/call", {
+    name: "search_vault_memory",
+    arguments: { query: "wandering albatross charter" },
+  });
+  check(
+    "docx attachment text is indexed (DecompressionStream ZIP path)",
+    /Papers\/charter\.docx/.test(toolText(docxSearch)),
+    toolText(docxSearch).split("\n")[2] ?? "",
   );
 
   await page.screenshot({ path: path.join(tmp, "search.png") });
