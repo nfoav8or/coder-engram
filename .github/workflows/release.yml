@@ -54,7 +54,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
+          # SHA256SUMS lets installers (scripts/install.sh) verify the assets.
+          sha256sum main.js manifest.json styles.css > SHA256SUMS
           gh release create "$TAG" \
             --title "${TAG#v}" \
             --notes "Coder Engram ${TAG#v}. See CHANGELOG.md for details." \
-            main.js manifest.json styles.css
+            main.js manifest.json styles.css SHA256SUMS

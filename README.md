@@ -90,6 +90,18 @@ Embedding happens at index time (reindex/refresh) and is cached in `Index/embedd
 
 This is a desktop-only plugin (`isDesktopOnly: true`, minimum Obsidian 1.5.0).
 
+### Install script (Linux/macOS)
+
+`scripts/install.sh` automates the steps above: it downloads the release assets, verifies them against the release's `SHA256SUMS` (published from v0.6.0 on), copies them into a vault you pick (auto-detected from Obsidian's vault registry), and — only with `--enable` — turns the plugin on. In keeping with this project's safety posture, please download and read it rather than piping it straight to bash:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nfoav8or/coder-engram/main/scripts/install.sh -o install.sh
+less install.sh   # read what you're about to run
+bash install.sh --vault "/path/to/YourVault"
+```
+
+Run `bash install.sh --help` for options (`--version x.y.z`, `--enable`). Requires `curl` plus `python3` or `jq` for vault auto-detection.
+
 ## Manual installation (from source)
 
 1. Build the plugin (see [Building](#building)).
