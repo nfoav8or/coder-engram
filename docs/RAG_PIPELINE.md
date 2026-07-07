@@ -13,6 +13,8 @@ The retrieval pipeline is four stages: **scan → chunk → index → retrieve**
 
 Steps 1–3 are path-only (no file read); step 4 reads and parses each surviving note. Read/parse failures on individual notes are logged and skipped, never fatal. The output is a list of `ScannedNote` records (`path`, `mtime`, `content`, `metadata`).
 
+When **Index attachments** is enabled, a parallel pass (`engine.scanAttachments`) lists binary files by extension, runs them through the injected `TextExtractor`s (`extract/`: PDF via Obsidian's pdf.js, Office/OpenDocument via a dependency-free ZIP+XML reader, RTF, txt/csv, Canvas), and emits the extracted markdown as ordinary `ScannedNote`s — everything downstream (chunking, refresh, exclusions, retrieval, MCP tools) treats them identically to notes. Extraction runs once per (path, mtime) and is cached in `Index/extracted.json`, including negative results.
+
 Metadata comes from `core/metadata-extractor.ts`, which parses (without a YAML dependency) frontmatter tags/aliases/title, inline `#tags`, wikilinks, and relative Markdown links, and records `bodyStartLine` so the chunker can skip frontmatter.
 
 ## 2. Chunk (`core/markdown-chunker.ts`)

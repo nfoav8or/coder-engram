@@ -30,6 +30,12 @@ Coder Engram is local-first and privacy-preserving by default. It requires no cl
 
 You can keep notes out of the index entirely with **Excluded folders**, **Excluded tags**, and **Excluded path patterns** (glob or substring). These filters run in the vault scanner before content is read where possible. Retrieval also only ever returns chunks that were indexed, so excluded notes cannot surface in search results.
 
+## Attachment indexing (opt-in)
+
+**Index attachments** is off by default. When enabled, text is extracted from PDFs (Obsidian's bundled PDF engine), Office documents (docx/pptx/xlsx, odt/odp/ods, rtf), plain text (txt/csv), and Canvas boards — **entirely locally**; attachment bytes never leave the machine. Extracted text is stored in `Index/extracted.json` inside the vault (a rebuildable cache, keyed by file mtime) and is **deleted when the setting is turned off**, so possibly-sensitive extracted text is not retained. All exclusion filters (folders, tags, patterns) apply to attachments exactly as to notes.
+
+Attachments are treated as **untrusted bytes**: the dependency-free ZIP/XML/RTF parsers are hardened against crafted input — a 64 MB per-entry decompression cap (declared sizes are verified against the actual inflated stream), strictly linear-time scanning (no backtracking parsers that can freeze the renderer on malformed structure), a bounded group-nesting depth, and a 50 MB per-attachment read cap. A corrupt, encrypted, or hostile file extracts as "no text" and is skipped, never an error or a hang.
+
 ## Risks of enabling direct writes
 
 Turning on **Allow direct memory writes** lets desktop tools modify memory files without going through the review inbox. Even then, writes are constrained to inside the memory root, and with **Append-only writes** on (the default) existing content is never overwritten. If you additionally turn *off* append-only, non-destructive behavior is lost and a bad write could replace an existing memory file's contents. Recommendation: leave direct writes off, or keep append-only on if you enable them. Note that `allowDirectWrites` does **not** apply over the network — the server's `add_memory` tool is always inbox-first (see below).
