@@ -53,10 +53,15 @@ export function rtfToText(rtf: string): string {
   while (i < n) {
     const c = rtf[i];
     if (c === "{") {
+      // A \uN fallback run never crosses a group boundary — the fallback bytes
+      // immediately follow the escape in the same group — so a stale pendingUc
+      // must not swallow the next group's text.
+      pendingUc = 0;
       if (stack.length < MAX_DEPTH) stack.push({ ...top() });
       else overflow++;
       i++;
     } else if (c === "}") {
+      pendingUc = 0;
       if (overflow > 0) overflow--;
       else if (stack.length > 1) stack.pop();
       i++;
@@ -114,7 +119,10 @@ export function rtfToText(rtf: string): string {
         }
         pendingUc = top().uc;
       } else if (word === "uc" && num !== null) {
-        top().uc = Math.max(0, num);
+        // Cap the fallback count like every other untrusted quantity here: a
+        // real \uc is a single digit (bytes of one codepoint's ANSI fallback),
+        // so an absurd value only serves to swallow the whole body as fallback.
+        top().uc = Math.min(Math.max(0, num), 64);
       } else if (word === "bin" && num !== null && num > 0) {
         j += num; // raw binary bytes follow the delimiter — jump them
       } else if (word === "par" || word === "line" || word === "row") {

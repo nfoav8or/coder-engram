@@ -90,6 +90,19 @@ describe("rtfToText", () => {
     expect(rtfToText(`{\\rtf1 keep \\u-99999? this}`)).toContain("keep");
     expect(rtfToText(`{\\rtf1 keep \\u-99999? this}`)).toContain("this");
   });
+
+  it("caps \\uc so an absurd fallback count can't swallow the whole body", () => {
+    // An unbounded \uc set pendingUc huge after each \uN escape, eating all
+    // following text; the cap limits the swallow so the body survives.
+    const body = "kokako ".repeat(30); // 210 chars, well past the 64-char cap
+    expect(rtfToText(`{\\rtf1\\uc999999\\u333 ${body}}`)).toContain("kokako");
+  });
+
+  it("does not let a \\uN fallback swallow text across a group boundary", () => {
+    // \u333 leaves a pending fallback char; the closing brace must clear it so
+    // the parent group's next character isn't eaten.
+    expect(rtfToText(`{\\rtf1{\\uc1\\u333}Xylophone survives}`)).toContain("Xylophone");
+  });
 });
 
 describe("RtfExtractor", () => {

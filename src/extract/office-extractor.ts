@@ -21,11 +21,22 @@
 import { TextExtractor, attachmentTitle } from "./text-extractor";
 import { readZipDirectory, readZipEntry, readZipText } from "./zip";
 
+/**
+ * A numeric character reference → its character, or U+FFFD when the value is
+ * outside the Unicode range. fromCodePoint throws RangeError above U+10FFFF, and
+ * one malformed reference (`&#x110000;`, `&#99999999;`) must not unwind through
+ * the walker and null out the whole document — the RTF extractor guards its \uN
+ * escapes the same way.
+ */
+function codePointChar(cp: number): string {
+  return cp >= 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : "�";
+}
+
 /** Decode the five XML entities plus numeric character references. */
 export function decodeXmlEntities(s: string): string {
   return s
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => codePointChar(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => codePointChar(parseInt(d, 10)))
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')

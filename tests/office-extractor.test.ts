@@ -112,6 +112,23 @@ describe("OfficeExtractor", () => {
     expect(decodeXmlEntities("a &amp; b &lt;c&gt; &#x41;&#66;")).toBe("a & b <c> AB");
   });
 
+  it("replaces out-of-range numeric references instead of throwing", () => {
+    // fromCodePoint throws above U+10FFFF; an unguarded call unwound through
+    // the walker and nulled the whole document. Now it degrades to U+FFFD.
+    expect(decodeXmlEntities("a&#x110000;b")).toBe("a�b");
+    expect(decodeXmlEntities("a&#99999999;b")).toBe("a�b");
+  });
+
+  it("docx: a bad numeric reference does not null the whole document", async () => {
+    const xml =
+      `<w:document><w:body>` +
+      `<w:p><w:r><w:t>Weka survey &#x110000; totals hold.</w:t></w:r></w:p>` +
+      `</w:body></w:document>`;
+    const md = await x.extract("Docs/Survey.docx", buf(makeZip({ "word/document.xml": xml })));
+    expect(md).toContain("Weka survey");
+    expect(md).toContain("totals hold.");
+  });
+
   it("docx: paragraphs and heading styles", async () => {
     const xml =
       `<w:document><w:body>` +

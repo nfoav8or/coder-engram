@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Frontmatter-only notes (alias/link-hub notes) are now findable.** A note holding only frontmatter — aliases and tags, no body — produced zero chunks, so it was invisible to retrieval and its aliases could never match. Such notes now index one stub chunk naming the note and its aliases; truly empty notes stay unindexed.
+- **A single malformed character reference no longer discards an entire Office/OpenDocument attachment.** An out-of-range numeric XML reference (e.g. `&#x110000;`) made `String.fromCodePoint` throw `RangeError`, which unwound through the extractor and nulled the whole document (then cached that null). Out-of-range references now degrade to the Unicode replacement character, matching the guard the RTF extractor already applied to `\uN` escapes — the rest of the document is extracted normally.
+- **Hardened the RTF `\uc` fallback count against runaway text loss.** A crafted or buggy `\ucN` with an absurd value set the ANSI-fallback swallow count unbounded, so subsequent `\uN` escapes ate the remaining body text and the attachment indexed as empty; the count is now capped like every other untrusted quantity in the walker. Separately, a `\uN` escape ending a group left a pending fallback that could swallow the first character of the *parent* group — group boundaries now clear it.
+- **Extractor fixes now reach already-cached attachments.** The extraction cache is keyed on path + mtime, so a corrected extractor would otherwise keep returning a stale (or negatively-cached) result for an unchanged file; the cache version is bumped, discarding prior entries so every attachment is re-extracted once with the fixed logic.
 
 ### Changed
 

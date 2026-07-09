@@ -9,7 +9,10 @@
 import { VaultAdapter } from "../core/vault-adapter";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 
-const CACHE_VERSION = 1;
+// Bump when the cache-file format OR any extractor's output logic changes: the
+// cache is keyed on path+mtime, so a fixed extractor would otherwise keep
+// returning a stale (possibly negatively-cached) result for an unchanged file.
+const CACHE_VERSION = 2;
 
 interface CacheEntry {
   mtime: number;
