@@ -58,7 +58,12 @@ interface CorpusStats {
 }
 
 function fieldTermsFor(chunk: IndexedChunk): Set<string> {
-  const basename = chunk.notePath.slice(chunk.notePath.lastIndexOf("/") + 1).replace(/\.md$/i, "");
+  // Strip whatever the real extension is, not just .md: attachments are
+  // indexed too, and "pdf"/"docx" as a near-zero-df field term would score
+  // max IDF on every chunk of every such file, drowning body matches.
+  const basename = chunk.notePath
+    .slice(chunk.notePath.lastIndexOf("/") + 1)
+    .replace(/\.[a-z0-9]+$/i, "");
   const field = new Set(tokenize(basename));
   for (const alias of chunk.aliases) for (const t of tokenize(alias)) field.add(t);
   for (const h of chunk.headingPath) for (const t of tokenize(h)) field.add(t);

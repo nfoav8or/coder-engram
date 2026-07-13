@@ -19,8 +19,6 @@ export interface NoteMetadata {
 
 const FRONTMATTER_FENCE = /^---\s*$/;
 const INLINE_TAG = /(^|[\s(])#([A-Za-z0-9_][A-Za-z0-9_/-]*)/g;
-const WIKILINK = /\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]/g;
-const MD_LINK = /\[[^\]]*\]\(([^)]+)\)/g;
 
 function uniq(values: string[]): string[] {
   return Array.from(new Set(values.filter((v) => v.length > 0)));
@@ -104,6 +102,95 @@ function isExternalUrl(target: string): boolean {
 }
 
 /**
+ * The link scans are hand-rolled index walkers, not regexes: the natural
+ * regexes (`\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]`, `\[[^\]]*\]\(([^)]+)\)`)
+ * backtrack quadratically on `[` floods, and with attachment indexing this
+ * function runs over untrusted extracted bytes on every refresh — 100 KB of
+ * `[` cost ~13 s of main-thread time. The walkers preserve the regex
+ * semantics (same targets, same skips) in a single linear pass.
+ */
+
+/** Wikilink targets: `[[target]]`, `[[target|alias]]`, `[[target#heading]]`. */
+function extractWikilinkTargets(prose: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  // `close` (the first `]]` at/after the candidate) is monotone, so it is
+  // memoized across candidates — re-searching it per candidate is what would
+  // make a `[[`-flood quadratic.
+  let close = -1;
+  for (;;) {
+    const open = prose.indexOf("[[", i);
+    if (open < 0) return out;
+    const innerStart = open + 2;
+    if (close < innerStart) {
+      close = prose.indexOf("]]", innerStart);
+      if (close < 0) return out;
+    }
+    // One pass over the candidate: the target ends at the first `#`/`|`, and
+    // a lone `]` anywhere before `close` invalidates the whole candidate.
+    let cut = close;
+    let bad = -1;
+    for (let k = innerStart; k < close; k++) {
+      const c = prose.charCodeAt(k);
+      if (c === 0x5d /* ] */) {
+        bad = k;
+        break;
+      }
+      if (cut === close && (c === 0x23 /* # */ || c === 0x7c /* | */)) {
+        cut = k;
+        // An empty target kills the candidate no matter what follows — bail
+        // now, or a `[[#`-flood re-scans to a distant `]]` per candidate.
+        if (cut === innerStart) break;
+      }
+    }
+    if (bad >= 0) {
+      // No candidate opening at/before `bad` can succeed; skip past it so
+      // rejected input is never re-scanned.
+      i = bad + 1;
+      continue;
+    }
+    if (cut === innerStart) {
+      i = innerStart; // empty target ("[[#…" / "[[|…" / "[[]]")
+      continue;
+    }
+    out.push(prose.slice(innerStart, cut));
+    i = close + 2;
+  }
+}
+
+/** Markdown-link targets: the `(url)` of `[text](url)`; text may not contain `]`. */
+function extractMdLinkTargets(prose: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  // First `)` at/after the candidate URL — monotone, memoized like `close`
+  // above (a `](`-flood ahead of one distant `)` is quadratic otherwise).
+  let urlEnd = -1;
+  for (;;) {
+    const bracket = prose.indexOf("](", i);
+    if (bracket < 0) return out;
+    if (urlEnd < bracket + 2) {
+      urlEnd = prose.indexOf(")", bracket + 2);
+      if (urlEnd < 0) return out;
+    }
+    // Valid link text starts at the earliest `[` after the previous `]` (text
+    // may contain `[` but never `]`). Bounded below by `i`, so backscans over
+    // successive candidates cover disjoint ranges.
+    let start = -1;
+    for (let k = bracket - 1; k >= i; k--) {
+      const c = prose.charCodeAt(k);
+      if (c === 0x5d /* ] */) break;
+      if (c === 0x5b /* [ */) start = k;
+    }
+    if (start < 0 || urlEnd === bracket + 2) {
+      i = bracket + 2; // no opening bracket / empty URL
+      continue;
+    }
+    out.push(prose.slice(bracket + 2, urlEnd));
+    i = urlEnd + 1;
+  }
+}
+
+/**
  * Strip fenced code blocks (``` or ~~~) so `#ff0000`, `#include`, `[[x]]` etc.
  * inside code are not harvested as tags/links. The title H1 scan still uses the
  * full body (a real H1 is not inside a fence in practice).
@@ -141,11 +228,11 @@ export function extractMetadata(content: string): NoteMetadata {
   }
 
   const links: string[] = [];
-  for (const m of prose.matchAll(WIKILINK)) {
-    links.push(m[1].trim());
+  for (const raw of extractWikilinkTargets(prose)) {
+    links.push(raw.trim());
   }
-  for (const m of prose.matchAll(MD_LINK)) {
-    const target = m[1].trim();
+  for (const raw of extractMdLinkTargets(prose)) {
+    const target = raw.trim();
     if (!isExternalUrl(target)) links.push(target);
   }
 

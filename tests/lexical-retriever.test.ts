@@ -118,6 +118,20 @@ describe("LexicalRetriever", () => {
     expect(results.map((r) => r.chunk.id)).toEqual(["a1"]);
   });
 
+  it("does not credit the file extension as a filename field term", () => {
+    // "pdf" appears in no body, so as a field term it would carry max IDF and
+    // every chunk of every PDF would drown genuine body matches for a query
+    // that happens to contain the word "pdf".
+    const c: IndexedChunk[] = [
+      chunk({ id: "att", notePath: "Papers/report.pdf", text: "generic body words only here" }),
+      chunk({ id: "body", notePath: "Notes/n.md", text: "exporting a pdf invoice summary" }),
+    ];
+    const results = lexicalSearch("pdf invoice", c);
+    expect(results.map((r) => r.chunk.id)).toEqual(["body"]);
+    // The extension-less basename still field-matches.
+    expect(lexicalSearch("report", c).map((r) => r.chunk.id)).toEqual(["att"]);
+  });
+
   it("a strong body match outranks a field-only match; both still surface", () => {
     // Field credit is calibrated to ONE average-length-body occurrence, so a
     // repeated body term must win. (A field-only match MAY outrank a single

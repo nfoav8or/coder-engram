@@ -105,6 +105,42 @@ describe("attachment indexing (fake PDF extractor)", () => {
     expect((await engine2.search({ query: "goshawk" })).length).toBeGreaterThan(0);
   });
 
+  it("re-chunks attachments when a cache-version bump discards the extraction cache", async () => {
+    // An extractor fix ships via a CACHE_VERSION bump: the file's bytes and
+    // mtime are unchanged, but re-extraction yields different text. Without
+    // forcing past the index's mtime short-circuit, the corrected text never
+    // reaches already-indexed chunks.
+    const seed = { "Papers/doc.pdf": "merlin field notes" };
+    const first = makeEngine(seed);
+    await first.engine.reindex();
+    expect((await first.engine.search({ query: "merlin" })).length).toBeGreaterThan(0);
+
+    // Simulate the bump: the persisted cache carries a stale version number.
+    const cacheFile = "Claude Code/Index/extracted.json";
+    const parsed = JSON.parse(await first.adapter.read(cacheFile)) as { version: number };
+    await first.adapter.write(cacheFile, JSON.stringify({ ...parsed, version: parsed.version - 1 }));
+
+    // The "fixed" extractor produces different text for the same bytes.
+    class FixedExtractor implements TextExtractor {
+      readonly extensions = [".pdf"];
+      async extract(): Promise<string | null> {
+        return renderPdfMarkdown("doc", ["corrected gyrfalcon transcription"]);
+      }
+    }
+    let t = 50_000;
+    const engine2 = new EngramEngine(
+      first.adapter,
+      { ...DEFAULT_SETTINGS, indexAttachments: true },
+      NULL_LOGGER,
+      () => t++,
+      { extractors: [new FixedExtractor()] },
+    );
+    expect(await engine2.loadIndex()).toBe(true); // adopts the stale chunks
+    await engine2.refresh();
+    expect((await engine2.search({ query: "gyrfalcon" })).length).toBeGreaterThan(0);
+    expect((await engine2.search({ query: "merlin" })).length).toBe(0);
+  });
+
   it("caches negative results so a no-text attachment is not re-parsed", async () => {
     const { adapter, engine, extractor } = makeEngine({});
     adapter.touch("Papers/scanned.pdf", "   "); // extractor yields null

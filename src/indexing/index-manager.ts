@@ -169,8 +169,11 @@ export class IndexManager {
   /**
    * Incremental refresh. Notes with an unchanged mtime keep their chunks;
    * changed/new notes are re-chunked; notes absent from `notes` are removed.
+   * Paths in `force` are re-chunked even when their mtime is unchanged — used
+   * when extracted attachment text may have changed under a stable mtime
+   * (extraction-cache version bump). Content-less stubs can't be forced.
    */
-  refresh(notes: ScanResult[]): RefreshResult {
+  refresh(notes: ScanResult[], force?: Set<string>): RefreshResult {
     const existing = this.index?.chunks ?? [];
     const existingByNote = new Map<string, IndexedChunk[]>();
     for (const chunk of existing) {
@@ -196,7 +199,8 @@ export class IndexManager {
     for (const note of notes) {
       seenNotes.add(note.path);
       const priorMtime = priorMtimes.get(note.path);
-      if (priorMtime === note.mtime || isUnchangedNote(note)) {
+      const forced = force !== undefined && force.has(note.path) && !isUnchangedNote(note);
+      if (!forced && (priorMtime === note.mtime || isUnchangedNote(note))) {
         // A content-less stub with a mismatched mtime is impossible when the
         // caller passes THIS manager's getNoteMtimes() to the scanner, but if
         // one ever arrives, keeping the prior chunks is the only safe option —

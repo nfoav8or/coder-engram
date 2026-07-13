@@ -27,6 +27,7 @@ interface CacheFile {
 export class ExtractionCache {
   private state: Record<string, CacheEntry> | null = null;
   private dirty = false;
+  private reset = false;
 
   constructor(
     private readonly adapter: VaultAdapter,
@@ -43,12 +44,28 @@ export class ExtractionCache {
       const parsed = JSON.parse(await this.adapter.read(this.file)) as CacheFile;
       if (parsed && parsed.version === CACHE_VERSION && parsed.entries) {
         this.state = parsed.entries;
+      } else {
+        this.reset = true;
       }
     } catch (err) {
+      this.reset = true;
       this.logger.warn("Extraction cache unreadable; starting fresh", {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /**
+   * True (once) when load() discarded a persisted cache — version bump or
+   * corrupt file. Re-extraction may then yield different text for files whose
+   * mtime is unchanged, so the caller must re-chunk attachments instead of
+   * trusting the index's mtime short-circuit; without this, an extractor fix
+   * shipped via a CACHE_VERSION bump never reaches already-indexed chunks.
+   */
+  consumeReset(): boolean {
+    const was = this.reset;
+    this.reset = false;
+    return was;
   }
 
   /** Cached text for path@mtime; undefined = not cached (extract it). */

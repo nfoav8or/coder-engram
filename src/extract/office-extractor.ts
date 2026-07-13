@@ -19,7 +19,15 @@
  */
 
 import { TextExtractor, attachmentTitle } from "./text-extractor";
-import { readZipDirectory, readZipEntry, readZipText } from "./zip";
+import { newInflateBudget, readZipDirectory, readZipEntry, readZipText } from "./zip";
+
+/**
+ * Ceiling on slide/worksheet parts read from one archive (the PDF extractor
+ * caps pages at 500 the same way). Together with the shared inflate budget
+ * this bounds a crafted archive that spreads its payload over the maximum
+ * 65535 directory entries — real documents have orders of magnitude fewer.
+ */
+const MAX_PARTS = 500;
 
 /**
  * A numeric character reference → its character, or U+FFFD when the value is
@@ -147,12 +155,14 @@ async function extractDocx(title: string, data: Uint8Array): Promise<string | nu
 }
 
 async function extractPptx(title: string, data: Uint8Array): Promise<string | null> {
+  const budget = newInflateBudget();
   const slides = readZipDirectory(data)
     .filter((e) => /^ppt\/slides\/slide\d+\.xml$/.test(e.name))
-    .sort((a, b) => Number(/\d+/.exec(a.name)![0]) - Number(/\d+/.exec(b.name)![0]));
+    .sort((a, b) => Number(/\d+/.exec(a.name)![0]) - Number(/\d+/.exec(b.name)![0]))
+    .slice(0, MAX_PARTS);
   const sections: string[] = [];
   for (let i = 0; i < slides.length; i++) {
-    const xml = new TextDecoder("utf-8").decode(await readZipEntry(data, slides[i]));
+    const xml = new TextDecoder("utf-8").decode(await readZipEntry(data, slides[i], budget));
     const text = xmlBlocks(xml, "a:p")
       .map((p) => textRuns(p.inner, "a:t").join("").trim())
       .filter(Boolean)
@@ -163,8 +173,9 @@ async function extractPptx(title: string, data: Uint8Array): Promise<string | nu
 }
 
 async function extractXlsx(title: string, data: Uint8Array): Promise<string | null> {
-  const shared = await readZipText(data, "xl/sharedStrings.xml");
-  const workbook = await readZipText(data, "xl/workbook.xml");
+  const budget = newInflateBudget();
+  const shared = await readZipText(data, "xl/sharedStrings.xml", budget);
+  const workbook = await readZipText(data, "xl/workbook.xml", budget);
   const sections: string[] = [];
   if (workbook) {
     const names = tagAttrValues(workbook, "sheet", "name");
@@ -181,10 +192,11 @@ async function extractXlsx(title: string, data: Uint8Array): Promise<string | nu
   // such files would extract as text-free.
   const sheets = readZipDirectory(data)
     .filter((e) => /^xl\/worksheets\/sheet\d+\.xml$/.test(e.name))
-    .sort((a, b) => Number(/\d+/.exec(a.name)![0]) - Number(/\d+/.exec(b.name)![0]));
+    .sort((a, b) => Number(/\d+/.exec(a.name)![0]) - Number(/\d+/.exec(b.name)![0]))
+    .slice(0, MAX_PARTS);
   const inline: string[] = [];
   for (const sheet of sheets) {
-    const xml = new TextDecoder("utf-8").decode(await readZipEntry(data, sheet));
+    const xml = new TextDecoder("utf-8").decode(await readZipEntry(data, sheet, budget));
     for (const is of xmlBlocks(xml, "is")) {
       const text = textRuns(is.inner, "t").join("").trim();
       if (text) inline.push(text);

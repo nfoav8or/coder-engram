@@ -377,6 +377,7 @@ export class EngramEngine {
       ...(await this.scanner.scan(scanConfig)),
       ...(await this.scanAttachments(scanConfig)),
     ];
+    this.extractionCache.consumeReset(); // a full build re-chunks everything
     this.lastScanConfigKey = JSON.stringify(scanConfig);
     const built = this.index.build(notes);
     await this.index.persist();
@@ -405,9 +406,16 @@ export class EngramEngine {
         : await this.scanner.scan(scanConfig);
     // Attachments do their own mtime short-circuit via the extraction cache,
     // so the fast path stays O(changed) for them too.
-    const notes = [...mdNotes, ...(await this.scanAttachments(scanConfig))];
+    const attachmentNotes = await this.scanAttachments(scanConfig);
+    const notes = [...mdNotes, ...attachmentNotes];
     this.lastScanConfigKey = scanKey;
-    const result = this.index.refresh(notes);
+    // A discarded extraction cache (version bump / corrupt file) means the
+    // re-extracted text can differ under an unchanged mtime — force those
+    // notes past the index's mtime short-circuit once.
+    const force = this.extractionCache.consumeReset()
+      ? new Set(attachmentNotes.map((n) => n.path))
+      : undefined;
+    const result = this.index.refresh(notes, force);
     // Persist only when something changed: a no-op persist re-serializes the
     // whole index (tens of MB at scale) on the main thread, and — because the
     // index files live inside the vault — its own writes re-fire the vault

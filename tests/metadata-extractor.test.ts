@@ -73,3 +73,63 @@ describe("extractMetadata", () => {
     expect(meta.tags).toEqual([]);
   });
 });
+
+describe("link extraction (linear walkers)", () => {
+  // The regexes the walkers replaced — kept here as the behavioral oracle.
+  const WIKILINK = /\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]/g;
+  const MD_LINK = /\[[^\]]*\]\(([^)]+)\)/g;
+
+  function oracleLinks(prose: string): string[] {
+    const links: string[] = [];
+    for (const m of prose.matchAll(WIKILINK)) links.push(m[1].trim());
+    for (const m of prose.matchAll(MD_LINK)) links.push(m[1].trim());
+    return Array.from(new Set(links.filter((l) => l.length > 0)));
+  }
+
+  const CASES = [
+    "plain [[Simple]] link",
+    "[[With|Alias]] and [[With#Heading]] and [[A#h|both]]",
+    "[[nested [brackets]] survive",
+    "reject [[a]b]] then accept [[c]]",
+    "[[x]] [[a]b]] [[y]]",
+    "[[[[double open]] edge",
+    "[[]] empty and [[#heading only]] and [[|alias only]]",
+    "md [text](target.md) and ![img](pic.png)",
+    "md with [brackets [inside] text](t.md) mixed",
+    "[a](x) [b](y) back to back",
+    "[t]() empty url then [u](real)",
+    "](orphan) then [ok](fine)",
+    "[unclosed](never ends",
+    "[a]((parens).md) inner",
+    "text ]] before [[Valid]] after",
+    "[[a]][[b]] adjacent",
+    "[[trail]]] extra bracket",
+  ];
+
+  it("matches the regex oracle on tricky inputs", () => {
+    for (const prose of CASES) {
+      expect(extractMetadata(prose).links, `input: ${prose}`).toEqual(
+        oracleLinks(prose).filter((l) => !/^[a-z][a-z0-9+.-]*:\/\//i.test(l)),
+      );
+    }
+  });
+
+  it("stays linear on hostile bracket floods (was quadratic: ~13s at 100 KB)", () => {
+    const floods = [
+      "[".repeat(2_000_000),
+      "]".repeat(2_000_000),
+      "[a](".repeat(400_000),
+      "[[x".repeat(500_000),
+      "](".repeat(700_000),
+      // Same floods ending in a real terminator: every candidate now finds a
+      // far close/paren, which is quadratic without the memoized terminator.
+      "[[#".repeat(500_000) + "]]",
+      "[[".repeat(700_000) + "]x]]",
+      "](".repeat(700_000) + ")",
+      "[a](".repeat(400_000) + ")",
+    ];
+    const start = Date.now();
+    for (const flood of floods) extractMetadata(flood);
+    expect(Date.now() - start).toBeLessThan(2000);
+  });
+});

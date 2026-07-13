@@ -103,6 +103,27 @@ describe("zip reader", () => {
     // And the extractor turns that into a clean null, never a throw.
     expect(await new OfficeExtractor().extract("a.docx", buf(zip))).toBeNull();
   });
+
+  it("enforces a shared aggregate budget across entries of one archive", async () => {
+    // The per-entry cap alone lets a crafted archive spread its payload over
+    // many entries; entries sharing a budget must drain it collectively.
+    const body = "x".repeat(1000);
+    const zip = makeZip({ "ppt/slides/slide1.xml": body, "ppt/slides/slide2.xml": body });
+    const dir = readZipDirectory(zip);
+    const budget = { remaining: 1500 };
+    await expect(readZipEntry(zip, dir[0], budget)).resolves.toHaveLength(1000);
+    expect(budget.remaining).toBe(500);
+    // Declared size over the remaining budget → rejected up front.
+    await expect(readZipEntry(zip, dir[1], budget)).rejects.toThrow(/too large/);
+    // A lying declared size is still caught while inflating.
+    const lying = { ...dir[1], uncompressedSize: 100 };
+    await expect(readZipEntry(zip, lying, budget)).rejects.toThrow(/past the cap/);
+    // Stored (uncompressed) entries drain the budget too.
+    const storedZip = makeZip({ "a.txt": body }, { store: true });
+    const storedBudget = { remaining: 1200 };
+    await readZipEntry(storedZip, readZipDirectory(storedZip)[0], storedBudget);
+    expect(storedBudget.remaining).toBe(200);
+  });
 });
 
 describe("OfficeExtractor", () => {
