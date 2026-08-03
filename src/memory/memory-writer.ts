@@ -34,12 +34,31 @@ export interface MemoryWriterOptions {
   logger?: Logger;
 }
 
-/** Two proposals are the "same memory" for dedup when their content (trimmed),
- * type, and project match. Metadata that legitimately varies between otherwise-
- * identical proposals (timestamp, source, tags) is intentionally ignored. */
+/**
+ * Content key for inbox dedup: case-folded with runs of whitespace collapsed.
+ *
+ * An agent re-proposing a fact across sessions rarely reproduces its own
+ * wording byte-for-byte — it re-wraps a line, indents differently, or varies
+ * capitalisation — and byte-equality treats each of those as a new memory, so
+ * the inbox accumulates entries a reviewer has to recognise as the same fact.
+ * Normalising only whitespace and case keeps this an EXACT comparison of the
+ * words themselves: two proposals collide here only when they say the same
+ * thing, never merely a similar one. Fuzzy (token-overlap) matching is
+ * deliberately not used — suppressing a proposal that carries genuinely new
+ * detail loses information permanently, which is far worse than a duplicate
+ * a human can dismiss in one click.
+ */
+function contentKey(content: string): string {
+  return content.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/** Two proposals are the "same memory" for dedup when their content (normalized
+ * by {@link contentKey}), type, and project match. Metadata that legitimately
+ * varies between otherwise-identical proposals (timestamp, source, tags) is
+ * intentionally ignored. */
 function isSameMemory(existing: PendingEntry, entry: MemoryEntry): boolean {
   return (
-    existing.content.trim() === entry.content.trim() &&
+    contentKey(existing.content) === contentKey(entry.content) &&
     existing.type === entry.type &&
     (existing.project ?? "") === (entry.project ?? "")
   );
@@ -113,6 +132,8 @@ export class MemoryWriter {
    * De-duplicates: if an entry with the same content, type, and project is
    * already pending, it is NOT appended again (so a looping/re-running agent
    * calling add_memory can't flood the review inbox with identical proposals).
+   * Content is compared after whitespace/case normalization, so a re-wrapped or
+   * re-capitalized restatement of a pending fact collides with it.
    * The read-compare-append runs inside the inbox mutex so the check and the
    * append cannot interleave with a concurrent propose/apply/discard.
    *

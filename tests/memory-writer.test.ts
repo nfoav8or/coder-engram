@@ -69,6 +69,39 @@ describe("MemoryWriter.proposeToInbox", () => {
     expect(inbox.match(/## Pending Memory:/g)?.length).toBe(1);
   });
 
+  it("de-duplicates a restatement differing only in whitespace or case", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+
+    const base = await writer.proposeToInbox(entry({ content: "We chose a local JSON index." }));
+    expect(base.duplicate).toBe(false);
+    // An agent re-proposing across sessions rarely reproduces its own wording
+    // byte-for-byte: a re-wrap, an indent, or different capitalization.
+    const rewrapped = await writer.proposeToInbox(entry({ content: "We chose a local\n  JSON  index." }));
+    const recased = await writer.proposeToInbox(entry({ content: "we chose a LOCAL json index." }));
+    expect(rewrapped.duplicate).toBe(true);
+    expect(recased.duplicate).toBe(true);
+
+    const inbox = await adapter.read(base.path);
+    expect(inbox.match(/## Pending Memory:/g)?.length).toBe(1);
+  });
+
+  it("keeps a proposal that adds detail to a pending one", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+
+    // Normalization must stay an EXACT word comparison: a restatement carrying
+    // genuinely new detail is a different memory and must survive review.
+    await writer.proposeToInbox(entry({ content: "We chose a local JSON index." }));
+    const elaborated = await writer.proposeToInbox(
+      entry({ content: "We chose a local JSON index because it rebuilds in under a second." }),
+    );
+    expect(elaborated.duplicate).toBe(false);
+
+    const inbox = await adapter.read(elaborated.path);
+    expect(inbox.match(/## Pending Memory:/g)?.length).toBe(2);
+  });
+
   it("does not de-duplicate when content, type, or project differ", async () => {
     const adapter = new InMemoryVaultAdapter("v", {});
     const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
