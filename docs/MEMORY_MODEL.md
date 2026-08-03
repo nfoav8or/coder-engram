@@ -58,7 +58,7 @@ A proposed memory (from the Add Memory command, or from the server) is modeled b
 
 ## Pending-memory block format
 
-By default, every proposed entry is appended to `Memory/Inbox/pending-memory.md` as a reviewable block (`formatMemoryEntry` in `src/memory/memory-writer.ts`). If the inbox file does not exist yet, it is created with a short header first. Proposals are **de-duplicated**: an entry whose content, type, and project match one already pending is not appended again (the caller is told it is already pending), so a looping agent cannot flood the inbox with identical proposals. Example block:
+By default, every proposed entry is appended to `Memory/Inbox/pending-memory.md` as a reviewable block (`formatMemoryEntry` in `src/memory/memory-writer.ts`). If the inbox file does not exist yet, it is created with a short header first. Proposals are **de-duplicated**: an entry whose content, type, and project match one already pending is not appended again (the caller is told it is already pending), so a looping agent cannot flood the inbox with repeated proposals. Content is matched after collapsing whitespace and folding case, because an agent re-proposing a fact across sessions rarely reproduces its own wording byte-for-byte. That is still an **exact** comparison of the words themselves, deliberately not a fuzzy one: a restatement that adds genuine detail is a different memory and is kept, since suppressing it would lose information permanently, while a duplicate costs the reviewer one dismissal. Example block:
 
 ```markdown
 ## Pending Memory: 2026-07-03 14:22
