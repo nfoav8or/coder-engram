@@ -166,6 +166,51 @@ function buildVault(): { seed: Record<string, string>; queries: GoldenQuery[] } 
 
 const SCAN: ScanConfig = { includedFolders: [], excludedFolders: [], excludedTags: [], excludedPathPatterns: [] };
 
+/**
+ * Session notes as the plugin actually writes them: `startSession` lays down a
+ * `## Goals / ## Notes / ## Outcomes` scaffold at creation, so a note only ever
+ * gains content — an abandoned session keeps its empty scaffold forever, and a
+ * partly-used one keeps whatever sections were never filled.
+ *
+ * The mix below (2 full, 2 partial, 1 abandoned) models a real project's
+ * recent history rather than a worst case; the reported waste is the share of
+ * a `get_recent_sessions` page that is headings with nothing under them.
+ */
+function sessionNotes(): Array<{ path: string; content: string }> {
+  const section = (h: string, body: string) => `## ${h}\n\n${body ? `${body}\n\n` : ""}`;
+  const note = (stamp: string, goals: string, notes: string, outcomes: string) =>
+    `# Session ${stamp} — atlas\n\n${section("Goals", goals)}${section("Notes", notes)}${section("Outcomes", outcomes)}`;
+  return [
+    {
+      path: "Claude Code/Projects/atlas/Sessions/2026-07-30-0915.md",
+      content: note(
+        "2026-07-30-0915",
+        "finish the quota migration and get the rollback path reviewed",
+        "migration ran clean on staging; rollback needs a second reviewer before it can ship",
+        "migration merged; rollback review carried into the next session",
+      ),
+    },
+    {
+      path: "Claude Code/Projects/atlas/Sessions/2026-07-29-1400.md",
+      content: note("2026-07-29-1400", "pair on the retry allotment bug", "root cause was an off-by-one in the backoff ceiling", ""),
+    },
+    {
+      path: "Claude Code/Projects/atlas/Sessions/2026-07-28-1100.md",
+      content: note(
+        "2026-07-28-1100",
+        "scope the cache invalidation work",
+        "decided nightly invalidation beats per-write; wrote it up in decisions",
+        "scoped and estimated at two days",
+      ),
+    },
+    {
+      path: "Claude Code/Projects/atlas/Sessions/2026-07-27-0930.md",
+      content: note("2026-07-27-0930", "review the vendor contract changes", "", ""),
+    },
+    { path: "Claude Code/Projects/atlas/Sessions/2026-07-26-1615.md", content: note("2026-07-26-1615", "", "", "") },
+  ];
+}
+
 describe("relevance eval (lexical, golden queries)", () => {
   it("reports recall@8 and MRR per query class", async () => {
     const { seed, queries } = buildVault();
@@ -303,4 +348,42 @@ describe("relevance eval (lexical, golden queries)", () => {
     const meanPage = totals.page / totals.n;
     expect(meanPage, "mean chars per search result page").toBeLessThan(700);
   }, 120_000);
+
+  it("reports how much of a session-history page is empty scaffold", () => {
+    const sessions = sessionNotes();
+    // Same block shape get_recent_sessions emits.
+    const blocks = sessions.map((s) => `## ${s.path}\n\n${s.content.trim()}`);
+    const pageChars = blocks.join("\n\n---\n\n").length;
+
+    // A heading is "empty" when nothing but another heading (or the end of the
+    // note) follows it — the scaffold survived but was never filled in.
+    let emptyHeadings = 0;
+    let emptyChars = 0;
+    for (const s of sessions) {
+      const lines = s.content.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        if (!lines[i].startsWith("## ")) continue;
+        const next = lines.slice(i + 1).find((l) => l.trim().length > 0);
+        if (next === undefined || next.startsWith("## ")) {
+          emptyHeadings++;
+          emptyChars += lines[i].length + 1;
+        }
+      }
+    }
+
+    console.log("\n===== session-history page cost (chars) =====");
+    console.log(`sessions returned    ${sessions.length}`);
+    console.log(`page chars           ${pageChars}`);
+    console.log(`empty headings       ${emptyHeadings}`);
+    console.log(`empty-scaffold chars ${emptyChars} (${((emptyChars / pageChars) * 100).toFixed(1)}% of page)`);
+    console.log("=============================================\n");
+
+    // The scaffold share is an observation, not a target — it depends on how
+    // many recent sessions were abandoned, and stripping it would be an
+    // improvement, so nothing here asserts that waste exists. What IS worth
+    // pinning is the budget relationship: a realistic session history must sit
+    // well inside the default page budget, so the clip path (which drops whole
+    // notes and names them as omitted) stays an edge case rather than the norm.
+    expect(pageChars, "realistic session history fits the default budget").toBeLessThan(12_000 / 2);
+  });
 });
