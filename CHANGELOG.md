@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-08-03
+
+Milestone 10 — attachments become memory, and retrieval gets measured. Opt-in attachment indexing brings PDFs, Microsoft Office and LibreOffice documents, RTF, plain text, and Canvas boards into the same pipeline as notes, all with zero added dependencies and no bytes leaving the machine. Retrieval gains filename/alias/heading field matching (with a golden-query eval harness to prove it), and context handoff gets outline mode, continuation pointers, and labelled bulk reads. Filtered searches are ~8× faster.
+
 ### Added
 
 - **PDF attachments can be indexed (opt-in).** A new **Index attachments (PDF)** setting (off by default) extracts text from PDF attachments using **Obsidian's own bundled PDF engine** (the official `loadPdfJs()` API — zero added bundle size, fully local; the file's bytes never leave the machine). Extracted text flows through the exact same pipeline as notes — chunking, incremental refresh, folder/pattern exclusions, search, and every MCP tool work unchanged — with one `Page N` section per page, so search hits carry a page breadcrumb and `outline: true` returns a page map. Extraction runs once per file version and is cached (`Index/extracted.json`), including negative results, so scanned/image-only PDFs (which yield no text in v1 — no OCR) aren't re-parsed every refresh. Settings schema v3 → v4.
@@ -248,7 +252,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.3.0...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.6.0...HEAD
+[0.6.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.6.0
 [0.5.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.5.0
 [0.4.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.4.0
 [0.3.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.3.0
