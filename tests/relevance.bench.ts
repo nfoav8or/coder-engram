@@ -7,6 +7,13 @@
  * adding ranking signals (filename/alias/heading fields, morphology,
  * proximity), or changing chunking must move these numbers, not vibes.
  *
+ * A second section measures the OTHER half of retrieval quality — what an
+ * answer costs in context. Finding the note is only half the job; the agent
+ * pays for every character the result page carries. It reports, per class,
+ * the page size, how much of it is locator overhead rather than content, and
+ * the chars read before reaching the needle. Changes to snippet width, dedup,
+ * the per-note cap, or the result format must move these numbers, not vibes.
+ *
  * Query classes:
  *   body      — query terms appear in the needle's body text (BM25 baseline;
  *               should be ~perfect, asserted as a regression floor)
@@ -32,6 +39,7 @@ import { InMemoryVaultAdapter } from "../src/core/vault-adapter";
 import { VaultScanner, ScanConfig } from "../src/indexing/vault-scanner";
 import { IndexManager } from "../src/indexing/index-manager";
 import { LexicalRetriever } from "../src/retrieval/lexical-retriever";
+import { dropNearDuplicates, diversifyByNote } from "../src/retrieval/ranking";
 
 const RECALL_LIMIT = 8;
 
@@ -211,5 +219,88 @@ describe("relevance eval (lexical, golden queries)", () => {
     // classes went 0.00 → 1.00 and use invented terms, so a high floor is safe.
     floor("filename", 0.9);
     floor("alias", 0.9);
+  }, 120_000);
+
+  it("reports the context cost of an answered query", async () => {
+    const { seed, queries } = buildVault();
+    const adapter = new InMemoryVaultAdapter("v", seed);
+    const scanner = new VaultScanner(adapter);
+    const im = new IndexManager(adapter, {
+      chunksFile: "Index/chunks.json",
+      metadataFile: "Index/metadata.json",
+      embeddingsFile: "Index/embeddings.json",
+    });
+    im.build(await scanner.scan(SCAN));
+    const chunks = im.getChunks();
+    const retriever = new LexicalRetriever();
+
+    const perClass = new Map<
+      string,
+      { n: number; results: number; page: number; head: number; answer: number; found: number }
+    >();
+    for (const q of queries) {
+      // Mirror the search_vault_memory path: fetch a deeper pool, drop
+      // near-duplicates, re-apply the per-note cap at page size.
+      const pool = retriever.retrieve({ query: q.query, limit: RECALL_LIMIT * 2 }, chunks);
+      const page = diversifyByNote(dropNearDuplicates(pool), RECALL_LIMIT);
+
+      // Same block shape the MCP tool emits, so the count is what an agent pays.
+      const blocks = page.map((r, i) => {
+        const start = r.chunk.startLine + 1;
+        const end = Math.max(start, r.chunk.endLine + 1);
+        const lines = start === end ? `L${start}` : `L${start}–${end}`;
+        const modified = new Date(r.chunk.mtime).toISOString().slice(0, 10);
+        const head = `${i + 1}. ${r.chunk.notePath} › ${r.chunk.heading || "(note)"} (${lines}, ${modified})`;
+        return `${head}\n${r.snippet}`;
+      });
+      const pageChars = blocks.join("\n\n").length;
+      // The locator prefix (path › heading, line range, date) is what the agent
+      // pays to be ABLE to fetch more; the rest is retrieved content. Tracking
+      // the split shows when the addressing overhead stops earning its keep.
+      const headChars = blocks.reduce((n, b) => n + b.slice(0, b.indexOf("\n")).length, 0);
+      // Cost to REACH the answer — blocks the agent reads through before (and
+      // including) the needle. Rank quality and block size both move this.
+      const rank = page.findIndex((r) => r.chunk.notePath === q.needle);
+      const answerChars = rank >= 0 ? blocks.slice(0, rank + 1).join("\n\n").length : 0;
+
+      const agg = perClass.get(q.cls) ?? { n: 0, results: 0, page: 0, head: 0, answer: 0, found: 0 };
+      agg.n++;
+      agg.results += page.length;
+      agg.page += pageChars;
+      agg.head += headChars;
+      if (rank >= 0) {
+        agg.found++;
+        agg.answer += answerChars;
+      }
+      perClass.set(q.cls, agg);
+    }
+
+    const totals = { n: 0, results: 0, page: 0, head: 0, answer: 0, found: 0 };
+    console.log("\n===== context cost per query (chars, lexical) =====");
+    console.log("class      queries  hits   page  locator  to-answer");
+    const row = (label: string, a: typeof totals) =>
+      console.log(
+        `${label.padEnd(10)} ${String(a.n).padStart(7)} ${(a.results / a.n).toFixed(1).padStart(5)} ` +
+          `${Math.round(a.page / a.n).toString().padStart(6)} ${((a.head / a.page) * 100).toFixed(0).padStart(6)}% ` +
+          `${(a.found ? Math.round(a.answer / a.found) : 0).toString().padStart(10)}`,
+      );
+    for (const [cls, a] of perClass) {
+      totals.n += a.n;
+      totals.results += a.results;
+      totals.page += a.page;
+      totals.head += a.head;
+      totals.answer += a.answer;
+      totals.found += a.found;
+      row(cls, a);
+    }
+    row("ALL", totals);
+    console.log("==================================================\n");
+
+    // Budget ceiling, not a savings ratio: a "saved vs whole chunks" number
+    // would mostly track how long this corpus's notes are. What the CODE owns
+    // is the page's own size — widening the snippet window, dropping dedup, or
+    // re-adding per-result score floats all show up here. Loose on purpose.
+    const meanPage = totals.page / totals.n;
+    expect(meanPage, "mean chars per search result page").toBeLessThan(700);
   }, 120_000);
 });
