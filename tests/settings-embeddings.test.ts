@@ -7,9 +7,9 @@ import {
 } from "../src/settings/settings";
 
 describe("M3+ settings schema", () => {
-  it("is schema version 4", () => {
-    // v4 added indexAttachments (default false).
-    expect(SETTINGS_SCHEMA_VERSION).toBe(4);
+  it("is schema version 5", () => {
+    // v5 added contextSavings (default false); v4 added indexAttachments.
+    expect(SETTINGS_SCHEMA_VERSION).toBe(5);
   });
 
   it("has safe M3 defaults", () => {

@@ -14,7 +14,7 @@ import { ScanConfig } from "../indexing/vault-scanner";
 import { clamp } from "../utils/validation";
 import { normalizeVaultRelativePath } from "../utils/paths";
 
-export const SETTINGS_SCHEMA_VERSION = 4;
+export const SETTINGS_SCHEMA_VERSION = 5;
 
 export type EmbeddingProviderId = "none" | "mock" | "ollama" | "openai-compatible";
 
@@ -72,6 +72,19 @@ export interface EngramSettings {
   /** How retrieval combines lexical and vector signals (with a provider set). */
   retrievalMode: RetrievalMode;
   server: ServerSettings;
+  /**
+   * Trim redundancy out of what the MCP tools return, at the cost of returning
+   * less than the index holds. OFF by default: these reductions are lossy
+   * judgements about what an agent does not need — a near-duplicate hit is
+   * dropped, one note's share of a result page is capped, and a passage's
+   * carried-over overlap is stripped from a full-note read — and that is a
+   * choice to opt into rather than have made for you.
+   *
+   * The hard output caps (maxChars, related-link and summary budgets) are NOT
+   * governed by this: they bound worst-case output rather than exercising
+   * judgement about content, so they always apply.
+   */
+  contextSavings: boolean;
   allowDirectWrites: boolean;
   appendOnly: boolean;
   debugLogging: boolean;
@@ -101,6 +114,7 @@ export const DEFAULT_SETTINGS: EngramSettings = {
     token: "",
     allowNonLocalhost: false,
   },
+  contextSavings: false,
   allowDirectWrites: false,
   appendOnly: true,
   debugLogging: false,
@@ -175,6 +189,7 @@ export function migrateSettings(raw: unknown): EngramSettings {
   merged.indexAttachments = coerceBool(data.indexAttachments, DEFAULT_SETTINGS.indexAttachments);
   merged.allowDirectWrites = coerceBool(data.allowDirectWrites, DEFAULT_SETTINGS.allowDirectWrites);
   merged.appendOnly = coerceBool(data.appendOnly, DEFAULT_SETTINGS.appendOnly);
+  merged.contextSavings = coerceBool(data.contextSavings, DEFAULT_SETTINGS.contextSavings);
   merged.debugLogging = coerceBool(data.debugLogging, DEFAULT_SETTINGS.debugLogging);
   merged.server.enabled = coerceBool(data.server?.enabled, DEFAULT_SETTINGS.server.enabled);
   merged.server.allowNonLocalhost = coerceBool(

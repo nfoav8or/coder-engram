@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Context savings are now an opt-in setting rather than always-on.** Three behaviours that trimmed what the MCP tools return — dropping near-duplicate search hits, capping how much of a result page one note can fill, and merging a note's overlapping passages on a full read — are now governed by a **Context savings for Claude Code** toggle, **off by default**. Each is a judgement about what the agent does not need, and each can withhold something the user wanted to see: a decision deliberately recorded in two places now comes back twice unless you ask for the savings. Turning it on restores the previous behaviour exactly. Settings schema v4 → v5. **The hard output caps are not part of this and always apply** (`maxChars` on note and bulk reads, the related-link and summary budgets) — those bound worst-case size rather than judging content, and switching them off would restore genuine failure modes.
+
 ## [0.7.1] — 2026-08-04
 
 A crash fix and internal tidying. No settings changes, no index rebuild.

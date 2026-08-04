@@ -37,7 +37,7 @@ Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an a
 - **Offline BM25 lexical search** with heading-match boost and folder / tag / project / recency filters. No API key, no network.
 - **Optional vector and hybrid retrieval.** Cosine-similarity vector search and a hybrid retriever fusing lexical + vector rankings with Reciprocal Rank Fusion (the default when embeddings are configured). With no provider, or an unreachable one, retrieval silently stays lexical — vectors are never faked and never sit on the critical path.
 - **Matches on filenames, aliases, and headings**, not just body text, so a note named `Quartzine Protocol.md` is findable by its name and an alias-only hub note is reachable at all.
-- **Result pages built for an agent's context budget**: near-duplicate hits collapsed, per-note diversity so one long note can't flood the page, precise line ranges, modified dates for staleness judgement, and densest-window snippets.
+- **Result pages built for an agent's context budget**: precise line ranges, modified dates for staleness judgement, and densest-window snippets. An opt-in **Context savings** setting additionally collapses near-duplicate hits, caps how much of a page one note can fill, and merges a note's overlapping passages on a full read — off by default, because those choose what the agent doesn't need.
 - **Measured, not asserted.** `npm run eval` scores golden queries (recall@8 / MRR per query class) and the context cost of an answer; `npm run bench` measures index build and query latency at production scale.
 
 ### Reading notes without burning context
@@ -182,6 +182,7 @@ Settings live under **Settings → Coder Engram**. Key settings and their safe d
 | Allow non-localhost binding | `false` | Off by default. Binding a non-localhost host also requires a token. Exposes memory to your network — not recommended. |
 | Allow direct memory writes | `false` | When off, all writes go to the review inbox. |
 | Append-only writes | `true` | Writes only append, never overwrite. |
+| Context savings for Claude Code | `false` | Trims redundancy from MCP tool output: drops near-duplicate search hits, caps one note's share of a result page, and merges a note's overlapping passages on a full read. Off by default because each is a judgement about what the agent doesn't need. Output size caps apply either way. |
 | Debug logging | `false` | Logs to the developer console; secrets are always redacted. |
 
 The memory root is validated on entry: a value that would escape the vault is rejected.

@@ -217,6 +217,21 @@ export class EngramSettingTab extends PluginSettingTab {
 
     this.section("Advanced");
     new Setting(containerEl)
+      .setName("Context savings for Claude Code")
+      .setDesc(
+        "Trim redundancy from what the MCP tools return: drop near-duplicate search hits, " +
+          "cap how much of a result page one note can fill, and merge a note's overlapping " +
+          "passages on a full read. Off by default — these choose what the agent doesn't " +
+          "need, so a copy you wanted to see can be hidden. Output size caps always apply.",
+      )
+      .addToggle((t) =>
+        t.setValue(this.s.contextSavings).onChange(async (v) => {
+          this.s.contextSavings = v;
+          await this.commit();
+        }),
+      );
+
+    new Setting(containerEl)
       .setName("Debug logging")
       .setDesc("Log activity to the developer console. Secrets are always redacted.")
       .addToggle((t) =>
