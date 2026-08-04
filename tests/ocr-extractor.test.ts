@@ -79,6 +79,39 @@ describe("ObsidianOcrExtractor", () => {
 });
 
 describe("engine integration with a setting-gated extractor", () => {
+  it("does not read the file for an extractor that works from the path alone", async () => {
+    // OCR hands the path to a companion plugin that owns its own cache, so
+    // reading the image here would load every picture in the vault into memory
+    // only to discard it.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    adapter.seedBinary("Images/big.png", new Uint8Array([9, 9, 9]));
+    let reads = 0;
+    const originalRead = adapter.readBinary.bind(adapter);
+    adapter.readBinary = async (p: string) => {
+      reads++;
+      return originalRead(p);
+    };
+    const pathOnly: TextExtractor = {
+      extensions: [".png"],
+      needsBytes: false,
+      async extract(path: string, data: ArrayBuffer) {
+        expect(data.byteLength).toBe(0);
+        return `# ${path}\n\ntakahe ledger`;
+      },
+    };
+    let t = 10_000;
+    const engine = new EngramEngine(
+      adapter,
+      { ...DEFAULT_SETTINGS, indexAttachments: true },
+      NULL_LOGGER,
+      () => t++,
+      { extractors: [pathOnly] },
+    );
+    await engine.reindex();
+    expect((await engine.search({ query: "takahe ledger" }))[0]?.chunk.notePath).toBe("Images/big.png");
+    expect(reads).toBe(0);
+  });
+
   it("stops indexing and drops cached text once the extractor reports no extensions", async () => {
     // The OCR extractor reports an empty extension list while its setting is
     // off. That is what keeps images out of the scan AND what evicts already

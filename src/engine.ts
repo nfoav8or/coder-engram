@@ -216,7 +216,14 @@ export class EngramEngine {
         let text: string | null = null;
         if (extractor) {
           try {
-            text = await extractor.extract(f.path, await this.adapter.readBinary(f.path));
+            // Extractors that work from the path alone (OCR delegates to a
+            // companion plugin) get an empty buffer rather than a full read of
+            // a file nobody will look at.
+            const data =
+              extractor.needsBytes === false
+                ? new ArrayBuffer(0)
+                : await this.adapter.readBinary(f.path);
+            text = await extractor.extract(f.path, data);
           } catch (err) {
             this.logger.warn(`Attachment extraction failed: ${f.path}`, {
               error: toMessage(err),

@@ -18,6 +18,13 @@ export interface TextExtractor {
   /** Lowercased dot-extensions this extractor handles, e.g. [".pdf"]. */
   readonly extensions: string[];
   /**
+   * Set false when the extractor works from the path alone, so the caller can
+   * skip reading the file. Only the OCR adapter does — it hands the path to a
+   * companion plugin that owns its own cache — and without this the scan would
+   * load every image into memory just to discard it. Omitted means "yes".
+   */
+  readonly needsBytes?: false;
+  /**
    * Extract markdown-ish text from the file's bytes. Returns null when the
    * file yields no text (scanned/image-only PDF, corrupt file) — the caller
    * then skips the attachment rather than indexing an empty document.

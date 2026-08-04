@@ -50,6 +50,9 @@ export class ObsidianOcrExtractor implements TextExtractor {
     return this.isEnabled() ? IMAGE_EXTENSIONS : [];
   }
 
+  /** Works from the vault path; the caller must not read the image for us. */
+  readonly needsBytes = false as const;
+
   constructor(
     private readonly app: App,
     private readonly isEnabled: () => boolean,
