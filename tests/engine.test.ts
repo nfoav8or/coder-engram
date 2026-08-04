@@ -226,3 +226,29 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
     expect(JSON.parse(backup).defaultProject).toBe("Demo");
   });
 });
+
+describe("settings backup", () => {
+  it("never writes the server token or embedding API key into the vault", async () => {
+    // The backup lives inside the vault, and a vault gets synced, backed up,
+    // and committed to git — so a secret written here in the clear travels
+    // everywhere the vault goes. Nothing reads this file back, so redaction
+    // costs the recovery point nothing.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      embeddingApiKey: "sk-live-must-not-appear",
+      server: { ...DEFAULT_SETTINGS.server, token: "bearer-must-not-appear" },
+    };
+    const engine = new EngramEngine(adapter, settings, NULL_LOGGER, () => 1);
+    await engine.backupSettings(settings);
+
+    const raw = await adapter.read("Claude Code/Config/plugin-settings-backup.json");
+    expect(raw).not.toContain("sk-live-must-not-appear");
+    expect(raw).not.toContain("bearer-must-not-appear");
+    // Still a useful recovery point: the non-secret settings are all there, and
+    // the secret fields are present-but-redacted rather than silently dropped.
+    const parsed = JSON.parse(raw) as { memoryRoot: string; embeddingApiKey: string };
+    expect(parsed.memoryRoot).toBe(DEFAULT_SETTINGS.memoryRoot);
+    expect(parsed.embeddingApiKey).toBe("«redacted»");
+  });
+});

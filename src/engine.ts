@@ -39,7 +39,7 @@ import {
 } from "./settings/settings";
 import { normalizeVaultRelativePath, isInsideRoot, resolveInVault } from "./utils/paths";
 import { ConfigError, toMessage } from "./utils/errors";
-import { Logger } from "./utils/logger";
+import { Logger, redact } from "./utils/logger";
 
 /** Optional injected dependencies (production wires the Obsidian adapters). */
 export interface EngramEngineDeps {
@@ -415,11 +415,18 @@ export class EngramEngine {
    * Write a JSON backup of the current settings to Config/. Best-effort: a
    * failure here must never block the actual settings save, so callers should
    * catch. Provides a recovery point across settings migrations.
+   *
+   * Secrets are redacted with the same rule the logger uses. This file lives
+   * INSIDE the vault, and a vault is routinely synced, backed up, or committed
+   * to git — so writing the server token and embedding API key here in the
+   * clear puts them everywhere the vault goes. Nothing reads this file back, so
+   * redaction costs the recovery point nothing: it exists to show what the
+   * settings WERE, and "there was a token" is the whole of what a reader needs.
    */
   async backupSettings(snapshot: unknown): Promise<void> {
     await this.adapter.write(
       this.paths.settingsBackupFile,
-      JSON.stringify(snapshot, null, 2),
+      JSON.stringify(redact(snapshot), null, 2),
     );
   }
 
