@@ -302,13 +302,15 @@ const searchTool: Tool = {
     // deliberately lean: note path, heading, and line range so the agent can
     // locate or fetch the passage, then the snippet. No score float (rank order
     // already conveys it) — every token returned should aid recall.
-    // Context savings are opt-in: dropping a near-duplicate hit and capping one
-    // note's share of the page are judgements about what the agent does not
-    // need, and they can hide a copy the user wanted to see. With the setting
-    // off, the page is simply the ranked results cut to `limit`.
-    const distinct = ctx.settings.contextSavings
-      ? diversifyByNote(dropNearDuplicates(results), limit)
-      : results.slice(0, limit);
+    // Each context saving is opt-in on its own: both hide something the user
+    // may have wanted (a second copy of a memory; a long note's later hits), so
+    // neither is applied unless asked for. With both off the page is simply the
+    // ranked results cut to `limit`.
+    const savings = ctx.settings.contextSavings;
+    const collapsed = savings.collapseNearDuplicates ? dropNearDuplicates(results) : results;
+    const distinct = savings.capPerNoteShare
+      ? diversifyByNote(collapsed, limit)
+      : collapsed.slice(0, limit);
     // Hits from the review inbox are agent PROPOSALS awaiting human review, not
     // accepted memory — mark them so an agent's own unreviewed write can't come
     // back through search looking like the user's settled knowledge.
@@ -660,13 +662,14 @@ const getNoteContextTool: Tool = {
       chunks: IndexedChunk[];
       pieces: string[]; // per-window text, carry/heading de-duplicated
     }
-    // Merging windows and stripping their carry is a context saving, so it is
-    // opt-in too: with the setting off every window renders as its own block,
-    // exactly as it sits in the index, overlap included.
+    // Merging windows and stripping their carry is its own opt-in: with it off
+    // every window renders as its own block, exactly as it sits in the index,
+    // overlap included.
+    const mergeWindows = ctx.settings.contextSavings.mergeOverlappingPassages;
     const groups: WindowGroup[] = [];
     for (const c of chunks) {
       const g = groups[groups.length - 1];
-      if (ctx.settings.contextSavings && g && sameSection(g.chunks[g.chunks.length - 1], c)) {
+      if (mergeWindows && g && sameSection(g.chunks[g.chunks.length - 1], c)) {
         const deduped = dedupWindowText(g.chunks[g.chunks.length - 1].text, c);
         if (deduped.carried) {
           g.chunks.push(c);

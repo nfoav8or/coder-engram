@@ -321,7 +321,7 @@ describe("RateLimiter.enforceWindow", () => {
     );
     const { engine, ctx } = makeContext(
       { "Notes/longsec.md": `# Longsec\n\n${paras.join("\n\n")}` },
-      { contextSavings: true },
+      { contextSavings: { collapseNearDuplicates: true, capPerNoteShare: true, mergeOverlappingPassages: true } },
     );
     await engine.reindex();
     // Sanity: the note actually windowed into several chunks.
@@ -415,7 +415,7 @@ describe("RateLimiter.enforceWindow", () => {
       // Same decision copied verbatim into a session note — a real accumulation pattern.
       "Sessions/2026-07-05.md": `# Session\n\n${decision}`,
       "Notes/other.md": "# Other\n\nUnrelated vault content about markdown chunking windows.",
-    }, { contextSavings: true });
+    }, { contextSavings: { collapseNearDuplicates: true, capPerNoteShare: true, mergeOverlappingPassages: true } });
     await engine.reindex();
     const registry = new ToolRegistry();
     const out = await registry.call("search_vault_memory", { query: "local JSON index indexing" }, ctx);
@@ -450,7 +450,7 @@ describe("RateLimiter.enforceWindow", () => {
       "Sessions/2026-07-05.md": `# Session\n\n${decision}`,
       "Notes/pipeline.md": "# Pipeline\n\nThe local index rebuild is incremental.",
       "Notes/cache.md": "# Cache\n\nThe JSON cache under Index is rebuildable.",
-    }, { contextSavings: true });
+    }, { contextSavings: { collapseNearDuplicates: true, capPerNoteShare: true, mergeOverlappingPassages: true } });
     await engine.reindex();
     const registry = new ToolRegistry();
     const out = await registry.call("search_vault_memory", { query: "local JSON index", limit: 2 }, ctx);
@@ -468,7 +468,7 @@ describe("RateLimiter.enforceWindow", () => {
       "Projects/x/decisions.md": `# Decisions\n\n${decision}`,
       "Sessions/2026-07-05.md": `# Session\n\n${decision}`,
     });
-    expect(ctx.settings.contextSavings).toBe(false);
+    expect(ctx.settings.contextSavings.collapseNearDuplicates).toBe(false);
     await engine.reindex();
     const registry = new ToolRegistry();
     const out = await registry.call("search_vault_memory", { query: "local JSON index indexing" }, ctx);

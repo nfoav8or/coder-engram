@@ -7,9 +7,40 @@ import {
 } from "../src/settings/settings";
 
 describe("M3+ settings schema", () => {
-  it("is schema version 5", () => {
-    // v5 added contextSavings (default false); v4 added indexAttachments.
-    expect(SETTINGS_SCHEMA_VERSION).toBe(5);
+  it("is schema version 6", () => {
+    // v6 split contextSavings into per-reduction toggles; v5 introduced it as a
+    // single boolean; v4 added indexAttachments.
+    expect(SETTINGS_SCHEMA_VERSION).toBe(6);
+  });
+
+  it("defaults every context saving to off", () => {
+    const s = migrateSettings({});
+    expect(s.contextSavings).toEqual({
+      collapseNearDuplicates: false,
+      capPerNoteShare: false,
+      mergeOverlappingPassages: false,
+    });
+  });
+
+  it("carries a schema-v5 contextSavings boolean onto every toggle", () => {
+    // v5 stored one boolean for all three reductions. Someone who opted in must
+    // keep the behaviour they chose rather than being silently reset.
+    const on = migrateSettings({ contextSavings: true });
+    expect(on.contextSavings).toEqual({
+      collapseNearDuplicates: true,
+      capPerNoteShare: true,
+      mergeOverlappingPassages: true,
+    });
+    const off = migrateSettings({ contextSavings: false });
+    expect(off.contextSavings.collapseNearDuplicates).toBe(false);
+  });
+
+  it("coerces a corrupt contextSavings blob to safe defaults", () => {
+    expect(migrateSettings({ contextSavings: "yes" }).contextSavings.capPerNoteShare).toBe(false);
+    expect(migrateSettings({ contextSavings: null }).contextSavings.capPerNoteShare).toBe(false);
+    const partial = migrateSettings({ contextSavings: { capPerNoteShare: "true", mergeOverlappingPassages: true } });
+    expect(partial.contextSavings.capPerNoteShare).toBe(false); // a string is not a boolean
+    expect(partial.contextSavings.mergeOverlappingPassages).toBe(true);
   });
 
   it("has safe M3 defaults", () => {

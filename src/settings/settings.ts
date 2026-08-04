@@ -14,7 +14,7 @@ import { ScanConfig } from "../indexing/vault-scanner";
 import { clamp } from "../utils/validation";
 import { normalizeVaultRelativePath } from "../utils/paths";
 
-export const SETTINGS_SCHEMA_VERSION = 5;
+export const SETTINGS_SCHEMA_VERSION = 6;
 
 export type EmbeddingProviderId = "none" | "mock" | "ollama" | "openai-compatible";
 
@@ -47,6 +47,26 @@ export interface ServerSettings {
   allowNonLocalhost: boolean;
 }
 
+/**
+ * Reductions applied to what the MCP tools return. Each trims redundancy at the
+ * cost of returning less than the index holds, so each is a separate opt-in
+ * rather than one blanket switch: they answer different questions, and a user
+ * who wants every copy of a memory may still want long notes merged sensibly.
+ * All default OFF.
+ *
+ * The hard output caps (`maxChars`, the related-link and summary budgets) are
+ * deliberately NOT here: they bound worst-case output size rather than
+ * exercising judgement about content, so they always apply.
+ */
+export interface ContextSavingsSettings {
+  /** Drop a hit whose text nearly repeats a higher-ranked one (token overlap ≥ 0.8). */
+  collapseNearDuplicates: boolean;
+  /** Cap how much of a single result page one note may fill. */
+  capPerNoteShare: boolean;
+  /** Merge a section's consecutive windows on a full-note read, stripping the repeated carry. */
+  mergeOverlappingPassages: boolean;
+}
+
 export interface EngramSettings {
   schemaVersion: number;
   indexingEnabled: boolean;
@@ -72,19 +92,7 @@ export interface EngramSettings {
   /** How retrieval combines lexical and vector signals (with a provider set). */
   retrievalMode: RetrievalMode;
   server: ServerSettings;
-  /**
-   * Trim redundancy out of what the MCP tools return, at the cost of returning
-   * less than the index holds. OFF by default: these reductions are lossy
-   * judgements about what an agent does not need — a near-duplicate hit is
-   * dropped, one note's share of a result page is capped, and a passage's
-   * carried-over overlap is stripped from a full-note read — and that is a
-   * choice to opt into rather than have made for you.
-   *
-   * The hard output caps (maxChars, related-link and summary budgets) are NOT
-   * governed by this: they bound worst-case output rather than exercising
-   * judgement about content, so they always apply.
-   */
-  contextSavings: boolean;
+  contextSavings: ContextSavingsSettings;
   allowDirectWrites: boolean;
   appendOnly: boolean;
   debugLogging: boolean;
@@ -114,7 +122,11 @@ export const DEFAULT_SETTINGS: EngramSettings = {
     token: "",
     allowNonLocalhost: false,
   },
-  contextSavings: false,
+  contextSavings: {
+    collapseNearDuplicates: false,
+    capPerNoteShare: false,
+    mergeOverlappingPassages: false,
+  },
   allowDirectWrites: false,
   appendOnly: true,
   debugLogging: false,
@@ -132,6 +144,7 @@ export function migrateSettings(raw: unknown): EngramSettings {
     ...DEFAULT_SETTINGS,
     ...data,
     server: { ...DEFAULT_SETTINGS.server, ...(data.server ?? {}) },
+    contextSavings: legacyContextSavings(data.contextSavings),
     // Arrays: only accept real string arrays.
     includedFolders: asStringArray(data.includedFolders, DEFAULT_SETTINGS.includedFolders),
     excludedFolders: asStringArray(data.excludedFolders, DEFAULT_SETTINGS.excludedFolders),
@@ -189,7 +202,6 @@ export function migrateSettings(raw: unknown): EngramSettings {
   merged.indexAttachments = coerceBool(data.indexAttachments, DEFAULT_SETTINGS.indexAttachments);
   merged.allowDirectWrites = coerceBool(data.allowDirectWrites, DEFAULT_SETTINGS.allowDirectWrites);
   merged.appendOnly = coerceBool(data.appendOnly, DEFAULT_SETTINGS.appendOnly);
-  merged.contextSavings = coerceBool(data.contextSavings, DEFAULT_SETTINGS.contextSavings);
   merged.debugLogging = coerceBool(data.debugLogging, DEFAULT_SETTINGS.debugLogging);
   merged.server.enabled = coerceBool(data.server?.enabled, DEFAULT_SETTINGS.server.enabled);
   merged.server.allowNonLocalhost = coerceBool(
@@ -214,6 +226,28 @@ function asStringArray(value: unknown, fallback: string[]): string[] {
 }
 
 /** Coerce a persisted value to a strict boolean; non-booleans fall back safely. */
+/**
+ * Read the context-savings group, tolerating the schema-v5 shape.
+ *
+ * v5 stored a single `contextSavings` boolean covering all three reductions.
+ * Spreading that boolean would yield no keys and silently reset a user who had
+ * opted in, so a legacy `true` turns all three on — the behaviour they chose —
+ * and each key is coerced individually so a corrupt blob can't smuggle a
+ * non-boolean through.
+ */
+function legacyContextSavings(value: unknown): ContextSavingsSettings {
+  if (typeof value === "boolean") {
+    return { collapseNearDuplicates: value, capPerNoteShare: value, mergeOverlappingPassages: value };
+  }
+  const obj = (value && typeof value === "object" ? value : {}) as Partial<ContextSavingsSettings>;
+  const d = DEFAULT_SETTINGS.contextSavings;
+  return {
+    collapseNearDuplicates: coerceBool(obj.collapseNearDuplicates, d.collapseNearDuplicates),
+    capPerNoteShare: coerceBool(obj.capPerNoteShare, d.capPerNoteShare),
+    mergeOverlappingPassages: coerceBool(obj.mergeOverlappingPassages, d.mergeOverlappingPassages),
+  };
+}
+
 function coerceBool(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }

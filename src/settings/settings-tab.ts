@@ -9,7 +9,7 @@
 
 import { App, Plugin, PluginSettingTab, Setting, Notice } from "obsidian";
 import { toMessage } from "../utils/errors";
-import { EngramSettings, parseList } from "./settings";
+import { ContextSavingsSettings, EngramSettings, parseList } from "./settings";
 import { normalizeVaultRelativePath } from "../utils/paths";
 
 export interface SettingsHost {
@@ -50,6 +50,24 @@ export class EngramSettingTab extends PluginSettingTab {
    */
   private deferCommit(t: { inputEl: HTMLInputElement | HTMLTextAreaElement }): void {
     t.inputEl.addEventListener("blur", () => void this.flushCommit());
+  }
+
+  /** One context-savings toggle; the three differ only in label and target key. */
+  private addSavingSetting(
+    containerEl: HTMLElement,
+    name: string,
+    desc: string,
+    key: keyof ContextSavingsSettings,
+  ): void {
+    new Setting(containerEl)
+      .setName(name)
+      .setDesc(desc)
+      .addToggle((t) =>
+        t.setValue(this.s.contextSavings[key]).onChange(async (v) => {
+          this.s.contextSavings[key] = v;
+          await this.commit();
+        }),
+      );
   }
 
   /**
@@ -215,22 +233,33 @@ export class EngramSettingTab extends PluginSettingTab {
   private renderAdvancedSection(): void {
     const { containerEl } = this;
 
-    this.section("Advanced");
-    new Setting(containerEl)
-      .setName("Context savings for Claude Code")
-      .setDesc(
-        "Trim redundancy from what the MCP tools return: drop near-duplicate search hits, " +
-          "cap how much of a result page one note can fill, and merge a note's overlapping " +
-          "passages on a full read. Off by default — these choose what the agent doesn't " +
-          "need, so a copy you wanted to see can be hidden. Output size caps always apply.",
-      )
-      .addToggle((t) =>
-        t.setValue(this.s.contextSavings).onChange(async (v) => {
-          this.s.contextSavings = v;
-          await this.commit();
-        }),
-      );
+    this.section("Context savings for Claude Code");
+    containerEl.createEl("p", {
+      text:
+        "Each trims redundancy from what the MCP tools return, and each can hide something you " +
+        "wanted to see, so they are chosen individually and all start off. Output size caps apply either way.",
+      cls: "engram-stat-row",
+    });
+    this.addSavingSetting(
+      containerEl,
+      "Collapse near-duplicate hits",
+      "A search hit whose text nearly repeats a higher-ranked one is dropped. Saves repeating a memory recorded in two places — at the cost of not showing that both copies exist.",
+      "collapseNearDuplicates",
+    );
+    this.addSavingSetting(
+      containerEl,
+      "Cap one note's share of a page",
+      "Stops a single long note filling the whole result page, leaving room for other notes. Its lower-ranked passages are held back.",
+      "capPerNoteShare",
+    );
+    this.addSavingSetting(
+      containerEl,
+      "Merge overlapping passages",
+      "On a full-note read, consecutive windows of one section are joined and the ~150 characters each carries from the previous window are sent once. Leaves the text agreeing with the line ranges shown.",
+      "mergeOverlappingPassages",
+    );
 
+    this.section("Advanced");
     new Setting(containerEl)
       .setName("Debug logging")
       .setDesc("Log activity to the developer console. Secrets are always redacted.")

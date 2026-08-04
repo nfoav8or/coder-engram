@@ -13,7 +13,7 @@ Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an a
 - **Hardened by default.** Server off by default, localhost-only, constant-time token auth, DNS-rebinding guards, a curated tool surface, and no generic file access or full-vault dump.
 - **Local-first, no lock-in.** Markdown is the source of truth; embeddings are opt-in (default is fully-offline lexical search); no cloud key for the default experience.
 
-> **Status:** v0.7.0. The local server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too — the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. Attachment indexing is likewise opt-in and fully local. See [CHANGELOG.md](CHANGELOG.md) for release history and [docs/ROADMAP.md](docs/ROADMAP.md) for what is still deferred.
+> **Status:** v0.7.1. The local server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too — the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. Attachment indexing is likewise opt-in and fully local. See [CHANGELOG.md](CHANGELOG.md) for release history and [docs/ROADMAP.md](docs/ROADMAP.md) for what is still deferred.
 
 ## What Coder Engram does
 
@@ -37,7 +37,7 @@ Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an a
 - **Offline BM25 lexical search** with heading-match boost and folder / tag / project / recency filters. No API key, no network.
 - **Optional vector and hybrid retrieval.** Cosine-similarity vector search and a hybrid retriever fusing lexical + vector rankings with Reciprocal Rank Fusion (the default when embeddings are configured). With no provider, or an unreachable one, retrieval silently stays lexical — vectors are never faked and never sit on the critical path.
 - **Matches on filenames, aliases, and headings**, not just body text, so a note named `Quartzine Protocol.md` is findable by its name and an alias-only hub note is reachable at all.
-- **Result pages built for an agent's context budget**: precise line ranges, modified dates for staleness judgement, and densest-window snippets. An opt-in **Context savings** setting additionally collapses near-duplicate hits, caps how much of a page one note can fill, and merges a note's overlapping passages on a full read — off by default, because those choose what the agent doesn't need.
+- **Result pages built for an agent's context budget**: precise line ranges, modified dates for staleness judgement, and densest-window snippets. Three **Context savings** toggles — collapse near-duplicate hits, cap one note's share of a page, merge overlapping passages — are each opt-in and off by default, because each chooses what the agent doesn't need and can hide something you wanted to see.
 - **Measured, not asserted.** `npm run eval` scores golden queries (recall@8 / MRR per query class) and the context cost of an answer; `npm run bench` measures index build and query latency at production scale.
 
 ### Reading notes without burning context
@@ -182,7 +182,9 @@ Settings live under **Settings → Coder Engram**. Key settings and their safe d
 | Allow non-localhost binding | `false` | Off by default. Binding a non-localhost host also requires a token. Exposes memory to your network — not recommended. |
 | Allow direct memory writes | `false` | When off, all writes go to the review inbox. |
 | Append-only writes | `true` | Writes only append, never overwrite. |
-| Context savings for Claude Code | `false` | Trims redundancy from MCP tool output: drops near-duplicate search hits, caps one note's share of a result page, and merges a note's overlapping passages on a full read. Off by default because each is a judgement about what the agent doesn't need. Output size caps apply either way. |
+| Collapse near-duplicate hits | `false` | Drops a search hit whose text nearly repeats a higher-ranked one. |
+| Cap one note's share of a page | `false` | Stops one long note filling a whole result page. |
+| Merge overlapping passages | `false` | Joins a section's consecutive windows on a full-note read, sending the carried overlap once. |
 | Debug logging | `false` | Logs to the developer console; secrets are always redacted. |
 
 The memory root is validated on entry: a value that would escape the vault is rejected.

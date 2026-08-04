@@ -70,7 +70,7 @@ Once connected, Claude Code can call:
 
 - `search_vault_memory` — query-scoped retrieval (lexical by default, vector/hybrid
   when embeddings are configured): note paths, headings, line ranges, snippets;
-  near-duplicates collapsed when **Context savings** is enabled (off by default),
+  near-duplicates collapsed when the **Collapse near-duplicate hits** setting is on (off by default),
   inbox hits labelled pending.
 - `get_note_context` — the full **indexed** text of one note, passage by passage;
   pass a search hit's `startLine`/`endLine` to read just that region.
