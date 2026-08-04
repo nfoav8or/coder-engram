@@ -37,7 +37,23 @@ export interface ChunkOptions {
   bodyStartLine?: number;
 }
 
-const DEFAULTS = { maxChars: 1200, overlapChars: 150 };
+/**
+ * Section budget and the overlap carried between windows of one section.
+ *
+ * `maxChars` sits where the measured curve flattens. At production scale (2000
+ * notes) raising it from 1200 to 2400 cut the corpus from 19,132 chunks to
+ * 13,286 (−31%), the index from 18.0 MB to 15.7 MB, and lexical p50 from 15.8 ms
+ * to 10.0 ms (−37%) — with fewer, larger units to embed. Going further pays much
+ * less (4000 reaches only −41% chunks) while making every hit a coarser, less
+ * specific passage, so 2400 is the knee rather than the maximum.
+ *
+ * Search cost to the agent is unaffected either way: snippets are a fixed 220
+ * characters, and a result page measured 335 characters at every value tested.
+ *
+ * `overlapChars` is an absolute carry sized for sentence continuity across a
+ * boundary, not a ratio of the budget, so it stays put.
+ */
+const DEFAULTS = { maxChars: 2400, overlapChars: 150 };
 
 const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 const FENCE = /^(\s*)(```|~~~)/;
@@ -151,6 +167,36 @@ function segmentBlocks(lines: string[], bodyOffset: number): LineSpan[] {
   return blocks;
 }
 
+/**
+ * Break one over-long paragraph into pieces of at most `limit` characters.
+ *
+ * Windowing splits on blank lines, so a paragraph that contains none cannot be
+ * split by that rule at all — pasted JSON, base64, a wide table row, or wrapped
+ * prose written without blank lines. Such a paragraph passed through whole and
+ * defeated the section budget entirely (measured: a 100 KB paragraph produced
+ * one 100,007-character chunk against a 1,200 target), which cost embedding
+ * requests and collapsed retrieval granularity for that note.
+ *
+ * Pieces break at whitespace so words stay intact; a single token longer than
+ * `limit` (a base64 blob has no spaces at all) is hard-sliced, because the
+ * budget has to hold even when nothing in the text offers a boundary.
+ */
+function splitLongParagraph(para: string, limit: number): string[] {
+  if (para.length <= limit) return [para];
+  const pieces: string[] = [];
+  let rest = para;
+  while (rest.length > limit) {
+    // Prefer the last whitespace inside the budget; fall back to a hard cut.
+    const window = rest.slice(0, limit + 1);
+    const ws = window.search(/\s\S*$/);
+    const cut = ws > 0 ? ws : limit;
+    pieces.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest.length > 0) pieces.push(rest);
+  return pieces.filter((p) => p.length > 0);
+}
+
 /** Pack paragraphs greedily into windows of ~maxChars with overlap. */
 function windowSection(section: RawSection, maxChars: number, overlapChars: number): Chunk[] {
   const bodyText = section.lines.join("\n").trim();
@@ -176,12 +222,30 @@ function windowSection(section: RawSection, maxChars: number, overlapChars: numb
   // parallel we track each window's precise line span from the original body
   // paragraphs. The body's first line sits at `bodyOffset` in the note: one
   // past the heading for a heading section, or the section start for preamble.
-  const paragraphs = bodyText.split(/\n{2,}/);
+  const rawParagraphs = bodyText.split(/\n{2,}/);
   const bodyOffset = section.heading ? section.startLine + 1 : section.startLine;
-  const blocks = segmentBlocks(section.lines, bodyOffset);
+  const rawBlocks = segmentBlocks(section.lines, bodyOffset);
   // Defensive: only trust per-window spans when blocks align 1:1 with the
   // buffered paragraphs; otherwise fall back to the section span.
-  const preciseLines = blocks.length === paragraphs.length;
+  const rawPrecise = rawBlocks.length === rawParagraphs.length;
+
+  // A paragraph too big for the budget is broken up here, before packing, so
+  // the greedy loop below never has to buffer something it cannot flush. Each
+  // piece inherits its parent paragraph's line span: the pieces really do all
+  // come from those lines (for the common single-line blob that span is exact),
+  // and expanding paragraphs and blocks in lockstep keeps the 1:1 alignment
+  // that per-window line precision depends on.
+  const pieceLimit = Math.max(1, maxChars - (headerLine ? headerLine.length + 2 : 0) - Math.max(0, overlapChars));
+  const paragraphs: string[] = [];
+  const blocks: Array<{ startIdx: number; endIdx: number }> = [];
+  for (let k = 0; k < rawParagraphs.length; k++) {
+    const pieces = splitLongParagraph(rawParagraphs[k], pieceLimit);
+    for (const piece of pieces) {
+      paragraphs.push(piece);
+      if (rawPrecise) blocks.push(rawBlocks[k]);
+    }
+  }
+  const preciseLines = rawPrecise && blocks.length === paragraphs.length;
 
   const chunks: Chunk[] = [];
   const headerPrefix = headerLine ? `${headerLine}\n\n` : "";

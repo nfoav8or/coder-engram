@@ -15,7 +15,11 @@ import { chunkMarkdown, ChunkOptions } from "../core/markdown-chunker";
 import { ScannedNote, ScanResult, isUnchangedNote } from "./vault-scanner";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 
-export const INDEX_VERSION = 1;
+// Bump whenever chunk BOUNDARIES change, not just the file format: a stale
+// index is otherwise kept and silently scored against the old chunking. Raised
+// to 2 when the section budget went 1200 -> 2400 and oversized paragraphs began
+// splitting — both change what a chunk is, so existing indexes must rebuild.
+export const INDEX_VERSION = 2;
 
 export interface IndexedChunk {
   id: string;

@@ -109,6 +109,45 @@ describe("chunkMarkdown", () => {
     expect(chunks[0].text).toContain("x");
   });
 
+  it("splits a paragraph that has no blank line to break on", () => {
+    // Windowing splits on blank lines, so a paragraph containing none used to
+    // pass through whole: a 100 KB paragraph became one 100,007-char chunk.
+    const md = "# Blob\n\n" + "word ".repeat(20_000);
+    const chunks = chunkMarkdown(md, { maxChars: 1200, overlapChars: 0 });
+    expect(chunks.length).toBeGreaterThan(50);
+    expect(Math.max(...chunks.map((c) => c.text.length))).toBeLessThanOrEqual(1200);
+    // Pieces break at whitespace, so no chunk starts or ends mid-word. (Tested
+    // without overlap: the carry is a raw char slice and may start mid-word by
+    // design — that predates this split and is unchanged by it.)
+    const bodies = chunks.map((c) => c.text.replace(/^# Blob\n\n/, ""));
+    expect(bodies.every((b) => /^word(\s+word)*\s*$/.test(b))).toBe(true);
+  });
+
+  it("hard-splits a single token with no whitespace to break on", () => {
+    // A base64 blob offers no boundary at all; the budget must still hold.
+    const md = "# Token\n\n" + "x".repeat(10_000);
+    const chunks = chunkMarkdown(md, { maxChars: 1200, overlapChars: 0 });
+    expect(Math.max(...chunks.map((c) => c.text.length))).toBeLessThanOrEqual(1200);
+    // Nothing is dropped: every x survives across the pieces.
+    const total = chunks.map((c) => c.text.replace(/^# Token\s*/, "")).join("").replace(/\s/g, "").length;
+    expect(total).toBe(10_000);
+  });
+
+  it("keeps precise line spans for normal paragraphs beside an oversized one", () => {
+    const md = ["# H", "", "first para", "", "y".repeat(3_000), "", "last para"].join("\n");
+    const chunks = chunkMarkdown(md, { maxChars: 1200, overlapChars: 0 });
+    // The short first paragraph still reports its own lines, not the section's.
+    expect(chunks[0].startLine).toBe(0);
+    expect(chunks[0].endLine).toBe(2);
+    // Pieces of the oversized paragraph carry its exact span — it is one line,
+    // so every piece maps to line 4 rather than falling back to the section.
+    expect(chunks[1].startLine).toBe(4);
+    expect(chunks[1].endLine).toBe(4);
+    // The final window holds the paragraph's tail plus "last para", so its span
+    // legitimately covers both.
+    expect(chunks.at(-1)!.endLine).toBe(6);
+  });
+
   it("skips frontmatter when bodyStartLine is provided", () => {
     const md = ["---", "tags: x", "---", "# Body", "text"].join("\n");
     const chunks = chunkMarkdown(md, { bodyStartLine: 3 });
