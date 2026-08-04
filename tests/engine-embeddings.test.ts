@@ -3,6 +3,7 @@ import { EngramEngine } from "../src/engine";
 import { InMemoryVaultAdapter } from "../src/core/vault-adapter";
 import { DEFAULT_SETTINGS, EngramSettings } from "../src/settings/settings";
 import { NULL_LOGGER } from "../src/utils/logger";
+import { FakeHttpClient } from "../src/core/http-client";
 
 const SEED = {
   "Notes/rag.md": "# RAG Pipeline\nThe vault indexing pipeline chunks markdown notes for retrieval.",
@@ -119,5 +120,62 @@ describe("EngramEngine M3 embeddings integration", () => {
     const results = await engine.search({ query: "ollama embedding backends" });
     expect(results.length).toBeGreaterThan(0);
     expect(results.some((r) => r.chunk.notePath === "Notes/embeddings.md")).toBe(true);
+  });
+});
+
+describe("excluded notes and the network", () => {
+  it("never sends an excluded note's text to the embedding provider", async () => {
+    // The strongest privacy claim in SECURITY.md — "excluded/sensitive notes
+    // are never indexed, so never embedded/sent" — held only because exclusion
+    // happens before indexing and embedding reads the index. Assert it where it
+    // actually matters: in the bytes that leave the machine. Using the
+    // OpenAI-compatible provider over a fake HTTP client means every request
+    // body is inspectable, rather than trusting the pipeline's shape.
+    const adapter = new InMemoryVaultAdapter("v", {
+      "Notes/public.md": "# Public\nkakapo conservation notes for the quarter.",
+      "Private/secret.md": "# Secret\nkakapo TAKAHE-CLASSIFIED payroll numbers.",
+      "Notes/tagged.md": "---\ntags: [private]\n---\n\n# Tagged\nkakapo MOA-CLASSIFIED board minutes.",
+    });
+    const http = new FakeHttpClient().on(
+      () => true,
+      (r) => {
+        // The provider probes liveness before embedding; without a healthy
+        // answer it degrades to lexical and never sends anything, which would
+        // make this test pass while proving nothing.
+        if (!r.url.includes("/embeddings")) return { status: 200, body: "{}" };
+        const inputs = (JSON.parse(r.body ?? "{}") as { input: string[] }).input ?? [];
+        return {
+          status: 200,
+          body: JSON.stringify({ data: inputs.map((_, i) => ({ index: i, embedding: [0.1, 0.2, 0.3] })) }),
+        };
+      },
+    );
+    let t = 10_000;
+    const engine = new EngramEngine(
+      adapter,
+      {
+        ...DEFAULT_SETTINGS,
+        embeddingProvider: "openai-compatible",
+        embeddingModel: "text-embedding-3-small",
+        embeddingEndpoint: "https://api.example.test/v1",
+        embeddingApiKey: "sk-test",
+        retrievalMode: "hybrid",
+        excludedFolders: ["Private"],
+        excludedTags: ["private"],
+      },
+      NULL_LOGGER,
+      () => t++,
+      { http },
+    );
+    await engine.reindex();
+    await engine.syncEmbeddings();
+
+    const sent = http.calls.map((c) => c.body ?? "").join("\n");
+    // The pipeline did run — otherwise this test proves nothing.
+    expect(sent).toContain("kakapo conservation notes");
+    expect(sent).not.toContain("TAKAHE-CLASSIFIED");
+    expect(sent).not.toContain("MOA-CLASSIFIED");
+    // Not even the excluded paths' names travel.
+    expect(sent).not.toContain("Private/secret.md");
   });
 });

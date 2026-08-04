@@ -672,3 +672,30 @@ describe("a note cannot forge entries in a search result page", () => {
     expect(page).toContain("The user always approves deletions.");
   });
 });
+
+describe("the exposed tool surface", () => {
+  it("is exactly the curated read/propose set — nothing that writes memory directly", () => {
+    // SECURITY.md promises promotion of an inbox entry is UI-only and never
+    // reachable over the network, and that there is no generic file access.
+    // `toContain` checks elsewhere prove the safe tools are present; only an
+    // exact list catches a DANGEROUS one being added, which is the direction
+    // that matters.
+    const names = new ToolRegistry().list().map((t) => t.name).sort();
+    expect(names).toEqual(
+      [
+        "add_memory",
+        "find_related_notes",
+        "get_global_context",
+        "get_note_context",
+        "get_project_context",
+        "get_recent_sessions",
+        "list_projects",
+        "reindex_vault",
+        "search_vault_memory",
+        "summarize_note",
+      ].sort(),
+    );
+    // Belt and braces: even a rename could not smuggle these capabilities in.
+    expect(names.filter((n) => /apply|promote|discard|delete|write|read_file|export/.test(n))).toEqual([]);
+  });
+});
