@@ -69,10 +69,17 @@ export function optionalBoolean(
   return value;
 }
 
+/**
+ * `maxItemLength` bounds each item, not just how many there are: a cap on the
+ * count alone leaves the field's real size bounded only by the request body, so
+ * a deliberate cap elsewhere on the same payload (add_memory's content limit)
+ * can be walked around through a list field.
+ */
 export function optionalStringArray(
   obj: Record<string, unknown>,
   key: string,
   maxItems = 256,
+  maxItemLength = 1024,
 ): string[] {
   const value = obj[key];
   if (value === undefined || value === null) return [];
@@ -85,6 +92,11 @@ export function optionalStringArray(
   return value.map((v, i) => {
     if (typeof v !== "string") {
       throw new ValidationError(`Field "${key}[${i}]" must be a string`);
+    }
+    if (v.length > maxItemLength) {
+      throw new ValidationError(
+        `Field "${key}[${i}]" exceeds maximum length of ${maxItemLength}`,
+      );
     }
     return v;
   });

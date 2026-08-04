@@ -361,8 +361,11 @@ const addMemoryTool: Tool = {
     const type = (MEMORY_TYPES.includes(rawType) ? rawType : "note") as MemoryEntry["type"];
     const project = optionalString(obj, "project", "", 200) || undefined;
     const source = optionalString(obj, "source", "MCP", 200) || "MCP";
-    const tags = optionalStringArray(obj, "tags", 64);
-    const relatedPaths = optionalStringArray(obj, "relatedPaths", 128);
+    // Sized to what the field IS: a tag is a word, a related path is a vault
+    // path. Without a per-item bound the content cap above is decorative —
+    // the same 1 MB body fits in `relatedPaths` instead.
+    const tags = optionalStringArray(obj, "tags", 64, 128);
+    const relatedPaths = optionalStringArray(obj, "relatedPaths", 128, 512);
 
     // Network path is inbox-only by construction: no `direct` option is passed.
     const { path, duplicate } = await ctx.engine.addMemory({

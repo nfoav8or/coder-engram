@@ -98,6 +98,27 @@ describe("add_memory", () => {
     await expect(registry.call("add_memory", { content: "" }, ctx)).rejects.toThrow();
   });
 
+  it("bounds each list item, not just how many there are", async () => {
+    // Without a per-item cap the 50 000-character content limit above is
+    // decorative: the same payload fits in relatedPaths instead.
+    const { adapter, ctx } = makeContext();
+    const registry = new ToolRegistry();
+    await expect(
+      registry.call("add_memory", { content: "hi", relatedPaths: ["a".repeat(600)] }, ctx),
+    ).rejects.toThrow(/exceeds maximum length/);
+    await expect(
+      registry.call("add_memory", { content: "hi", tags: ["t".repeat(200)] }, ctx),
+    ).rejects.toThrow(/exceeds maximum length/);
+    // A real path and a real tag are nowhere near those bounds.
+    await registry.call(
+      "add_memory",
+      { content: "hi", relatedPaths: ["docs/architecture.md"], tags: ["decision"] },
+      ctx,
+    );
+    const inbox = await adapter.read("Claude Code/Memory/Inbox/pending-memory.md");
+    expect(inbox).toContain("docs/architecture.md");
+  });
+
   it("coerces an unknown type to 'note'", async () => {
     const { adapter, ctx } = makeContext();
     const registry = new ToolRegistry();
