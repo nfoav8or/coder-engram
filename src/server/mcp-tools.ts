@@ -20,6 +20,7 @@ import { EngramEngine } from "../engine";
 import { EngramSettings } from "../settings/settings";
 import { Logger } from "../utils/logger";
 import { ValidationError } from "../utils/errors";
+import { formatModifiedDate } from "../utils/format";
 import {
   requireObject,
   requireString,
@@ -314,7 +315,7 @@ const searchTool: Tool = {
       // The note's modified date lets the agent judge staleness when memories
       // conflict — a deliberate alternative to recency-RANKING, which would
       // change scoring semantics. Day granularity; ~11 chars per result.
-      const modified = new Date(r.chunk.mtime).toISOString().slice(0, 10);
+      const modified = formatModifiedDate(r.chunk.mtime);
       const pending = r.chunk.notePath === pendingPath ? " [PENDING REVIEW — proposed, not yet accepted]" : "";
       return `${i + 1}. ${r.chunk.notePath} › ${heading} (${lines}, ${modified})${pending}\n${r.snippet}`;
     });

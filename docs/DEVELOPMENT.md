@@ -80,7 +80,6 @@ src/
     add-memory-modal.ts         add-memory UI
     pending-memory-modal.ts     inbox review UI
     simple-modals.ts            prompt / text-display helpers
-    format.ts                   pure display helpers (line ranges)
   indexing/
     vault-scanner.ts            note enumeration + filters
     index-manager.ts            build / refresh / persist / load
@@ -132,7 +131,8 @@ src/
   utils/
     paths.ts                    path safety (resolveInVault)
     logger.ts                   debug-gated logger + redaction
-    errors.ts                   typed errors
+    errors.ts                   typed errors + toMessage
+    format.ts                   pure display helpers (line range, mtime day)
     validation.ts               small validators
     debounce.ts                 debounce helper
 tests/                          Vitest suite (mirrors src)

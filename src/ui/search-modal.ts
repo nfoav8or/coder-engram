@@ -8,7 +8,7 @@ import { toMessage } from "../utils/errors";
 import { EngramEngine } from "../engine";
 import { RetrievalResult } from "../retrieval/retriever";
 import { findTermMatches } from "../retrieval/ranking";
-import { formatLineRange, formatModifiedDate } from "./format";
+import { formatLineRange, formatModifiedDate } from "../utils/format";
 
 export class SearchModal extends Modal {
   private query = "";

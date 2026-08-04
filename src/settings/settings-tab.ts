@@ -52,6 +52,29 @@ export class EngramSettingTab extends PluginSettingTab {
     t.inputEl.addEventListener("blur", () => void this.flushCommit());
   }
 
+  /**
+   * A scan-list setting: one path/tag/pattern per line, parsed on input and
+   * committed on blur like every other text field. The four of these differ
+   * only in label and which key they write, so they share one builder.
+   */
+  private addListSetting(
+    containerEl: HTMLElement,
+    name: string,
+    desc: string,
+    key: "includedFolders" | "excludedFolders" | "excludedTags" | "excludedPathPatterns",
+  ): void {
+    new Setting(containerEl)
+      .setName(name)
+      .setDesc(desc)
+      .addTextArea((t) => {
+        t.setValue(this.s[key].join("\n")).onChange((v) => {
+          this.s[key] = parseList(v);
+          this.dirty = true;
+        });
+        this.deferCommit(t);
+      });
+  }
+
   private async flushCommit(): Promise<void> {
     if (this.rawMemoryRoot !== null) {
       const value = this.rawMemoryRoot.trim();
@@ -106,49 +129,25 @@ export class EngramSettingTab extends PluginSettingTab {
         this.deferCommit(t);
       });
 
-    new Setting(containerEl)
-      .setName("Included folders")
-      .setDesc("Allowlist (one per line or comma-separated). Empty = whole vault.")
-      .addTextArea((t) => {
-        t.setValue(this.s.includedFolders.join("\n")).onChange((v) => {
-          this.s.includedFolders = parseList(v);
-          this.dirty = true;
-        });
-        this.deferCommit(t);
-      });
-
-    new Setting(containerEl)
-      .setName("Excluded folders")
-      .setDesc("Denylist of folders to skip.")
-      .addTextArea((t) => {
-        t.setValue(this.s.excludedFolders.join("\n")).onChange((v) => {
-          this.s.excludedFolders = parseList(v);
-          this.dirty = true;
-        });
-        this.deferCommit(t);
-      });
-
-    new Setting(containerEl)
-      .setName("Excluded tags")
-      .setDesc("Notes carrying any of these tags are never indexed.")
-      .addTextArea((t) => {
-        t.setValue(this.s.excludedTags.join("\n")).onChange((v) => {
-          this.s.excludedTags = parseList(v);
-          this.dirty = true;
-        });
-        this.deferCommit(t);
-      });
-
-    new Setting(containerEl)
-      .setName("Excluded path patterns")
-      .setDesc("Glob (*, **) or substring patterns for sensitive notes to skip.")
-      .addTextArea((t) => {
-        t.setValue(this.s.excludedPathPatterns.join("\n")).onChange((v) => {
-          this.s.excludedPathPatterns = parseList(v);
-          this.dirty = true;
-        });
-        this.deferCommit(t);
-      });
+    this.addListSetting(
+      containerEl,
+      "Included folders",
+      "Allowlist (one per line or comma-separated). Empty = whole vault.",
+      "includedFolders",
+    );
+    this.addListSetting(containerEl, "Excluded folders", "Denylist of folders to skip.", "excludedFolders");
+    this.addListSetting(
+      containerEl,
+      "Excluded tags",
+      "Notes carrying any of these tags are never indexed.",
+      "excludedTags",
+    );
+    this.addListSetting(
+      containerEl,
+      "Excluded path patterns",
+      "Glob (*, **) or substring patterns for sensitive notes to skip.",
+      "excludedPathPatterns",
+    );
 
     new Setting(containerEl)
       .setName("Index attachments")

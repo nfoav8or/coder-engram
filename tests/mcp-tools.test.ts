@@ -427,6 +427,18 @@ describe("RateLimiter.enforceWindow", () => {
     expect(out).not.toMatch(/score \d/);
   });
 
+  it("search_vault_memory survives a chunk with an unusable mtime", async () => {
+    // The index is a rebuildable cache; a corrupt or partially-written entry can
+    // leave mtime non-numeric. Formatting the date inline threw RangeError out
+    // of the whole response — the shared helper renders it empty instead.
+    const { engine, ctx } = makeContext({ "Notes/a.md": "# A\n\nkakapo nesting survey notes." });
+    await engine.reindex();
+    for (const c of engine.getNoteChunks("Notes/a.md")) (c as { mtime: number }).mtime = NaN;
+    const registry = new ToolRegistry();
+    const out = await registry.call("search_vault_memory", { query: "kakapo nesting" }, ctx);
+    expect(out).toContain("Notes/a.md");
+  });
+
   it("search_vault_memory backfills the page with distinct results when duplicates are dropped", async () => {
     const decision = "We chose a local JSON index for indexing performance and offline retrieval.";
     const { engine, ctx } = makeContext({

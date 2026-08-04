@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatLineRange, formatModifiedDate } from "../src/ui/format";
+import { formatLineRange, formatModifiedDate } from "../src/utils/format";
 
 describe("formatLineRange", () => {
   it("renders a single 0-based line as a 1-based 'Line N'", () => {

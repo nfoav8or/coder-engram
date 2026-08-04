@@ -1,6 +1,6 @@
 /**
- * Small pure presentation helpers for the UI layer. No `obsidian` import, so
- * these stay unit-testable in the node test environment.
+ * Small pure presentation helpers shared by the UI and the MCP server. No
+ * `obsidian` import, so they stay unit-testable in the node test environment.
  */
 
 /**
