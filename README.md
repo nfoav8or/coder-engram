@@ -169,6 +169,7 @@ Settings live under **Settings → Coder Engram**. Key settings and their safe d
 | Excluded tags | *(empty)* | Notes with any of these tags are never indexed. |
 | Excluded path patterns | *(empty)* | Glob (`*`, `**`) or substring patterns for sensitive notes. |
 | Index attachments | `false` | Extract and index text from PDFs (Obsidian's bundled PDF engine), Office documents (docx/pptx/xlsx, odt/odp/ods, rtf — dependency-free extraction), plain text (txt/csv), and Canvas cards, locally. Exclusions apply; extracted text is searchable/readable over the local server like any note. |
+| Index text inside images | `false` | Reads text out of PNG/JPG/WEBP/BMP attachments by delegating to the [Text Extractor](https://github.com/scambier/obsidian-text-extractor) plugin; with that plugin absent, nothing happens. **The one attachment path that can cause network activity** — Text Extractor downloads its OCR language data on first use. Requires **Index attachments**. |
 | Auto-index on file change | `false` | Debounced (~2.5s) refresh when notes change. |
 | Default project | *(empty)* | Used by project-context and add-to-project commands. |
 | Embedding provider | `none` | Lexical BM25 always works with `none`. `ollama` and `openai-compatible` enable vector/hybrid retrieval; `mock` is a deterministic dev provider. |
