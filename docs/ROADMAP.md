@@ -106,6 +106,7 @@ Coder Engram is built in milestones. Milestones 1 through 12 are complete (throu
 
 ## Deferred / future
 
+- **MCP revision 2026-07-28.** This server implements 2025-06-18 and negotiates it honestly (see docs/MCP_SERVER.md); the current revision has since moved twice (2025-11-25, then 2026-07-28). The newer revision is a base-protocol rewrite, not a tools change: it removes the `initialize`/`notifications/initialized` handshake and `ping` in favour of a stateless model where each request carries `io.modelcontextprotocol/protocolVersion` in `_meta`, requires a new `server/discover` RPC, and answers a version mismatch with `UnsupportedProtocolVersionError`. The tool surface is untouched — `tools/list` and `tools/call` still use `inputSchema`, `content`, `isError`, and `nextCursor` — so the work is confined to the protocol layer. **Not urgent:** the spec explicitly permits a server to implement both eras ("A server that wishes to support both legacy clients … and modern clients … MAY implement both behaviors"), and its own compatibility matrix has legacy-client/legacy-server working, which is what Claude Code does today.
 - Non-desktop support (currently `isDesktopOnly`).
 - Scanned-PDF OCR. The same delegation would need Text Extractor's PDF path, which its own README flags as unreliable.
 - Cost control for a first refresh over thousands of images: OCR is serial and expensive per cache miss, and capping the work per scan would mean partial-index semantics.
