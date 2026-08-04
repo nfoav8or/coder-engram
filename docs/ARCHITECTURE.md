@@ -38,7 +38,7 @@ The **server layer** (`server/`, added in Milestone 2) sits beside the UI layer:
 
 An optional, off-by-default local server that exposes a curated MCP tool set to Claude Code. It mirrors the "thin shell + pure core" discipline of the `VaultAdapter` boundary — everything security-relevant is testable without a socket:
 
-- `server/local-server.ts` — the only file importing `node:http`. Owns binding (localhost by default; non-loopback refused without an explicit opt-in **and** a token), request hardening (POST-only, JSON content-type, 1 MB body cap), DNS-rebinding guards, auth, and the start/stop lifecycle.
+- `server/local-server.ts` — the only file importing `node:http` (`server/auth.ts` uses `node:crypto`; the server layer is the only layer permitted any `node:*` import, and `tests/architecture.test.ts` enforces that allowlist along with the `obsidian`-import and `resolveInVault` rules). Owns binding (localhost by default; non-loopback refused without an explicit opt-in **and** a token), request hardening (POST-only, JSON content-type, 1 MB body cap), DNS-rebinding guards, auth, and the start/stop lifecycle.
 - `server/mcp-protocol.ts` — pure JSON-RPC 2.0 dispatch for the MCP methods (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`).
 - `server/mcp-tools.ts` — the tool registry and handlers over `EngramEngine`, argument validation, and a `RateLimiter`. Network writes are inbox-only.
 - `server/auth.ts` — bearer-token extraction and constant-time comparison.
