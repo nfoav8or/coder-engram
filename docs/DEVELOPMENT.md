@@ -43,8 +43,11 @@ Before committing, run `npm run typecheck`, `npm run test`, and `npm run build`.
 
 `tests/e2e/run.mjs` drives the **real plugin inside a real Obsidian** with
 Playwright, asserting on rendered DOM (e.g. that search snippets highlight
-whole-word matches). It complements the Vitest suite, which covers the pure core
-but never renders the Obsidian UI.
+whole-word matches). It also drives the MCP server over real HTTP — auth,
+protocol-version negotiation, search, the inbox → `[PENDING REVIEW]` loop, and
+PDF/docx attachment extraction through Obsidian's own engines. It complements
+the Vitest suite, which covers the pure core but never renders the Obsidian UI
+and never starts a real listener.
 
 It is **local-only and deliberately excluded from `npm test` and CI**: it needs
 Obsidian installed and a display, which CI runners don't have. Run it after a

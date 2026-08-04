@@ -318,6 +318,25 @@ try {
     clientInfo: { name: "e2e", version: "0" },
   });
   check("MCP initialize succeeds", init.status === 200 && !!init.body?.result);
+  // Negotiation over the wire, not just in the unit tests: an older revision we
+  // do implement is agreed to verbatim...
+  check(
+    "MCP agrees to an older protocol revision it implements",
+    init.body?.result?.protocolVersion === "2024-11-05",
+    init.body?.result?.protocolVersion ?? "(none)",
+  );
+  // ...and one we do not is answered with ours, so the client can decide to
+  // disconnect rather than proceed on a promise we cannot keep.
+  const future = await rpc("initialize", {
+    protocolVersion: "2026-07-28",
+    capabilities: {},
+    clientInfo: { name: "e2e", version: "0" },
+  });
+  check(
+    "MCP answers an unimplemented revision with its own",
+    future.body?.result?.protocolVersion === "2025-06-18",
+    future.body?.result?.protocolVersion ?? "(none)",
+  );
 
   const search = await rpc("tools/call", {
     name: "search_vault_memory",

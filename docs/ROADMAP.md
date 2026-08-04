@@ -78,7 +78,7 @@ Coder Engram is built in milestones. Milestones 1 through 12 are complete (throu
 - Community-catalog compliance: sentence-case UI text, `Modal.setTitle()` / `Setting.setHeading()`, CSS-class styling, action-statement manifest description, README network-use disclosure.
 - Settings/UI correctness: text fields commit on blur (no per-keystroke server rebinds or index reloads), server auth uses a committed settings snapshot, real restart lever preserved, shared reindex guard, superseded-search rendering fix, modified dates in UI search results.
 - Exclusion changes trigger their own refresh (0.4.0 audit follow-up).
-- e2e coverage of the MCP server over the wire (14 checks), including the inbox → `[PENDING REVIEW]` safety loop.
+- e2e coverage of the MCP server over the wire, including the inbox → `[PENDING REVIEW]` safety loop. (The suite has grown since; `npm run test:e2e` prints the current count.)
 
 ## Milestone 10 — attachments become memory (done, v0.6.0)
 
