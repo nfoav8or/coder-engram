@@ -10,7 +10,7 @@
  * `\binN` raw-binary runs are jumped over.
  */
 
-import { TextExtractor, attachmentTitle } from "./text-extractor";
+import { TextExtractor, attachmentTitle, normalizeExtractedText } from "./text-extractor";
 
 /** Destinations whose group content is never body text. */
 const SKIP_DESTINATIONS = new Set([
@@ -139,15 +139,7 @@ export function rtfToText(rtf: string): string {
       i++;
     }
   }
-  // Cleanup must stay linear: /[ \t]+\n/ is quadratic on long space runs
-  // (measured 4× per size doubling), so trim line ends with split/trimEnd.
-  return out
-    .join("")
-    .split("\n")
-    .map((l) => l.trimEnd())
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return normalizeExtractedText(out.join("")).trim();
 }
 
 export class RtfExtractor implements TextExtractor {

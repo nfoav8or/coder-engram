@@ -51,6 +51,22 @@ export function renderPdfMarkdown(title: string, pages: string[]): string | null
 }
 
 /**
+ * Trim trailing whitespace per line and collapse 3+ newlines to a paragraph
+ * break — the shape the chunker windows on.
+ *
+ * Deliberately split/trimEnd rather than a `/[ \t]+\n/` regex: that pattern is
+ * quadratic on long runs of spaces (measured 4x per size doubling), and every
+ * extractor here runs over untrusted bytes.
+ */
+export function normalizeExtractedText(text: string): string {
+  return text
+    .split("\n")
+    .map((l) => l.trimEnd())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+/**
  * Join pdf.js text items into a page string. Items arrive in reading order
  * with `hasEOL` marking line breaks; blank lines between text blocks become
  * paragraph breaks, which the chunker windows on.
@@ -61,10 +77,5 @@ export function joinPdfTextItems(items: Array<{ str: string; hasEOL?: boolean }>
     out += item.str;
     if (item.hasEOL) out += "\n";
   }
-  // Collapse 3+ newlines to paragraph breaks and trim trailing spaces per line.
-  return out
-    .split("\n")
-    .map((l) => l.trimEnd())
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n");
+  return normalizeExtractedText(out);
 }

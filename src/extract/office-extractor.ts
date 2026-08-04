@@ -21,6 +21,9 @@
 import { TextExtractor, attachmentTitle } from "./text-extractor";
 import { newInflateBudget, readZipDirectory, readZipEntry, readZipText } from "./zip";
 
+/** One decoder for every part read here — OOXML/OpenDocument XML is UTF-8. */
+const utf8 = new TextDecoder("utf-8");
+
 /**
  * Ceiling on slide/worksheet parts read from one archive (the PDF extractor
  * caps pages at 500 the same way). Together with the shared inflate budget
@@ -68,7 +71,7 @@ function endsTagName(c: string): boolean {
  * Linear scan for non-nested `<tag ...>...</tag>` blocks. Unclosed or
  * malformed structure terminates the scan instead of backtracking.
  */
-export function xmlBlocks(xml: string, tag: string): XmlBlock[] {
+function xmlBlocks(xml: string, tag: string): XmlBlock[] {
   const openTok = `<${tag}`;
   const closeTok = `</${tag}>`;
   const out: XmlBlock[] = [];
@@ -162,7 +165,7 @@ async function extractPptx(title: string, data: Uint8Array): Promise<string | nu
     .slice(0, MAX_PARTS);
   const sections: string[] = [];
   for (let i = 0; i < slides.length; i++) {
-    const xml = new TextDecoder("utf-8").decode(await readZipEntry(data, slides[i], budget));
+    const xml = utf8.decode(await readZipEntry(data, slides[i], budget));
     const text = xmlBlocks(xml, "a:p")
       .map((p) => textRuns(p.inner, "a:t").join("").trim())
       .filter(Boolean)
@@ -196,7 +199,7 @@ async function extractXlsx(title: string, data: Uint8Array): Promise<string | nu
     .slice(0, MAX_PARTS);
   const inline: string[] = [];
   for (const sheet of sheets) {
-    const xml = new TextDecoder("utf-8").decode(await readZipEntry(data, sheet, budget));
+    const xml = utf8.decode(await readZipEntry(data, sheet, budget));
     for (const is of xmlBlocks(xml, "is")) {
       const text = textRuns(is.inner, "t").join("").trim();
       if (text) inline.push(text);
