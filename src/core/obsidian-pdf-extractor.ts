@@ -17,10 +17,52 @@ import { TextExtractor, attachmentTitle, renderPdfMarkdown, joinPdfTextItems } f
 /** Bound on pages extracted per PDF, so one huge scan can't stall a refresh. */
 const MAX_PAGES = 500;
 
+/**
+ * Wall-clock bound on one document.
+ *
+ * The page cap bounds how much we ASK for; it does not bound how long pdf.js
+ * takes to answer. A malformed file that makes the parser spin does not throw,
+ * so the `catch` below never runs — the await simply never settles, and the
+ * refresh that is waiting on it never finishes. `ObsidianHttpClient` races
+ * `requestUrl` against a timer for exactly this reason; attachments are
+ * untrusted bytes, so the same guard belongs here.
+ *
+ * 60 s is far past any real document (a 500-page PDF extracts in seconds) and
+ * far short of a user noticing a wedged refresh.
+ */
+const EXTRACT_TIMEOUT_MS = 60_000;
+
+/**
+ * Reject if `work` has not settled within the timeout. The underlying work is
+ * abandoned rather than cancelled — pdf.js offers no cancellation — so this
+ * bounds the WAIT, not the worker.
+ */
+async function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`PDF extraction timed out after ${ms}ms: ${label}`)), ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export class ObsidianPdfExtractor implements TextExtractor {
   readonly extensions = [".pdf"];
 
   async extract(path: string, data: ArrayBuffer): Promise<string | null> {
+    return withTimeout(this.extractPages(path, data), EXTRACT_TIMEOUT_MS, path).catch(() => null);
+  }
+
+  /**
+   * Returns null for a PDF with no extractable text, and for a corrupt,
+   * encrypted, or unparseable one — the caller skips the attachment either way.
+   * A timeout surfaces as a rejection that `extract` turns into the same null:
+   * a file that wedges the parser is treated exactly like one that fails it.
+   */
+  private async extractPages(path: string, data: ArrayBuffer): Promise<string | null> {
     let doc: { numPages: number; getPage(n: number): Promise<unknown>; destroy(): Promise<void> } | null =
       null;
     try {
