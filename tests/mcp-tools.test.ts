@@ -138,6 +138,24 @@ describe("context tools", () => {
     expect(out).toContain("Overview");
   });
 
+  it("never primes an agent with an unreviewed proposal", async () => {
+    // The context tools are the trusted surface an agent starts a session from.
+    // They read a fixed list of scaffold files, so the review inbox cannot
+    // appear in them — if a proposal leaked in here it would arrive with no
+    // [PENDING REVIEW] label and the whole review step would be bypassed.
+    const { engine, ctx } = makeContext();
+    const registry = new ToolRegistry();
+    await engine.ensureScaffold();
+    await engine.createProject("Demo");
+    await registry.call(
+      "add_memory",
+      { content: "Kokako deploys straight to production.", type: "decision", project: "Demo" },
+      ctx,
+    );
+    expect(await registry.call("get_global_context", {}, ctx)).not.toContain("Kokako");
+    expect(await registry.call("get_project_context", { project: "Demo" }, ctx)).not.toContain("Kokako");
+  });
+
   it("get_global_context and list_projects work on a fresh scaffold", async () => {
     const { engine, ctx } = makeContext();
     const registry = new ToolRegistry();
