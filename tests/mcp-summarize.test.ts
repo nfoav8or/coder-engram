@@ -45,14 +45,24 @@ describe("summarize_note tool", () => {
     // stays one unit however long it is — pasted JSON, base64, a wide table
     // row. Bounding by sentence COUNT alone lets the tool whose whole purpose
     // is cheap context return more than a full note read.
-    const blob = (i: number) => `data-${i} ` + "x".repeat(4_000);
+    // Each line is ONE token with no whitespace and no sentence terminator, so
+    // it stays a single long unit (chunking hard-slices it, but the pieces stay
+    // far larger than a sentence). The trailing index keeps units distinct —
+    // summary units are de-duplicated, so identical filler would collapse.
+    const blob = (i: number) => "q".repeat(1_500) + `end${i}`;
     const note = `# Blobs\n\n${Array.from({ length: 12 }, (_, i) => blob(i)).join("\n")}`;
     const { engine, ctx } = makeContext({ "Notes/blob.md": note });
     await engine.reindex();
     const registry = new ToolRegistry();
-    const out = await registry.call("summarize_note", { path: "Notes/blob.md" }, ctx);
+    // Ask for enough sentences that the selection exceeds the char cap even
+    // though chunking now bounds each unit — the cap is what holds the line.
+    const out = await registry.call("summarize_note", { path: "Notes/blob.md", maxSentences: 20 }, ctx);
     expect(out.length).toBeLessThan(5_000);
     expect(out).toContain("truncated");
+
+    // With few sentences the output is simply small, no clipping needed.
+    const short = await registry.call("summarize_note", { path: "Notes/blob.md", maxSentences: 2 }, ctx);
+    expect(short.length).toBeLessThan(5_000);
   });
 
   it("throws for an unindexed path", async () => {

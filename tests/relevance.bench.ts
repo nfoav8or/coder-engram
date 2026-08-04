@@ -161,6 +161,35 @@ function buildVault(): { seed: Record<string, string>; queries: GoldenQuery[] } 
     queries.push({ cls: "phrase", query: phrase, needle });
   });
 
+  // longnote — the needle fact sits inside a note far longer than one chunk, so
+  // the answer depends on how the section was windowed. Every other class uses
+  // notes small enough to index as a single chunk, which left the chunk-budget
+  // setting invisible to this harness: raising maxChars moved nothing here even
+  // though it changes what a chunk IS. A longer chunk also carries more
+  // unrelated words, diluting BM25 term density, and this is where that shows.
+  const longNeedles: Array<[string, string]> = [
+    ["sablewing escalation path", "the sablewing escalation path routes through the duty lead"],
+    ["hearthstone retention window", "the hearthstone retention window is ninety days"],
+    ["padlock rotation interval", "the padlock rotation interval was shortened to seven days"],
+    ["quillfeather export limit", "the quillfeather export limit caps at four thousand rows"],
+    ["brackenridge failover order", "the brackenridge failover order puts the replica first"],
+    ["tidewater approval quorum", "the tidewater approval quorum needs three reviewers"],
+  ];
+  longNeedles.forEach(([q, fact], i) => {
+    const path = `Longform/long-${i}.md`;
+    // Windowing applies per SECTION, so the fact's own section has to exceed
+    // the budget or the setting never bites: ~6k chars of paragraphs around the
+    // fact, split across blank lines so the windower has boundaries to use.
+    const para = () => noiseWords(rng, 90);
+    const filler = (n: number) => Array.from({ length: n }, para).join("\n\n");
+    const section = (n: number) => `## Section ${n}\n\n${para()}\n`;
+    seed[path] =
+      `# Longform note ${i}\n\n${section(1)}\n` +
+      `## Section 2\n\n${filler(5)}\n\n${para()} ${fact} ${para()}\n\n${filler(5)}\n\n` +
+      section(3);
+    queries.push({ cls: "longnote", query: q, needle: path });
+  });
+
   return { seed, queries };
 }
 

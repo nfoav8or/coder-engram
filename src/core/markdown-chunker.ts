@@ -40,12 +40,19 @@ export interface ChunkOptions {
 /**
  * Section budget and the overlap carried between windows of one section.
  *
- * `maxChars` sits where the measured curve flattens. At production scale (2000
- * notes) raising it from 1200 to 2400 cut the corpus from 19,132 chunks to
- * 13,286 (−31%), the index from 18.0 MB to 15.7 MB, and lexical p50 from 15.8 ms
- * to 10.0 ms (−37%) — with fewer, larger units to embed. Going further pays much
- * less (4000 reaches only −41% chunks) while making every hit a coarser, less
- * specific passage, so 2400 is the knee rather than the maximum.
+ * `maxChars` is bounded by RELEVANCE, not by the cost curve. At production scale
+ * (2000 notes) raising it from 1200 to 2000 cuts the corpus from 19,132 chunks
+ * to 14,407 (−25%), the index from 18.0 MB to 16.1 MB, and lexical p50 from
+ * 15.8 ms to 10.9 ms (−31%), with fewer, larger units to embed.
+ *
+ * Cost keeps improving past this — 2400 reaches −31% chunks and 10.0 ms — but
+ * relevance does not. A fact buried inside a long section holds MRR 1.00 up to
+ * 2200 and drops to 0.83 at 2400 (`longnote` class in the relevance eval): the
+ * needle falls out of first place because a bigger chunk carries more unrelated
+ * words and dilutes BM25 term density, which also pushed the chars an agent
+ * reads before reaching the answer from 274 to 371. 2000 sits a step below that
+ * boundary rather than on it, since the eval corpus is synthetic and the true
+ * edge should not be trusted to the exact digit.
  *
  * Search cost to the agent is unaffected either way: snippets are a fixed 220
  * characters, and a result page measured 335 characters at every value tested.
@@ -53,7 +60,7 @@ export interface ChunkOptions {
  * `overlapChars` is an absolute carry sized for sentence continuity across a
  * boundary, not a ratio of the budget, so it stays put.
  */
-const DEFAULTS = { maxChars: 2400, overlapChars: 150 };
+const DEFAULTS = { maxChars: 2000, overlapChars: 150 };
 
 const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 const FENCE = /^(\s*)(```|~~~)/;
