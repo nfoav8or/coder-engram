@@ -19,8 +19,34 @@ import { toMessage } from "../utils/errors";
 import { isPlainObject } from "../utils/validation";
 import { Logger } from "../utils/logger";
 
-/** Protocol version we advertise; we echo the client's if it sends a string. */
+/** Protocol version we advertise when the client asks for one we don't speak. */
 export const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
+
+/**
+ * Versions this server will negotiate, latest first.
+ *
+ * The 2025-06-18 lifecycle spec: "If the server supports the requested protocol
+ * version, it MUST respond with the same version. Otherwise, the server MUST
+ * respond with another protocol version it supports. This SHOULD be the latest
+ * version supported by the server." — so an unknown version gets
+ * DEFAULT_PROTOCOL_VERSION (the first entry here), and the client decides
+ * whether it can live with that.
+ *
+ * The two older revisions are listed because the four methods this server
+ * implements — initialize, ping, tools/list, tools/call — are wire-identical
+ * across them: same `inputSchema` on a tool, same `content` array and `isError`
+ * on a result, same `nextCursor` paging. 2025-06-18 added `outputSchema` and
+ * `structuredContent`, which are optional and which this server does not emit.
+ *
+ * Newer revisions are deliberately absent. They replaced this negotiation with
+ * an `UnsupportedProtocolVersionError`, so answering one would claim a revision
+ * this server does not implement.
+ */
+export const SUPPORTED_PROTOCOL_VERSIONS: readonly string[] = [
+  DEFAULT_PROTOCOL_VERSION,
+  "2025-03-26",
+  "2024-11-05",
+];
 
 export const JsonRpcErrorCode = {
   ParseError: -32700,
@@ -92,8 +118,14 @@ export async function handleRpcMessage(
         const requested = isPlainObject(params) && typeof params.protocolVersion === "string"
           ? params.protocolVersion
           : DEFAULT_PROTOCOL_VERSION;
+        // Echoing whatever the client named would claim support for revisions
+        // this server has never implemented, and the client would then proceed
+        // on that promise.
+        const agreed = SUPPORTED_PROTOCOL_VERSIONS.includes(requested)
+          ? requested
+          : DEFAULT_PROTOCOL_VERSION;
         return ok(id, {
-          protocolVersion: requested,
+          protocolVersion: agreed,
           capabilities: { tools: { listChanged: false } },
           serverInfo: deps.serverInfo,
         });

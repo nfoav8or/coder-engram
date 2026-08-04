@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The MCP handshake no longer agrees to a protocol version it does not implement.** `initialize` echoed whatever `protocolVersion` the client sent, so a client asking for a revision this server has never spoken — including ones newer than it — was told yes, and would then proceed on that promise. The 2025-06-18 lifecycle spec is explicit: agree to the requested version when supported, otherwise answer with the latest the server does support and let the client decide whether to disconnect. Three revisions are now declared and honoured (`2025-06-18`, `2025-03-26`, `2024-11-05`) because the four methods this server implements are wire-identical across them; anything else is answered with `2025-06-18`.
+
 - **An incremental refresh no longer re-reads the tags and links of every attachment.** The markdown side of a refresh is O(changed), but the attachment pass walked all attachments each time and re-derived their metadata from text that had not changed, on the main thread, for every debounced auto-index. A warm refresh of 300 attachments went from **11.8 ms to 1.1 ms**; over link-dense text at the 32 MB corpus budget the re-derivation alone measures **716 ms**. Metadata is now cached alongside the extracted text. A cache file written before this field upgrades in place, so no attachment is re-extracted, and tag exclusions are still applied at emit time, so changing excluded tags re-evaluates without re-extraction.
 
 ### Added

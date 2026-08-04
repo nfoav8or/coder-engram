@@ -9,6 +9,7 @@ import {
   ProtocolDeps,
   JsonRpcErrorCode,
   DEFAULT_PROTOCOL_VERSION,
+  SUPPORTED_PROTOCOL_VERSIONS,
 } from "../src/server/mcp-protocol";
 
 function makeDeps(seed: Record<string, string> = {}): ProtocolDeps {
@@ -48,6 +49,32 @@ describe("handleRpcMessage", () => {
   it("defaults the protocol version when the client omits it", async () => {
     const res = await handleRpcMessage({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, makeDeps());
     expect((res?.result as { protocolVersion: string }).protocolVersion).toBe(DEFAULT_PROTOCOL_VERSION);
+  });
+
+  it("agrees to an older protocol revision it actually implements", async () => {
+    // The four methods this server implements are wire-identical across these
+    // revisions, so an older client keeps working rather than being told to
+    // disconnect.
+    for (const version of SUPPORTED_PROTOCOL_VERSIONS) {
+      const res = await handleRpcMessage(
+        { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: version } },
+        makeDeps(),
+      );
+      expect((res?.result as { protocolVersion: string }).protocolVersion).toBe(version);
+    }
+  });
+
+  it("answers a version it does not speak with its own, rather than agreeing to anything", async () => {
+    // Echoing the request would promise a revision this server has never
+    // implemented; the spec wants our latest instead, and lets the client
+    // decide whether to disconnect.
+    for (const version of ["2026-07-28", "2025-11-25", "not-a-version", ""]) {
+      const res = await handleRpcMessage(
+        { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: version } },
+        makeDeps(),
+      );
+      expect((res?.result as { protocolVersion: string }).protocolVersion).toBe(DEFAULT_PROTOCOL_VERSION);
+    }
   });
 
   it("lists tools", async () => {

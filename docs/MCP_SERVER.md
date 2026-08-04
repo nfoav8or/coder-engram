@@ -49,7 +49,7 @@ Standard MCP over HTTP (JSON-RPC 2.0). Supported methods:
 
 | Method | Behavior |
 | --- | --- |
-| `initialize` | Returns `protocolVersion`, `capabilities.tools`, and `serverInfo`. Echoes the client's requested protocol version. |
+| `initialize` | Returns `protocolVersion`, `capabilities.tools`, and `serverInfo`. Negotiates per the 2025-06-18 lifecycle rule: the requested version is agreed to when it is one this server implements (`2025-06-18`, `2025-03-26`, `2024-11-05` — wire-identical for `initialize`/`ping`/`tools/list`/`tools/call`), and anything else is answered with `2025-06-18` so the client can decide whether to continue. |
 | `notifications/initialized` | Handshake completion (notification; no response). |
 | `ping` | Liveness check. |
 | `tools/list` | Lists the tools below with JSON-Schema input schemas. |
