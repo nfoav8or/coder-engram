@@ -142,6 +142,12 @@ export class EngramEngine {
   private extractionCache: ExtractionCache;
   /** One-shot guard so the disabled-path cache clear runs once, not per refresh. */
   private extractionCacheCleared = false;
+  /**
+   * Attachments the last scan left out because the corpus text budget was
+   * spent. Surfaced in the index stats: a partial index the user cannot see is
+   * indistinguishable from a document that simply will not match.
+   */
+  private skippedAttachments = 0;
   /** Serializes embedding passes so overlapping reindex/refresh/sync can't
    * interleave (last-writer-wins persist / mid-pass index mutation). */
   private embedChain: Promise<void> = Promise.resolve();
@@ -227,6 +233,7 @@ export class EngramEngine {
    */
   private async scanAttachments(scanConfig: ReturnType<typeof toScanConfig>): Promise<ScannedNote[]> {
     if (!this.settings.indexAttachments || this.extractors.length === 0) {
+      this.skippedAttachments = 0;
       // Don't RETAIN extracted text after the feature is turned off — the
       // cache may hold content from sensitive PDFs. Cleared once per engine
       // lifetime while disabled (cheap no-op when already empty).
@@ -301,6 +308,7 @@ export class EngramEngine {
         out.push({ path: f.path, mtime: f.mtime, content: entry.text, metadata });
       }
     }
+    this.skippedAttachments = skippedForBudget;
     if (skippedForBudget > 0) {
       this.logger.warn(
         `Attachment text budget reached; ${skippedForBudget} attachment(s) not indexed`,
@@ -610,12 +618,18 @@ export class EngramEngine {
     return this.effectiveMode();
   }
 
-  getIndexStats(): { noteCount: number; chunkCount: number; builtAt: number | null } {
+  getIndexStats(): {
+    noteCount: number;
+    chunkCount: number;
+    builtAt: number | null;
+    skippedAttachments: number;
+  } {
     const idx = this.index.getIndex();
     return {
       noteCount: idx?.metadata.noteCount ?? 0,
       chunkCount: idx?.metadata.chunkCount ?? 0,
       builtAt: idx?.metadata.builtAt ?? null,
+      skippedAttachments: this.skippedAttachments,
     };
   }
 

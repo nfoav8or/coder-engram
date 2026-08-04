@@ -15,7 +15,12 @@ export interface ControlPanelActions {
   openPendingReview(): void;
   createProject(): void;
   showProjectContext(): void;
-  getStats(): { noteCount: number; chunkCount: number; builtAt: number | null };
+  getStats(): {
+    noteCount: number;
+    chunkCount: number;
+    builtAt: number | null;
+    skippedAttachments: number;
+  };
   getMemoryRoot(): string;
   getServerStatus(): { enabled: boolean; running: boolean; address: string | null };
   restartServer(): Promise<void>;
@@ -61,6 +66,15 @@ export class ControlPanelView extends ItemView {
       "Last indexed",
       stats.builtAt ? new Date(stats.builtAt).toLocaleString() : "never",
     );
+    // Only shown when it happened: a partial index the user cannot see reads
+    // exactly like a document that simply will not match.
+    if (stats.skippedAttachments > 0) {
+      this.stat(
+        root,
+        "Attachments skipped",
+        `${stats.skippedAttachments} (text budget reached)`,
+      );
+    }
     const server = this.actions.getServerStatus();
     this.stat(root, "Local server", this.describeServer(server));
 

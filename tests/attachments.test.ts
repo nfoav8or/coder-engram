@@ -282,6 +282,22 @@ describe("ExtractionCache", () => {
     expect(cache3.get("b.pdf", 200)).toBeUndefined();
   });
 
+  it("reports no skipped attachments for a corpus that fits, and clears the count when disabled", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    adapter.seedBinary("Data/small.txt", new TextEncoder().encode("kea field notes"));
+    let t = 10_000;
+    const settings = { ...DEFAULT_SETTINGS, indexAttachments: true };
+    const engine = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++, {
+      extractors: [new PlainTextExtractor()],
+    });
+    await engine.reindex();
+    expect(engine.getIndexStats().skippedAttachments).toBe(0);
+
+    engine.updateSettings({ ...settings, indexAttachments: false });
+    await engine.reindex();
+    expect(engine.getIndexStats().skippedAttachments).toBe(0);
+  });
+
   it("reuses cached metadata instead of re-deriving it from the text each scan", async () => {
     // The attachment pass runs over EVERY attachment on every refresh, while
     // the markdown side is O(changed) — so deriving tags/links again for text
@@ -441,6 +457,10 @@ describe("extracted-text ceiling", () => {
     // Bounded by the budget (plus the one file that crosses it, plus chunk
     // overlap), not by how many attachments the vault holds.
     expect(indexedChars).toBeLessThan((ATTACHMENT_TEXT_BUDGET_CHARS + perFile) * 1.2);
+    // The user can see it happened: a partial index nobody is told about reads
+    // exactly like a document that simply will not match.
+    expect(engine.getIndexStats().skippedAttachments).toBeGreaterThan(0);
+
     // Skipped files leave nothing behind in the extraction cache either.
     const cache = JSON.parse(await adapter.read("Claude Code/Index/extracted.json")) as {
       entries: Record<string, unknown>;

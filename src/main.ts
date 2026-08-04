@@ -280,7 +280,12 @@ export default class EngramPlugin
       .catch((err) => new Notice(`Could not load project context: ${toMessage(err)}`));
   }
 
-  getStats(): { noteCount: number; chunkCount: number; builtAt: number | null } {
+  getStats(): {
+    noteCount: number;
+    chunkCount: number;
+    builtAt: number | null;
+    skippedAttachments: number;
+  } {
     return this.engine.getIndexStats();
   }
 
