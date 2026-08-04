@@ -85,7 +85,7 @@ Pure, dependency-light modules with no Obsidian imports:
 
 Two implementations:
 
-- `ObsidianVaultAdapter` (`core/obsidian-vault-adapter.ts`) — the production adapter backed by Obsidian's `Vault` API.
+- `ObsidianVaultAdapter` (`core/obsidian-vault-adapter.ts`) — the production adapter backed by Obsidian's `Vault` API. A `write` goes to a temp sibling first, so a crash mid-write cannot leave a half-written file. Obsidian's `rename` refuses an existing target, so the old copy is moved aside to a `.engram-bak-*` sibling rather than deleted: a rename that fails (a Windows file lock from a sync client or antivirus is the usual cause) is then restored, and if even the restore fails both copies are kept and named in the error. The alternative — remove then rename — leaves a window where a single failure loses a file the user still had.
 - `InMemoryVaultAdapter` (in `vault-adapter.ts`) — a flat path→content map used throughout the test suite.
 
 Because the whole service layer depends on this interface rather than on `obsidian`, the tests exercise real indexing/retrieval/memory logic without a running Obsidian.

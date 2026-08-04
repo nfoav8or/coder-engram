@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A failed file write no longer loses the file it was replacing.** Writes go to a temp sibling and are renamed into place, which protects against a half-written file — but because Obsidian's `rename` refuses an existing target, the old copy was deleted first, and the failure path then deleted the temp copy too. A rename that failed in between (a Windows file lock from a sync client or antivirus is the usual cause) therefore destroyed both the old content and the new. The previous copy is now moved aside instead of deleted, restored if the rename fails, and if even the restore fails both copies are kept and named in the error message. This is the path every index, cache, and inbox write goes through.
+
 - **The MCP handshake no longer agrees to a protocol version it does not implement.** `initialize` echoed whatever `protocolVersion` the client sent, so a client asking for a revision this server has never spoken — including ones newer than it — was told yes, and would then proceed on that promise. The 2025-06-18 lifecycle spec is explicit: agree to the requested version when supported, otherwise answer with the latest the server does support and let the client decide whether to disconnect. Three revisions are now declared and honoured (`2025-06-18`, `2025-03-26`, `2024-11-05`) because the four methods this server implements are wire-identical across them; anything else is answered with `2025-06-18`.
 
 ### Changed

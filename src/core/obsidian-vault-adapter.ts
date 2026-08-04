@@ -7,6 +7,7 @@
 
 import { App, normalizePath } from "obsidian";
 import { VaultAdapter, VaultFile, assertRelative } from "./vault-adapter";
+import { toMessage } from "../utils/errors";
 
 let tempCounter = 0;
 
@@ -36,21 +37,46 @@ export class ObsidianVaultAdapter implements VaultAdapter {
     // half-written durable file. Rename within the same folder is atomic on
     // typical filesystems.
     // Unique temp suffix so concurrent writes to the same target don't collide.
-    const tmp = `${target}.engram-tmp-${Date.now()}-${tempCounter++}`;
+    const stamp = `${Date.now()}-${tempCounter++}`;
+    const tmp = `${target}.engram-tmp-${stamp}`;
     const adapter = this.app.vault.adapter;
     await adapter.write(tmp, content);
+
+    // Obsidian's rename refuses an existing target, so the old file has to go
+    // first — but REMOVING it leaves a window in which neither copy is durable.
+    // A rename that then fails (a Windows file lock from a sync client or
+    // antivirus is the usual cause) used to delete the temp file too, turning a
+    // failed write into the loss of a file the user still had. Move the old
+    // copy aside instead, and put it back if anything goes wrong.
+    const backup = (await adapter.exists(target)) ? `${target}.engram-bak-${stamp}` : null;
     try {
-      if (await adapter.exists(target)) {
-        await adapter.remove(target);
-      }
-      await adapter.rename(tmp, target);
+      if (backup) await adapter.rename(target, backup);
     } catch (err) {
-      // Best-effort cleanup of the temp file on failure.
-      if (await adapter.exists(tmp)) {
-        await adapter.remove(tmp).catch(() => undefined);
-      }
+      await adapter.remove(tmp).catch(() => undefined);
       throw err;
     }
+    try {
+      await adapter.rename(tmp, target);
+    } catch (err) {
+      // Restore the original. If even that fails, keep BOTH copies and say
+      // where they are — never leave the user with nothing.
+      if (backup) {
+        const restored = await adapter
+          .rename(backup, target)
+          .then(() => true)
+          .catch(() => false);
+        if (!restored) {
+          throw new Error(
+            `Failed to write "${target}": ${toMessage(err)}. ` +
+              `The previous content is at "${backup}" and the new content is at "${tmp}".`,
+          );
+        }
+      }
+      await adapter.remove(tmp).catch(() => undefined);
+      throw err;
+    }
+    // The write is durable; the backup is now just garbage.
+    if (backup) await adapter.remove(backup).catch(() => undefined);
   }
 
   async append(path: string, content: string): Promise<void> {
