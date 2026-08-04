@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-08-04
+
+Every read path an agent can pull on is now bounded by the unit it is actually paid in — characters. Three tools could return far more than their nominal limits suggested (one had no limit at all), and the chunker could emit a single 100 KB chunk against a 1,200-character target. Chunking is also faster and smaller, with the budget set by measured relevance rather than by the cost curve. **Existing indexes rebuild once on upgrade** (`INDEX_VERSION` bumped), since chunk boundaries changed.
+
 ### Fixed
 
 - **A paragraph with no blank line in it no longer defeats the chunk budget.** Long sections are windowed on paragraph (blank-line) boundaries, so a paragraph containing none — pasted JSON, base64, a wide table row, prose wrapped without blank lines — passed through whole: a 100 KB paragraph became a single 100,007-character chunk against a 1,200 target, stored in full, sent to the embedding provider as one input, and collapsing that note's retrieval granularity. Such paragraphs are now broken at whitespace into pieces that fit the budget, with a hard slice for a single token that offers no boundary at all (base64 has no spaces). Nothing is dropped, and pieces inherit their paragraph's line span — exact for the common single-line case.
@@ -262,7 +266,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.6.0...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.7.0...HEAD
+[0.7.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.7.0
 [0.6.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.6.0
 [0.5.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.5.0
 [0.4.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.4.0
