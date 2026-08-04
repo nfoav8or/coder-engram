@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-08-04
+
+What the agent gets back is now your choice. Three reductions that quietly trimmed MCP tool output are separate opt-in toggles, all off by default — so out of the box nothing is withheld, and each saving is something you turn on knowing what it costs.
+
 ### Changed
 
 - **Context savings are now opt-in, and chosen individually.** Three behaviours that trimmed what the MCP tools return are each a separate toggle, all **off by default**: **Collapse near-duplicate hits** (drop a hit whose text nearly repeats a higher-ranked one), **Cap one note's share of a page** (stop one long note filling the whole result page), and **Merge overlapping passages** (join a section's consecutive windows on a full-note read, sending the carried overlap once). They answer different questions — someone who wants every copy of a memory may still want long notes merged sensibly — so a single switch was the wrong shape. Each can withhold something you wanted to see, which is why none is on unless you ask. Settings schema v4 → v6; a v5 `contextSavings` boolean is carried onto all three toggles, so an existing opt-in keeps the behaviour it chose. **The hard output caps are not part of this and always apply** (`maxChars` on note and bulk reads, the related-link and summary budgets) — those bound worst-case size rather than judging content.
@@ -282,7 +286,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.7.1...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.8.0...HEAD
+[0.8.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.8.0
 [0.7.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.7.1
 [0.7.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.7.0
 [0.6.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.6.0
