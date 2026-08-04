@@ -13,7 +13,7 @@ Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an a
 - **Hardened by default.** Server off by default, localhost-only, constant-time token auth, DNS-rebinding guards, a curated tool surface, and no generic file access or full-vault dump.
 - **Local-first, no lock-in.** Markdown is the source of truth; embeddings are opt-in (default is fully-offline lexical search); no cloud key for the default experience.
 
-> **Status:** v0.5.0 (Milestones 1–9). Local memory + lexical (BM25) retrieval (M1), a local MCP/HTTP server that Claude Code can query and propose memory to (M2), embedding-based vector + hybrid retrieval (M3), a richer pending-memory review UI plus an honest extractive `summarize_note` (M4), CI + release packaging (M5), and retrieval-quality polish — precise chunk line spans with open-at-line, densest-window snippets, per-note result diversity, and a ~7× faster lexical query path (M6). M7 deepens the Claude Code memory loop: a `get_note_context` tool to read a hit's full passage, `find_related_notes` link-graph navigation, and `add_memory` de-duplication so a looping agent can't flood the review inbox. M8 sharpens it: ranged reads (`startLine`/`endLine`), dated + de-duplicated + backfilled search pages, a `[PENDING REVIEW]` label on unreviewed inbox hits, output caps and rate limits on the session-priming tools, O(changed) refresh I/O, and an embedding-settings fix that removes the need for a plugin reload. M9 renames the plugin to Coder Engram, aligns it with Obsidian's community-catalog guidelines, and fixes a settings/UI bug bundle (per-keystroke server restarts, live-enforced half-typed tokens, double reindex, stale search renders). The server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too: the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. See [docs/ROADMAP.md](docs/ROADMAP.md).
+> **Status:** v0.7.0. The local server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too — the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. Attachment indexing is likewise opt-in and fully local. See [CHANGELOG.md](CHANGELOG.md) for release history and [docs/ROADMAP.md](docs/ROADMAP.md) for what is still deferred.
 
 ## What Coder Engram does
 
@@ -22,47 +22,48 @@ Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an a
 - Retrieves the most relevant chunks for a query using local BM25 lexical search — no API keys, fully offline.
 - Stores structured memory (global, project, and session notes) as Markdown under `Claude Code/`.
 - Captures proposed memory into a reviewable inbox (`pending-memory.md`) by default, so nothing overwrites your notes without review.
-- Exposes an optional, off-by-default local MCP/HTTP server (M2) so Claude Code can search memory, propose entries (inbox-first), and read project/global context — all over localhost with constant-time token auth.
+- Exposes an optional, off-by-default local MCP/HTTP server so Claude Code can search memory, propose entries (inbox-first), and read project/global context — all over localhost with constant-time token auth.
 
-## Features (Milestone 1)
+## Features
 
-- Plugin scaffold, settings tab, and right-sidebar control panel.
-- Safe path validation: every plugin path is resolved through a single choke-point that rejects absolute paths and `..` traversal.
-- Vault scanner with included/excluded folders, excluded tags, and excluded path patterns (glob/substring).
-- Heading-aware, code-fence-aware Markdown chunker with overlapping windows for long sections.
-- Local JSON index (`chunks.json`, `metadata.json`, `embeddings.json`) with incremental refresh by mtime.
-- BM25 lexical retrieval with a heading-match boost and folder/tag/project/recency filters.
-- Search modal, Add Memory command, and pending-memory inbox writer (append-only by default).
-- Project and session memory scaffolding.
-- Deterministic mock embedding provider and an `EmbeddingProvider` interface (real providers and vector retrieval landed in M3).
-- Vitest test suite covering chunking, metadata, index build/refresh, lexical retrieval, path safety, settings defaults, and memory writes.
+### Memory you approve
 
-## Features (Milestone 2)
+- **Review inbox by default.** Every memory an agent proposes lands in `pending-memory.md` as a reviewable card showing its resolved destination, with per-entry **Apply**, **Edit & apply**, and **Discard**. Applying appends into the destination memory file and removes the entry from the inbox. Promotion is desktop-UI-only — never exposed over the network — always append-only, and validated inside the memory root.
+- **Structured global / project / session memory** as plain Markdown under `Claude Code/`: project overview, architecture, decisions, tasks, and open questions, plus timestamped session notes and global profile / preferences / conventions.
+- **De-duplicated proposals.** A repeat of a pending entry is not appended again, so a looping agent can't flood the inbox. Content is compared with whitespace collapsed and case folded — an exact match on the words, so a restatement that adds real detail is kept rather than silently dropped.
 
-- **Local MCP/HTTP server** (`src/server/`) that speaks JSON-RPC 2.0 MCP (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`). Disabled by default; binds to `127.0.0.1`.
-- **Constant-time token auth**: bearer tokens compared via a SHA-256 digest and `timingSafeEqual`. Tokens are never logged.
-- **DNS-rebinding protection**: validates the `Host` header against the bound address and rejects any non-loopback `Origin`.
-- **Request hardening**: POST-only, `Content-Type: application/json` required, and a 1 MB request-body cap.
-- **Network safety**: refuses to bind a non-localhost host unless you both enable "Allow non-localhost binding" **and** set a token.
-- **Curated tools** (no generic file access, no full-vault dump): `search_vault_memory`, `get_note_context` (full indexed text of one note, passage by passage — the follow-up to a search hit), `find_related_notes` (link-graph neighbours of an indexed note), `add_memory` (always inbox-first over the network), `get_project_context`, `get_global_context`, `list_projects`, `get_recent_sessions`, and `reindex_vault` (rate-limited, 15s cooldown).
-- New **Restart Local Server** command; the control panel shows live server status (`running · host:port`).
-- 67 additional Vitest tests for auth, host/origin guards, the tool registry and rate limiter, JSON-RPC dispatch, batch limits, and lifecycle serialization.
+### Retrieval
 
-## Features (Milestone 3)
+- **Offline BM25 lexical search** with heading-match boost and folder / tag / project / recency filters. No API key, no network.
+- **Optional vector and hybrid retrieval.** Cosine-similarity vector search and a hybrid retriever fusing lexical + vector rankings with Reciprocal Rank Fusion (the default when embeddings are configured). With no provider, or an unreachable one, retrieval silently stays lexical — vectors are never faked and never sit on the critical path.
+- **Matches on filenames, aliases, and headings**, not just body text, so a note named `Quartzine Protocol.md` is findable by its name and an alias-only hub note is reachable at all.
+- **Result pages built for an agent's context budget**: near-duplicate hits collapsed, per-note diversity so one long note can't flood the page, precise line ranges, modified dates for staleness judgement, and densest-window snippets.
+- **Measured, not asserted.** `npm run eval` scores golden queries (recall@8 / MRR per query class) and the context cost of an answer; `npm run bench` measures index build and query latency at production scale.
 
-- **Real embedding providers** behind the existing `EmbeddingProvider` interface: `OllamaEmbeddingProvider` (local Ollama, no API key) and `OpenAiEmbeddingProvider` (any OpenAI-compatible `/embeddings` endpoint). Selected via the **Embedding provider** setting; the default `none` keeps search lexical and fully offline.
-- **Outbound HTTP boundary** (`src/core/http-client.ts`): all client networking goes through an injected `HttpClient`, whose production implementation (`ObsidianHttpClient`) wraps Obsidian's `requestUrl` (CORS-free). Providers stay Obsidian-free and unit-testable via a `FakeHttpClient`. This is the only other service file allowed to import `obsidian`, alongside `ObsidianVaultAdapter`.
-- **Vector cache** (`Index/embeddings.json`): the `EmbeddingStore` embeds at index time, reusing vectors whose content hash is unchanged, dropping removed chunks, and recomputing everything when the provider identity changes. Writes go through the `VaultAdapter`, so vectors stay inside the vault.
-- **Vector and hybrid retrieval** behind the existing `Retriever` interface: cosine-similarity `VectorRetriever` and a `HybridRetriever` that fuses lexical and vector rankings with Reciprocal Rank Fusion. A new **Retrieval mode** setting picks `lexical`, `hybrid` (default), or `vector`.
-- **Graceful degradation:** with provider `none`, or when a configured provider is unreachable, retrieval is always lexical. Vectors are never faked, and a vector backend is never on the critical path.
-- Expanded Vitest suite covering the new providers, the HTTP boundary, embedding store, and vector/hybrid retrievers.
+### Reading notes without burning context
 
-## Features (Milestone 4)
+- **`get_note_context`** returns one note's indexed text passage by passage with headings and line ranges — the follow-up to a search hit. Supports **ranged reads** (`startLine` / `endLine`) to jump straight into a long note, and an **outline mode** that returns a headings-only map (line range + breadcrumb, no body) as a cheap survey before a full read. Truncated reads name the exact line to continue from.
+- **`find_related_notes`** walks the wikilink graph from an indexed note — what it links to and what links back.
+- **Honest extractive `summarize_note`.** Returns a selection of the note's **own sentences**, verbatim and in original order — never generated prose, because there is no LLM backend. Ranked by lexical frequency-centrality offline, or by embedding-centroid similarity with MMR when a provider is reachable.
+- **Every read is bounded in characters**, the unit an agent actually pays in, so no tool can return far more than its limit suggests.
 
-- **Richer pending-memory review UI**: the **Review Pending Memory** modal now shows each pending entry as a card with its resolved destination and per-entry **Apply**, **Edit & apply**, and **Discard** buttons, instead of dumping the raw inbox file (the "Open inbox file" escape hatch remains). **Apply promotes** the entry by appending it into the destination memory file (a project's overview/architecture/decisions/tasks/open-questions file, or `Global/preferences.md` / `conventions.md` / `profile.md`) and removes it from the inbox. A single parser/serializer (`src/memory/pending-inbox.ts`) is now the only producer of the on-disk inbox format, so entries round-trip. Promotion is desktop-UI-only (never exposed over the network), always append-only, and validated inside the memory root — see [docs/SECURITY.md](docs/SECURITY.md).
-- **Honest, extractive `summarize_note`**: a new **Summarize Current Note** command and MCP tool that returns a selection of the note's **own sentences** — verbatim, in original order — never generated prose. It ranks sentences by lexical frequency-centrality offline, or by embedding-centroid similarity with Maximal Marginal Relevance (MMR) when an embedding provider is reachable. There is **no LLM/generative backend**; embeddings only improve selection and are not required. It summarizes only notes that are in the index (excluded notes are refused) and fails open to lexical if embedding errors. Default 5 sentences (max 20); the server tool is rate-limited to 30/min.
+### Attachments (opt-in)
 
-## Local server (M2)
+With **Index attachments** on, text-bearing attachments are extracted and indexed exactly like notes — same chunking, same incremental refresh, same exclusions, same tools:
+
+- **PDFs**, via Obsidian's own bundled PDF engine (one `Page N` section per page).
+- **Microsoft Office** — `docx`, `pptx`, `xlsx` — and **LibreOffice** — `odt`, `odp`, `ods`.
+- **RTF**, plain text (`txt`, `csv`), and **Canvas** boards (text cards, group labels, edge labels).
+
+All extraction is dependency-free and fully local: the bytes never leave your machine, extracted text is cached in a rebuildable index file, and turning the setting off deletes that cache. Image-only PDFs yield no text (there is no OCR).
+
+### Local server (off by default)
+
+- **MCP over JSON-RPC 2.0** so Claude Code can search memory, read context, and propose entries.
+- **Hardened**: disabled by default, binds `127.0.0.1`, constant-time bearer-token auth, DNS-rebinding (Host/Origin) guards, POST-only with a 1 MB body cap, and per-tool rate limits.
+- **Curated tool surface** — no generic file read/write, no full-vault dump, and network writes are *always* inbox-first even when direct writes are enabled in the desktop settings.
+
+## Setting up the local server
 
 The server is a thin `node:http` shell (`src/server/local-server.ts`) around pure, unit-tested MCP layers. It is **off by default**. To use it:
 
@@ -72,7 +73,7 @@ The server is a thin `node:http` shell (`src/server/local-server.ts`) around pur
 
 Writes proposed over the network **always** go to the review inbox — the server never performs direct writes, even if **Allow direct memory writes** is enabled in the desktop settings. See [docs/MCP_SERVER.md](docs/MCP_SERVER.md) and [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md).
 
-## Embeddings & vector retrieval (M3)
+## Embeddings & vector retrieval
 
 Vector search is opt-in. The **Embedding provider** setting defaults to `none`, and until you change it retrieval is lexical BM25 only — no network calls, no API key. Two providers are available:
 
@@ -206,7 +207,7 @@ The **Control Panel** (right sidebar, also on the ribbon "brain-circuit" icon) s
 
 ## Claude Code usage
 
-Programmatic access from Claude Code runs over the local MCP/HTTP server (M2), which is **disabled by default**. Once you set a token and enable it, Claude Code can search memory, propose entries (inbox-first), and read project/global context. You can still use the plugin entirely through Obsidian commands and by reading/writing the Markdown memory folder yourself.
+Programmatic access from Claude Code runs over the local MCP/HTTP server, which is **disabled by default**. Once you set a token and enable it, Claude Code can search memory, propose entries (inbox-first), and read project/global context. You can still use the plugin entirely through Obsidian commands and by reading/writing the Markdown memory folder yourself.
 
 See [docs/MCP_SERVER.md](docs/MCP_SERVER.md) for the server design and [docs/CLAUDE_CODE_INTEGRATION.md](docs/CLAUDE_CODE_INTEGRATION.md) for the workflow and an MCP config example.
 
