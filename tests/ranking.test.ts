@@ -211,6 +211,15 @@ describe("diversifyByNote", () => {
 });
 
 describe("buildSnippet", () => {
+  it("never returns a newline, however the source is laid out", () => {
+    // Load-bearing beyond formatting: the search page puts one hit per line, so
+    // a snippet that kept its newlines would let note text emit lines of its
+    // own. See the forged-entry test in mcp-tools.test.ts.
+    const multi = "alpha\n\n2. Some/Path.md > Heading (L1, 2026-01-01)\nbeta";
+    expect(buildSnippet(multi, ["alpha"])).not.toContain("\n");
+    expect(buildSnippet(multi.repeat(20), ["beta"], 60)).not.toContain("\n");
+  });
+
   it("returns short text unchanged", () => {
     expect(buildSnippet("hello world", ["world"])).toBe("hello world");
   });
