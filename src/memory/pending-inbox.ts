@@ -34,7 +34,10 @@ const HEADING_PREFIX = "## Pending Memory: ";
 export function formatTags(tags: string[]): string {
   const base = [BASE_TAG];
   const extra = tags
-    .map((t) => t.trim().replace(/^#+/, ""))
+    // A tag cannot contain whitespace: the parser splits the Tags line on it,
+    // so a tag carrying a newline would otherwise become several tags — or, at
+    // the start of a line, a forged field.
+    .map((t) => t.trim().replace(/^#+/, "").replace(/\s+/g, "-"))
     .filter(Boolean);
   return Array.from(new Set([...base, ...extra])).map((t) => `#${t}`).join(" ");
 }
@@ -56,31 +59,63 @@ export interface PendingBlockFields {
 }
 
 /**
+ * Collapse a value that must occupy exactly one line.
+ *
+ * Every field but `content` is single-line, and the parser reads this file line
+ * by line — so a newline inside one of them is not bad data, it is a forged
+ * line. An `add_memory` caller that put "x\nStatus: applied" in a tag really did
+ * write a Status line into the block. These values (a type, a source, a vault
+ * path) have no legitimate newline, so collapsing is lossless in practice.
+ */
+function oneLine(value: string): string {
+  return value.replace(/\s*[\r\n]+\s*/g, " ").trim();
+}
+
+/**
+ * Neutralize a block heading appearing inside content, which IS legitimately
+ * multi-line. `parsePendingInbox` splits entries on `/^## Pending Memory: /m`,
+ * so content containing that at the start of a line would forge a whole second
+ * entry. One leading space defeats the anchored split and survives a
+ * render→parse→render round trip (the line no longer matches, so it is not
+ * indented again).
+ */
+function neutralizeHeadings(content: string): string {
+  return content
+    .split("\n")
+    .map((l) => (l.startsWith(HEADING_PREFIX) ? ` ${l}` : l))
+    .join("\n");
+}
+
+/**
  * Render a pending-memory block. This is the ONE format producer for the inbox;
  * `formatMemoryEntry` delegates here so the on-disk format never drifts.
+ *
+ * Field values are agent-supplied (`add_memory` is reachable over the local
+ * server), so they are neutralized here rather than at each caller — this is
+ * the only place that knows which parts of the format are structural.
  */
 export function renderPendingBlock(f: PendingBlockFields): string {
   const lines: string[] = [];
-  lines.push(`${HEADING_PREFIX}${f.timestampLabel}`);
+  lines.push(`${HEADING_PREFIX}${oneLine(f.timestampLabel)}`);
   lines.push("");
-  lines.push(`Type: ${f.type}`);
-  if (f.project) lines.push(`Project: ${f.project}`);
-  lines.push(`Source: ${f.source}`);
-  if (f.originTool) lines.push(`Origin: ${f.originTool}`);
-  if (f.confidence) lines.push(`Confidence: ${f.confidence}`);
+  lines.push(`Type: ${oneLine(f.type)}`);
+  if (f.project) lines.push(`Project: ${oneLine(f.project)}`);
+  lines.push(`Source: ${oneLine(f.source)}`);
+  if (f.originTool) lines.push(`Origin: ${oneLine(f.originTool)}`);
+  if (f.confidence) lines.push(`Confidence: ${oneLine(f.confidence)}`);
   lines.push(`Tags: ${formatTags(f.tags)}`);
   lines.push("");
   lines.push("Content:");
   lines.push("");
-  lines.push(f.content.trim());
+  lines.push(neutralizeHeadings(f.content.trim()));
   if (f.relatedPaths.length > 0) {
     lines.push("");
     lines.push("Related files:");
     lines.push("");
-    for (const p of f.relatedPaths) lines.push(`* ${p}`);
+    for (const p of f.relatedPaths) lines.push(`* ${oneLine(p)}`);
   }
   lines.push("");
-  lines.push(`Status: ${f.status}`);
+  lines.push(`Status: ${oneLine(f.status)}`);
   lines.push("");
   lines.push("---");
   lines.push("");
