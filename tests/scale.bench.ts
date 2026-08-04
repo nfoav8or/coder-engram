@@ -23,10 +23,15 @@ import { VaultScanner, ScanConfig } from "../src/indexing/vault-scanner";
 import { IndexManager } from "../src/indexing/index-manager";
 import { LexicalRetriever } from "../src/retrieval/lexical-retriever";
 import { HybridRetriever } from "../src/retrieval/hybrid-retriever";
+import { EngramEngine } from "../src/engine";
+import { DEFAULT_SETTINGS } from "../src/settings/settings";
+import { NULL_LOGGER } from "../src/utils/logger";
+import { TextExtractor } from "../src/extract/text-extractor";
 
 const NOTES = Number(process.env.BENCH_NOTES ?? 2000);
 const DIM = Number(process.env.BENCH_DIM ?? 384);
 const QUERIES = Number(process.env.BENCH_QUERIES ?? 100);
+const ATTACHMENTS = Number(process.env.BENCH_ATTACHMENTS ?? 300);
 
 /** mulberry32 — small deterministic PRNG so corpora/vectors are reproducible. */
 function makeRng(seed: number): () => number {
@@ -240,6 +245,71 @@ describe(`scale benchmark (${NOTES} notes, dim ${DIM}, ${QUERIES} queries)`, () 
       // default 2000-note corpus; an O(n^2) regression blows well past them.
       expect(lexStats.p95).toBeLessThan(1000);
       expect(hybridStats.p95).toBeLessThan(2000);
+    },
+    120_000,
+  );
+});
+
+describe(`attachment refresh (${ATTACHMENTS} attachments)`, () => {
+  it(
+    "keeps a warm refresh of an attachment corpus off the per-scan work path",
+    async () => {
+      // The markdown side of a refresh is O(changed), but the attachment pass
+      // walks EVERY attachment every time — so anything derived per attachment
+      // in that loop is paid on every debounced auto-index. This measures the
+      // warm path (nothing changed) at a corpus size a research vault reaches.
+      const adapter = new InMemoryVaultAdapter("bench", {});
+      const rng = makeRng(99);
+      const bodies = new Map<string, string>();
+      for (let i = 0; i < ATTACHMENTS; i++) {
+        const path = `Files/doc-${i}.bin`;
+        // Links and tags so metadata extraction does real work, as a PDF's
+        // extracted text would.
+        bodies.set(
+          path,
+          `# doc-${i}\n\n#report #q${i % 4}\n\n${words(rng, 1200)}\n\n[[Notes/note-${i % 50}]]\n`,
+        );
+        adapter.seedBinary(path, new Uint8Array([1]));
+      }
+      // Text is generated rather than seeded, so the fixture costs one byte a
+      // file; extraction itself is not what this measures.
+      const extractor: TextExtractor = {
+        extensions: [".bin"],
+        needsBytes: false,
+        async extract(path: string) {
+          return bodies.get(path) ?? null;
+        },
+      };
+      let t = 100_000;
+      const engine = new EngramEngine(
+        adapter,
+        { ...DEFAULT_SETTINGS, indexAttachments: true },
+        NULL_LOGGER,
+        () => t++,
+        { extractors: [extractor] },
+      );
+
+      const [, coldMs] = await timedAsync(() => engine.reindex());
+      // First refresh persists anything the build left to derive; the second is
+      // the steady state an idle vault actually pays.
+      await engine.refresh();
+      const [, warmMs] = await timedAsync(() => engine.refresh());
+      const chars = Array.from(bodies.values()).reduce((n, b) => n + b.length, 0);
+
+      /* eslint-disable no-console */
+      console.log(`\n===== Engram attachment refresh =====`);
+      console.log(`corpus:          ${ATTACHMENTS} attachments, ${(chars / (1024 * 1024)).toFixed(1)} MB of text`);
+      console.log(`cold reindex:    ${coldMs.toFixed(0)} ms`);
+      console.log(`warm refresh:    ${warmMs.toFixed(1)} ms (nothing changed)`);
+      console.log(`=====================================\n`);
+      /* eslint-enable no-console */
+
+      // A warm refresh must not scale with the corpus TEXT, only with the
+      // number of attachments it walks. Measured at 300 attachments: 1.1 ms
+      // with metadata cached, 11.8 ms when it is re-derived each scan — so this
+      // bound is loose against the former and catches the latter.
+      expect(warmMs).toBeLessThan(ATTACHMENTS * 0.02);
+      expect(engine.getNoteChunks("Files/doc-0.bin").length).toBeGreaterThan(0);
     },
     120_000,
   );

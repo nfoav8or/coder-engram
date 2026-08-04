@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **An incremental refresh no longer re-reads the tags and links of every attachment.** The markdown side of a refresh is O(changed), but the attachment pass walked all attachments each time and re-derived their metadata from text that had not changed — **716 ms** measured over a corpus at the 32 MB budget, on the main thread, for every debounced auto-index. Metadata is now cached alongside the extracted text. A cache file written before this field upgrades in place, so no attachment is re-extracted, and tag exclusions are still applied at emit time, so changing excluded tags re-evaluates without re-extraction.
+- **An incremental refresh no longer re-reads the tags and links of every attachment.** The markdown side of a refresh is O(changed), but the attachment pass walked all attachments each time and re-derived their metadata from text that had not changed, on the main thread, for every debounced auto-index. A warm refresh of 300 attachments went from **11.8 ms to 1.1 ms**; over link-dense text at the 32 MB corpus budget the re-derivation alone measures **716 ms**. Metadata is now cached alongside the extracted text. A cache file written before this field upgrades in place, so no attachment is re-extracted, and tag exclusions are still applied at emit time, so changing excluded tags re-evaluates without re-extraction.
 
 ### Added
 
