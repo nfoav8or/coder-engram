@@ -112,11 +112,19 @@ const NOTE_CONTEXT_MAX_CHARS = 50_000;
 const CONTEXT_MAX_PER_MINUTE = 60;
 const CONTEXT_DEFAULT_MAX_CHARS = 12_000;
 const CONTEXT_MAX_CHARS = 50_000;
-// Links listed per direction by find_related_notes. Hub/MOC notes — the ones
-// an agent is most likely to navigate from — can link hundreds of notes, and
-// this was the only read surface with no bound at all: every other one caps by
-// result count or maxChars. Generous enough that ordinary notes list in full.
-const RELATED_MAX_PER_SECTION = 50;
+// Budget per direction for find_related_notes. Hub/MOC notes — the ones an
+// agent is most likely to navigate from — can link hundreds of notes, and this
+// was the only read surface with no bound at all.
+//
+// Budgeted in CHARS rather than link count because per-link cost varies ~3.8x
+// with path depth (measured: 15 chars for `Notes/n12.md`, 57 for
+// `Claude Code/Projects/atlas/Sessions/2026-07-30-0915.md`), so one count cap
+// buys wildly different amounts of context — 50 links is 759 chars of shallow
+// paths but 2,859 of the deep ones this plugin's own memory notes use. At this
+// budget a list stays cheaper than a realistic session-history page (~1,100
+// chars) while still showing ~26 deep, ~50 typical, or ~100 shallow links, so
+// ordinary notes list in full and only hubs are clipped.
+const RELATED_MAX_CHARS = 1_500;
 
 /**
  * Full heading breadcrumb for a chunk. `headingPath` holds ANCESTORS only (the
@@ -720,8 +728,8 @@ const findRelatedNotesTool: Tool = {
       "Navigate the memory graph from one INDEXED note: returns the indexed notes " +
       "it links to and the indexed notes that link back to it. Links resolve by " +
       "note name (Obsidian-style); only notes in the index appear, and an excluded " +
-      `or unindexed note is refused. Each direction lists at most ${RELATED_MAX_PER_SECTION} ` +
-      "notes; a hub note over that reports how many more it has.",
+      `or unindexed note is refused. Each direction lists up to ${RELATED_MAX_CHARS} ` +
+      "characters of links; a hub note over that reports how many more it has.",
     inputSchema: {
       type: "object",
       properties: {
@@ -741,7 +749,15 @@ const findRelatedNotesTool: Tool = {
     }
     const section = (title: string, notes: string[]) => {
       if (notes.length === 0) return "";
-      const shown = notes.slice(0, RELATED_MAX_PER_SECTION);
+      const shown: string[] = [];
+      let used = title.length + 1;
+      for (const n of notes) {
+        const line = `- ${n}\n`;
+        // Always show at least one, so a single very deep path still resolves.
+        if (shown.length > 0 && used + line.length > RELATED_MAX_CHARS) break;
+        shown.push(n);
+        used += line.length;
+      }
       const body = `${title}:\n${shown.map((n) => `- ${n}`).join("\n")}`;
       const rest = notes.length - shown.length;
       // Name the remainder rather than truncating silently: a hub note's link

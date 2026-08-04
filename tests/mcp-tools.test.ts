@@ -497,10 +497,32 @@ describe("RateLimiter.enforceWindow", () => {
     const out = await registry.call("find_related_notes", { path: "Notes/hub.md" }, ctx);
 
     const listed = out.split("\n").filter((l) => l.startsWith("- ") && !l.includes("more,"));
-    expect(listed).toHaveLength(50);
-    expect(out).toContain("(70 more, 120 total)");
-    // The bound is the point: the uncapped list ran past 3,000 chars.
-    expect(out.length).toBeLessThan(3_000);
+    expect(listed.length).toBeLessThan(120);
+    expect(out).toMatch(/…\(\d+ more, 120 total\)/);
+    // Budgeted in chars, not link count: cost per link varies ~3.8x with path
+    // depth, so a count cap buys a different amount of context per vault.
+    expect(out.length).toBeLessThan(2_000);
+  });
+
+  it("find_related_notes spends the same budget whether paths are deep or shallow", async () => {
+    // The reason the bound is char-based: 50 shallow links cost 759 chars but
+    // 50 deep ones cost 2,859, and this plugin's own memory notes are deep.
+    const build = async (dir: string) => {
+      const seed: Record<string, string> = {
+        "Notes/hub.md": `# Hub\n\n${Array.from({ length: 120 }, (_, i) => `[[n${i}]]`).join(" ")}`,
+      };
+      for (let i = 0; i < 120; i++) seed[`${dir}/n${i}.md`] = `# n${i}\n\nBody ${i}.`;
+      const { engine, ctx } = makeContext(seed);
+      await engine.reindex();
+      return new ToolRegistry().call("find_related_notes", { path: "Notes/hub.md" }, ctx);
+    };
+    const shallow = await build("N");
+    const deep = await build("Claude Code/Projects/atlas/Sessions/Archive");
+
+    const links = (s: string) => s.split("\n").filter((l) => l.startsWith("- ") && !l.includes("more,")).length;
+    // Deep paths list fewer notes for the same spend — which is the point.
+    expect(links(deep)).toBeLessThan(links(shallow));
+    for (const out of [shallow, deep]) expect(out.length).toBeLessThan(2_000);
   });
 
   it("find_related_notes refuses a note that is not indexed", async () => {
