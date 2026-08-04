@@ -96,6 +96,7 @@ src/
     vault-adapter.ts            VaultAdapter interface + in-memory impl
     obsidian-vault-adapter.ts   production adapter
     obsidian-pdf-extractor.ts   PDF extraction via Obsidian's loadPdfJs()
+    obsidian-ocr-extractor.ts   image text via the Text Extractor plugin
     http-client.ts              HttpClient boundary for outbound HTTP
     obsidian-http-client.ts     production adapter over requestUrl
     markdown-chunker.ts         chunking

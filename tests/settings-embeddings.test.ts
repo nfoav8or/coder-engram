@@ -7,10 +7,16 @@ import {
 } from "../src/settings/settings";
 
 describe("M3+ settings schema", () => {
-  it("is schema version 6", () => {
-    // v6 split contextSavings into per-reduction toggles; v5 introduced it as a
-    // single boolean; v4 added indexAttachments.
-    expect(SETTINGS_SCHEMA_VERSION).toBe(6);
+  it("is schema version 7", () => {
+    // v7 added indexImageText (default false); v6 split contextSavings into
+    // per-reduction toggles; v5 introduced it as a single boolean.
+    expect(SETTINGS_SCHEMA_VERSION).toBe(7);
+  });
+
+  it("defaults image-text indexing off and coerces a corrupt value", () => {
+    expect(migrateSettings({}).indexImageText).toBe(false);
+    expect(migrateSettings({ indexImageText: "yes" }).indexImageText).toBe(false);
+    expect(migrateSettings({ indexImageText: true }).indexImageText).toBe(true);
   });
 
   it("defaults every context saving to off", () => {

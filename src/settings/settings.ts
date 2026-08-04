@@ -14,7 +14,7 @@ import { ScanConfig } from "../indexing/vault-scanner";
 import { clamp } from "../utils/validation";
 import { normalizeVaultRelativePath } from "../utils/paths";
 
-export const SETTINGS_SCHEMA_VERSION = 6;
+export const SETTINGS_SCHEMA_VERSION = 7;
 
 export type EmbeddingProviderId = "none" | "mock" | "ollama" | "openai-compatible";
 
@@ -81,6 +81,14 @@ export interface EngramSettings {
    * Off by default: extraction is local-only, but indexing attachment text
    * makes it searchable and readable over the MCP server like any note. */
   indexAttachments: boolean;
+  /**
+   * Index text found IN IMAGES, by delegating to the Text Extractor companion
+   * plugin when it is installed. Off by default and separate from
+   * `indexAttachments`: that plugin downloads OCR language data on first use,
+   * so this is the one attachment path that can touch the network — through a
+   * plugin the user installed themselves, not through us.
+   */
+  indexImageText: boolean;
   embeddingProvider: EmbeddingProviderId;
   embeddingModel: string;
   /** Base URL for network providers (Ollama / OpenAI-compatible). */
@@ -109,6 +117,7 @@ export const DEFAULT_SETTINGS: EngramSettings = {
   defaultProject: "",
   autoIndexOnChange: false,
   indexAttachments: false,
+  indexImageText: false,
   embeddingProvider: "none",
   embeddingModel: "",
   embeddingEndpoint: "",
@@ -200,6 +209,7 @@ export function migrateSettings(raw: unknown): EngramSettings {
   merged.indexingEnabled = coerceBool(data.indexingEnabled, DEFAULT_SETTINGS.indexingEnabled);
   merged.autoIndexOnChange = coerceBool(data.autoIndexOnChange, DEFAULT_SETTINGS.autoIndexOnChange);
   merged.indexAttachments = coerceBool(data.indexAttachments, DEFAULT_SETTINGS.indexAttachments);
+  merged.indexImageText = coerceBool(data.indexImageText, DEFAULT_SETTINGS.indexImageText);
   merged.allowDirectWrites = coerceBool(data.allowDirectWrites, DEFAULT_SETTINGS.allowDirectWrites);
   merged.appendOnly = coerceBool(data.appendOnly, DEFAULT_SETTINGS.appendOnly);
   merged.debugLogging = coerceBool(data.debugLogging, DEFAULT_SETTINGS.debugLogging);

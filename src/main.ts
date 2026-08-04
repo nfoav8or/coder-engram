@@ -12,6 +12,7 @@ import { isPluginArtifact } from "./memory/memory-types";
 import { ObsidianVaultAdapter } from "./core/obsidian-vault-adapter";
 import { ObsidianHttpClient } from "./core/obsidian-http-client";
 import { ObsidianPdfExtractor } from "./core/obsidian-pdf-extractor";
+import { ObsidianOcrExtractor } from "./core/obsidian-ocr-extractor";
 import { CanvasExtractor } from "./extract/canvas-extractor";
 import { OfficeExtractor } from "./extract/office-extractor";
 import { PlainTextExtractor } from "./extract/plain-text-extractor";
@@ -66,6 +67,7 @@ export default class EngramPlugin
         new RtfExtractor(),
         new PlainTextExtractor(),
         new CanvasExtractor(),
+        new ObsidianOcrExtractor(this.app, () => this.settings.indexImageText),
       ],
     });
     this.server = new LocalServer({

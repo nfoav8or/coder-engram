@@ -83,5 +83,5 @@ Coder Engram is built in milestones. Milestones 1 through 9 are complete (throug
 ## Deferred / future
 
 - Non-desktop support (currently `isDesktopOnly`).
-- Image / scanned-PDF OCR (needs a vision endpoint or plugin interop — product call). Text-bearing attachment formats are done: PDF, docx/pptx/xlsx, odt/odp/ods, RTF, txt/csv, and Canvas all index opt-in as of the post-0.5.0 cycle, dependency-free.
+- Image OCR shipped as **plugin interop**: `indexImageText` delegates to Text Extractor's API rather than bundling an engine (see docs/SECURITY.md for why). Scanned-PDF OCR is still open — the same delegation would need Text Extractor's PDF path, which its own README flags as unreliable. Text-bearing attachment formats are done: PDF, docx/pptx/xlsx, odt/odp/ods, RTF, txt/csv, and Canvas all index opt-in as of the post-0.5.0 cycle, dependency-free.
 - Alternative local vector stores (SQLite, LanceDB, DuckDB) behind the storage model.

@@ -193,6 +193,22 @@ export class EngramSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Index text inside images (needs Text Extractor)")
+      .setDesc(
+        "Read text out of PNG/JPG/WEBP/BMP attachments by delegating to the Text Extractor " +
+          "plugin, if you have it installed and enabled. Nothing happens without it. " +
+          "Note that Text Extractor downloads OCR language data from the internet on first " +
+          "use — the only attachment path here that touches the network, and it belongs to " +
+          "that plugin, not this one.",
+      )
+      .addToggle((t) =>
+        t.setValue(this.s.indexImageText).onChange(async (v) => {
+          this.s.indexImageText = v;
+          await this.commit();
+        }),
+      );
+
+    new Setting(containerEl)
       .setName("Auto-index on file change")
       .setDesc("Debounced refresh when notes change. Off by default.")
       .addToggle((t) =>

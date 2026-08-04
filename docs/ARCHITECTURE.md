@@ -53,7 +53,7 @@ The plugin (`main.ts`) reconciles the server with settings on load, on settings 
 - `ui/control-panel-view.ts` — a right-sidebar `ItemView` showing index stats and quick-action buttons. It talks to `main.ts` only through the `ControlPanelActions` interface.
 - `ui/*-modal.ts` — `SearchModal`, `AddMemoryModal`, `PendingMemoryModal`, and the small `PromptModal` / `TextDisplayModal` helpers.
 
-These modules import `obsidian`. Nothing below this layer does.
+These modules import `obsidian`. Nothing below this layer does, apart from four thin adapters in `core/` that exist precisely to wrap a host API behind a pure interface: `obsidian-vault-adapter.ts`, `obsidian-http-client.ts`, `obsidian-pdf-extractor.ts`, and `obsidian-ocr-extractor.ts`.
 
 ## Service layer
 
@@ -61,7 +61,7 @@ These modules import `obsidian`. Nothing below this layer does.
 - `indexing/vault-scanner.ts` — `VaultScanner` enumerates eligible Markdown notes and applies folder/tag/pattern filters.
 - `indexing/index-manager.ts` — `IndexManager` builds, incrementally refreshes, persists, and loads the JSON index.
 - `indexing/link-graph.ts` — pure wikilink-graph resolution over indexed chunks (backs the `find_related_notes` tool).
-- `extract/` — the attachment-to-text boundary (`text-extractor.ts`, injected like `EmbeddingProvider`) and its mtime-keyed cache (`extraction-cache.ts`); extracted attachments enter the pipeline as ordinary scanned notes. Extractors: PDF (via Obsidian's bundled pdf.js — the one `obsidian`-importing adapter, in `core/`), Office/OpenDocument over a minimal dependency-free ZIP reader (`zip.ts`, `office-extractor.ts`), RTF (`rtf-extractor.ts`), txt/csv (`plain-text-extractor.ts`), and Canvas (`canvas-extractor.ts`). All parse untrusted bytes with linear-time scanning and decompression caps (see SECURITY.md).
+- `extract/` — the attachment-to-text boundary (`text-extractor.ts`, injected like `EmbeddingProvider`) and its mtime-keyed cache (`extraction-cache.ts`); extracted attachments enter the pipeline as ordinary scanned notes. Extractors: PDF (via Obsidian's bundled pdf.js — the one `obsidian`-importing adapter, in `core/`), Office/OpenDocument over a minimal dependency-free ZIP reader (`zip.ts`, `office-extractor.ts`), RTF (`rtf-extractor.ts`), txt/csv (`plain-text-extractor.ts`), Canvas (`canvas-extractor.ts`), and image text delegated to the Text Extractor plugin (`core/obsidian-ocr-extractor.ts`, opt-in — no OCR engine is bundled). All parse untrusted bytes with linear-time scanning and decompression caps (see SECURITY.md).
 - `retrieval/retriever.ts` + `retrieval/lexical-retriever.ts` — the `Retriever` interface and the M1 BM25 `LexicalRetriever`.
 - `memory/memory-store.ts` — `MemoryStore` handles read-side context (global/project/sessions) and non-destructive scaffold creation.
 - `memory/memory-writer.ts` — `MemoryWriter` is the only component that writes memory: inbox proposals and double-gated direct writes.

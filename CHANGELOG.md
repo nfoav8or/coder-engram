@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Text inside images can be indexed (opt-in), by delegating rather than bundling.** A new **Index text inside images** setting (off by default, schema v6 → v7) reads text out of PNG/JPG/WEBP/BMP attachments through the [Text Extractor](https://github.com/scambier/obsidian-text-extractor) plugin's published API; with that plugin absent, nothing happens and images stay unindexed. Running OCR in-process was rejected on three grounds: Obsidian's developer policy forbids a plugin installing or updating its own dependencies, and an in-process Tesseract fetches a language file on first use; the engine plus one language is megabytes against a ~120 KB bundle; and it would put a network fetch behind a feature users reasonably read as local. Delegating cost **1.2 KB** of bundle instead. **Text Extractor performs that language download itself, so this is the one attachment path that can cause network activity** — stated in the setting's own description. Images obey every existing attachment rule: exclusions are applied before extraction, the 50 MB cap holds, and turning the setting off evicts the extracted text from the cache on the next refresh.
+
 ## [0.8.0] — 2026-08-04
 
 What the agent gets back is now your choice. Three reductions that quietly trimmed MCP tool output are separate opt-in toggles, all off by default — so out of the box nothing is withheld, and each saving is something you turn on knowing what it costs.

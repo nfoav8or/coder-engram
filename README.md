@@ -55,7 +55,9 @@ With **Index attachments** on, text-bearing attachments are extracted and indexe
 - **Microsoft Office** — `docx`, `pptx`, `xlsx` — and **LibreOffice** — `odt`, `odp`, `ods`.
 - **RTF**, plain text (`txt`, `csv`), and **Canvas** boards (text cards, group labels, edge labels).
 
-All extraction is dependency-free and fully local: the bytes never leave your machine, extracted text is cached in a rebuildable index file, and turning the setting off deletes that cache. Image-only PDFs yield no text (there is no OCR).
+All extraction is dependency-free and fully local: the bytes never leave your machine, extracted text is cached in a rebuildable index file, and turning the setting off deletes that cache.
+
+**Text inside images** is a separate opt-in (**Index text inside images**). Rather than bundling an OCR engine — megabytes of WebAssembly, plus language data fetched at runtime, which Obsidian's developer policy disallows — it delegates to the [Text Extractor](https://github.com/scambier/obsidian-text-extractor) plugin if you have it. With that plugin absent, nothing happens. Note that Text Extractor downloads its OCR language data on first use, so this is the one attachment path that can touch the network. Scanned PDFs still yield no text.
 
 ### Local server (off by default)
 
