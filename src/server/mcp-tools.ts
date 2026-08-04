@@ -102,6 +102,12 @@ const ADD_MEMORY_MAX_PER_MINUTE = 60;
 const SUMMARIZE_MAX_PER_MINUTE = 30;
 const SUMMARY_DEFAULT_SENTENCES = 5;
 const SUMMARY_MAX_SENTENCES = 20;
+// Sentence count alone doesn't bound what a summary costs: units are split on
+// lines first, so a line with no sentence terminator (pasted JSON, base64, a
+// wide table row) stays ONE unit however long it is. Unbounded, the tool whose
+// whole purpose is cheap context returned more than a full note read (measured:
+// 20k chars from 12 such lines). 20 ordinary sentences land well under this.
+const SUMMARY_MAX_CHARS = 4_000;
 const NOTE_CONTEXT_MAX_PER_MINUTE = 60;
 const NOTE_CONTEXT_DEFAULT_MAX_CHARS = 12_000;
 const NOTE_CONTEXT_MAX_CHARS = 50_000;
@@ -488,7 +494,8 @@ const summarizeNoteTool: Tool = {
       "Extractive summary of a single INDEXED note: returns a few of the note's " +
       "OWN sentences (never generated/invented text), chosen by relevance. Only " +
       "notes present in the index can be summarized — an excluded or unindexed " +
-      "note is refused, so this is not a general file-read.",
+      `note is refused, so this is not a general file-read. Output is capped at ` +
+      `${SUMMARY_MAX_CHARS} characters.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -520,7 +527,11 @@ const summarizeNoteTool: Tool = {
     const header =
       `Extractive summary of ${summary.notePath} ` +
       `(${summary.sentences.length} of ${summary.totalUnits} sentences · ${summary.method})${flags}:`;
-    const body = summary.sentences.map((s) => `• ${s}`).join("\n");
+    const body = clipContext(
+      summary.sentences.map((s) => `• ${s}`).join("\n"),
+      SUMMARY_MAX_CHARS,
+      "this note's lines are long; read a range with get_note_context",
+    );
     return `${header}\n\n${body}`;
   },
 };

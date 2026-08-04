@@ -40,6 +40,21 @@ describe("summarize_note tool", () => {
     expect(out).toMatch(/^Extractive summary of Notes\/a\.md/);
   });
 
+  it("bounds the summary of a note built from long unbroken lines", async () => {
+    // Units are split on lines first, and a line with no sentence terminator
+    // stays one unit however long it is — pasted JSON, base64, a wide table
+    // row. Bounding by sentence COUNT alone lets the tool whose whole purpose
+    // is cheap context return more than a full note read.
+    const blob = (i: number) => `data-${i} ` + "x".repeat(4_000);
+    const note = `# Blobs\n\n${Array.from({ length: 12 }, (_, i) => blob(i)).join("\n")}`;
+    const { engine, ctx } = makeContext({ "Notes/blob.md": note });
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    const out = await registry.call("summarize_note", { path: "Notes/blob.md" }, ctx);
+    expect(out.length).toBeLessThan(5_000);
+    expect(out).toContain("truncated");
+  });
+
   it("throws for an unindexed path", async () => {
     const { engine, ctx } = makeContext({ "Notes/a.md": NOTE });
     await engine.reindex();

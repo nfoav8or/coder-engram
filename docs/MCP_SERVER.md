@@ -71,7 +71,7 @@ Every request is a `POST` with `Content-Type: application/json` and an
 | `list_projects` | Project names under the projects root. | |
 | `get_recent_sessions` | Most recent session notes for a project. | Inputs: `limit` (capped at 20), `maxChars` (optional; clips at session boundaries and names omitted sessions). **Rate-limited** (60/min). |
 | `reindex_vault` | Rebuild the index from the vault. | **Rate-limited** (15 s cooldown). Refused when indexing is disabled. |
-| `summarize_note` | Extractive summary of an indexed note. | Inputs: `path` (required), `maxSentences` (optional, default 5, max 20). Returns a selection of the note's **own sentences** — verbatim, in original order — never generated prose. **In-scope only**: refused for notes that are not in the index. **Rate-limited** (30/min). |
+| `summarize_note` | Extractive summary of an indexed note. | Inputs: `path` (required), `maxSentences` (optional, default 5, max 20). Returns a selection of the note's **own sentences** — verbatim, in original order — never generated prose. **In-scope only**: refused for notes that are not in the index. Output is capped at **4000 characters** — sentence count alone does not bound cost, because units split on lines first and a line with no sentence terminator (pasted JSON, base64, a wide table row) stays one unit however long it is. **Rate-limited** (30/min). |
 
 ### On extractive summarization
 

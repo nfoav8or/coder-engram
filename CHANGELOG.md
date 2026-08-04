@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`summarize_note` now caps its output at 4000 characters.** Sentence count alone never bounded what a summary cost: units are split on lines first, so a line with no sentence terminator — pasted JSON, base64, a wide table row — stays a single unit however long it is. A note built from such lines returned a 20,000-character "summary", more than a full `get_note_context` read, from the one tool whose purpose is cheap context. Over the cap the output is clipped and says so, pointing at a ranged read instead.
 - **`find_related_notes` now bounds a hub note's link list.** It was the only content-returning tool with no output bound at all — every other one caps by result count or `maxChars` — so navigating from a Map-of-Content note linking hundreds of notes returned every path, costing more than the largest budgeted read. Each direction now lists up to 1500 characters of links and names how many more it has, so the agent can tell it is seeing a slice rather than the whole graph. The budget is in characters rather than link count deliberately: per-link cost varies ~3.8× with path depth (15 chars for `Notes/n12.md`, 57 for a `Claude Code/Projects/…/Sessions/…` path), so a fixed count bought 759 chars in a shallow vault and 2,859 in a deep one. A link list starts costing more than a whole search page at as few as 6 links when paths are deep.
 
 ## [0.6.0] — 2026-08-03
