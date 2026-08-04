@@ -94,6 +94,23 @@ const ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
  * characters a page over 500 pages), so real documents are unaffected.
  */
 const EXTRACTED_TEXT_MAX_CHARS = 1024 * 1024;
+/**
+ * Ceiling on the text ALL attachments together contribute to one scan.
+ *
+ * Per-file caps bound one document; they say nothing about a thousand of them.
+ * Both the extraction cache and the index are single JSON documents, and V8
+ * refuses to build a string past ~512 MB: 516 attachments at the per-file
+ * ceiling make `JSON.stringify` throw `RangeError: Invalid string length`
+ * (measured), which aborts the whole refresh rather than degrading — the vault
+ * can then never finish indexing.
+ *
+ * 32 MB is roughly 8 million tokens of attachment text, far past what
+ * retrieval usefully serves, and an order of magnitude under the failure
+ * point even after JSON escaping and chunk overlap. Attachments past it are
+ * skipped in scan order (stable across runs) and logged, so the outcome is a
+ * bounded, self-describing partial index instead of no index at all.
+ */
+export const ATTACHMENT_TEXT_BUDGET_CHARS = 32 * 1024 * 1024;
 
 /**
  * Clip extracted text to the ceiling, saying so in the text itself. Null stays
@@ -231,7 +248,16 @@ export class EngramEngine {
 
     const out: ScannedNote[] = [];
     const live = new Set<string>();
+    // Corpus-wide budget: files past it are neither extracted nor cached, and
+    // leaving them out of `live` also drops any text a previous, smaller vault
+    // had cached for them.
+    let remainingChars = ATTACHMENT_TEXT_BUDGET_CHARS;
+    let skippedForBudget = 0;
     for (const f of eligible) {
+      if (remainingChars <= 0) {
+        skippedForBudget++;
+        continue;
+      }
       live.add(f.path);
       let entry = this.extractionCache.get(f.path, f.mtime);
       if (entry === undefined) {
@@ -258,6 +284,7 @@ export class EngramEngine {
         entry = { mtime: f.mtime, text };
       }
       if (entry.text) {
+        remainingChars -= entry.text.length;
         const metadata = extractMetadata(entry.text);
         // Tag exclusions apply to extracted text exactly as to notes; checked
         // at emit time (not cached), so a tag-config change re-evaluates
@@ -265,6 +292,12 @@ export class EngramEngine {
         if (!this.scanner.isMetadataEligible(metadata, scanConfig)) continue;
         out.push({ path: f.path, mtime: f.mtime, content: entry.text, metadata });
       }
+    }
+    if (skippedForBudget > 0) {
+      this.logger.warn(
+        `Attachment text budget reached; ${skippedForBudget} attachment(s) not indexed`,
+        { budgetChars: ATTACHMENT_TEXT_BUDGET_CHARS },
+      );
     }
     this.extractionCache.prune(live);
     await this.extractionCache.persist();

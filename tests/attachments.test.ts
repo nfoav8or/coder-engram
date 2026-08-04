@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { EngramEngine } from "../src/engine";
+import { EngramEngine, ATTACHMENT_TEXT_BUDGET_CHARS } from "../src/engine";
 import { InMemoryVaultAdapter } from "../src/core/vault-adapter";
 import { DEFAULT_SETTINGS, EngramSettings, migrateSettings } from "../src/settings/settings";
 import { NULL_LOGGER } from "../src/utils/logger";
@@ -316,6 +316,53 @@ describe("extracted-text ceiling", () => {
     expect(chunks.some((c) => c.text.includes("extraction truncated"))).toBe(true);
     // The file is still findable — truncation is not exclusion.
     expect((await engine.search({ query: "kokako" }))[0]?.chunk.notePath).toBe("Data/huge.txt");
+  });
+
+  it("stops indexing attachments once the whole-corpus text budget is spent", async () => {
+    // Per-file caps bound one document, not a thousand of them. Both the
+    // extraction cache and the index are single JSON documents, and past
+    // ~512 MB JSON.stringify throws RangeError — an abort, not a degradation.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const perFile = 1024 * 1024;
+    const count = Math.ceil(ATTACHMENT_TEXT_BUDGET_CHARS / perFile) + 2;
+    const names: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const path = `Data/f${String(i).padStart(3, "0")}.txt`;
+      names.push(path);
+      adapter.seedBinary(path, new Uint8Array([1]));
+    }
+    // Text is generated, not seeded, so the fixture costs one byte per file.
+    const bulky: TextExtractor = {
+      extensions: [".txt"],
+      needsBytes: false,
+      async extract(path: string) {
+        return `# ${path}\n\n${"kakapo ".repeat(perFile / 7)}`;
+      },
+    };
+    let t = 10_000;
+    const engine = new EngramEngine(
+      adapter,
+      { ...DEFAULT_SETTINGS, indexAttachments: true },
+      NULL_LOGGER,
+      () => t++,
+      { extractors: [bulky] },
+    );
+    await engine.reindex();
+
+    expect(engine.getNoteChunks(names[0]).length).toBeGreaterThan(0);
+    expect(engine.getNoteChunks(names[count - 1])).toEqual([]);
+    const indexedChars = names.reduce(
+      (n, p) => n + engine.getNoteChunks(p).reduce((m, c) => m + c.text.length, 0),
+      0,
+    );
+    // Bounded by the budget (plus the one file that crosses it, plus chunk
+    // overlap), not by how many attachments the vault holds.
+    expect(indexedChars).toBeLessThan((ATTACHMENT_TEXT_BUDGET_CHARS + perFile) * 1.2);
+    // Skipped files leave nothing behind in the extraction cache either.
+    const cache = JSON.parse(await adapter.read("Claude Code/Index/extracted.json")) as {
+      entries: Record<string, unknown>;
+    };
+    expect(Object.keys(cache.entries)).not.toContain(names[count - 1]);
   });
 
   it("leaves a no-text attachment as no text, not as a truncation notice", async () => {
