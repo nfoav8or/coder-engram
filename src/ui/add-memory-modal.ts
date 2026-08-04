@@ -5,6 +5,7 @@
  */
 
 import { App, Modal, Notice, Setting } from "obsidian";
+import { toMessage } from "../utils/errors";
 import { EngramEngine } from "../engine";
 import { MemoryEntry, MemoryType, Confidence } from "../memory/memory-types";
 
@@ -115,7 +116,7 @@ export class AddMemoryModal extends Modal {
       new Notice(duplicate ? `Already pending in ${path}` : `Memory proposed to ${path}`);
       this.close();
     } catch (err) {
-      new Notice(`Failed to add memory: ${err instanceof Error ? err.message : String(err)}`);
+      new Notice(`Failed to add memory: ${toMessage(err)}`);
     }
   }
 

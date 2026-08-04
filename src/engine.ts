@@ -38,7 +38,7 @@ import {
   toEmbeddingConfig,
 } from "./settings/settings";
 import { normalizeVaultRelativePath, isInsideRoot, resolveInVault } from "./utils/paths";
-import { ConfigError } from "./utils/errors";
+import { ConfigError, toMessage } from "./utils/errors";
 import { Logger } from "./utils/logger";
 
 /** Optional injected dependencies (production wires the Obsidian adapters). */
@@ -219,7 +219,7 @@ export class EngramEngine {
             text = await extractor.extract(f.path, await this.adapter.readBinary(f.path));
           } catch (err) {
             this.logger.warn(`Attachment extraction failed: ${f.path}`, {
-              error: err instanceof Error ? err.message : String(err),
+              error: toMessage(err),
             });
           }
         }
@@ -472,7 +472,7 @@ export class EngramEngine {
     } catch (err) {
       // Degrade to the lexical component rather than failing the search.
       this.logger.warn("Query embedding failed; using lexical ranking", {
-        error: err instanceof Error ? err.message : String(err),
+        error: toMessage(err),
       });
       return query;
     }
@@ -520,7 +520,7 @@ export class EngramEngine {
       }
     } catch (err) {
       this.logger.warn("Embedding pass failed; retrieval stays lexical", {
-        error: err instanceof Error ? err.message : String(err),
+        error: toMessage(err),
       });
     }
   }
@@ -645,7 +645,7 @@ export class EngramEngine {
       return vectors.length === units.length ? vectors : undefined;
     } catch (err) {
       this.logger.warn("Summary embedding failed; using lexical summary", {
-        error: err instanceof Error ? err.message : String(err),
+        error: toMessage(err),
       });
       return undefined;
     }

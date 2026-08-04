@@ -11,6 +11,7 @@
  */
 
 import { VaultAdapter } from "../core/vault-adapter";
+import { toMessage } from "../utils/errors";
 import { extractMetadata, NoteMetadata } from "../core/metadata-extractor";
 import { normalizeVaultRelativePath } from "../utils/paths";
 import { Logger, NULL_LOGGER } from "../utils/logger";
@@ -164,7 +165,7 @@ export class VaultScanner {
         out.push({ path: file.path, mtime: file.mtime, content, metadata });
       } catch (err) {
         this.logger.warn(`Skipped unreadable note: ${file.path}`, {
-          error: err instanceof Error ? err.message : String(err),
+          error: toMessage(err),
         });
       }
     }

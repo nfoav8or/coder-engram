@@ -11,6 +11,7 @@
  */
 
 import { HttpClient } from "../core/http-client";
+import { toMessage } from "../utils/errors";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 import { EmbeddingProvider } from "./embedding-provider";
 import { normalizeEndpoint, parseVectorMatrix } from "./embedding-http";
@@ -79,7 +80,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       return res.status >= 200 && res.status < 300;
     } catch (err) {
       this.logger.warn("Ollama not reachable", {
-        error: err instanceof Error ? err.message : String(err),
+        error: toMessage(err),
       });
       return false;
     }

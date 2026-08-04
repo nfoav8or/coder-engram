@@ -7,6 +7,7 @@
  */
 
 import { VaultAdapter } from "../core/vault-adapter";
+import { toMessage } from "../utils/errors";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 
 // Bump when the cache-file format OR any extractor's output logic changes: the
@@ -50,7 +51,7 @@ export class ExtractionCache {
     } catch (err) {
       this.reset = true;
       this.logger.warn("Extraction cache unreadable; starting fresh", {
-        error: err instanceof Error ? err.message : String(err),
+        error: toMessage(err),
       });
     }
   }

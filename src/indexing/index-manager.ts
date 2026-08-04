@@ -11,6 +11,7 @@
  */
 
 import { VaultAdapter } from "../core/vault-adapter";
+import { toMessage } from "../utils/errors";
 import { chunkMarkdown, ChunkOptions } from "../core/markdown-chunker";
 import { ScannedNote, ScanResult, isUnchangedNote } from "./vault-scanner";
 import { Logger, NULL_LOGGER } from "../utils/logger";
@@ -276,7 +277,7 @@ export class IndexManager {
       return this.index;
     } catch (err) {
       this.logger.warn("Failed to load index; rebuild required", {
-        error: err instanceof Error ? err.message : String(err),
+        error: toMessage(err),
       });
       return null;
     }

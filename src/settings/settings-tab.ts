@@ -8,6 +8,7 @@
  */
 
 import { App, Plugin, PluginSettingTab, Setting, Notice } from "obsidian";
+import { toMessage } from "../utils/errors";
 import { EngramSettings, parseList } from "./settings";
 import { normalizeVaultRelativePath } from "../utils/paths";
 
@@ -196,7 +197,7 @@ export class EngramSettingTab extends PluginSettingTab {
             await this.host.rebuildIndex();
             new Notice("Index rebuilt.");
           } catch (err) {
-            new Notice(`Rebuild failed: ${err instanceof Error ? err.message : String(err)}`);
+            new Notice(`Rebuild failed: ${toMessage(err)}`);
           }
         }),
       );

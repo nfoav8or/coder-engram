@@ -4,6 +4,7 @@
  */
 
 import { App, MarkdownView, Modal, Notice, Setting, TFile } from "obsidian";
+import { toMessage } from "../utils/errors";
 import { EngramEngine } from "../engine";
 import { RetrievalResult } from "../retrieval/retriever";
 import { findTermMatches } from "../retrieval/ranking";
@@ -70,7 +71,7 @@ export class SearchModal extends Modal {
       results = await this.engine.search({ query: q, limit: 15 });
     } catch (err) {
       if (seq === this.searchSeq) {
-        new Notice(`Search failed: ${err instanceof Error ? err.message : String(err)}`);
+        new Notice(`Search failed: ${toMessage(err)}`);
       }
       return;
     }
@@ -126,7 +127,7 @@ export class SearchModal extends Modal {
         leaf.view.editor.setCursor({ line, ch: 0 });
       }
     } catch (err) {
-      new Notice(`Could not open note: ${err instanceof Error ? err.message : String(err)}`);
+      new Notice(`Could not open note: ${toMessage(err)}`);
     }
   }
 

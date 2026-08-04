@@ -14,6 +14,7 @@
  */
 
 import { VaultAdapter } from "../core/vault-adapter";
+import { toMessage } from "../utils/errors";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 import { EmbeddingProvider } from "./embedding-provider";
 
@@ -109,7 +110,7 @@ export class EmbeddingStore {
       }
     } catch (err) {
       this.logger.warn("Failed to load embeddings; will recompute", {
-        error: err instanceof Error ? err.message : String(err),
+        error: toMessage(err),
       });
       this.state = null;
     }
