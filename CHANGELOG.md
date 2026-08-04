@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`find_related_notes` now bounds a hub note's link list.** It was the only content-returning tool with no output bound at all — every other one caps by result count or `maxChars` — so navigating from a Map-of-Content note linking hundreds of notes returned every path, costing more than the largest budgeted read. Each direction now lists at most 50 notes and names how many more it has, so the agent can tell it is seeing a slice rather than the whole graph.
+
 ## [0.6.0] — 2026-08-03
 
 Milestone 10 — attachments become memory, and retrieval gets measured. Opt-in attachment indexing brings PDFs, Microsoft Office and LibreOffice documents, RTF, plain text, and Canvas boards into the same pipeline as notes, all with zero added dependencies and no bytes leaving the machine. Retrieval gains filename/alias/heading field matching (with a golden-query eval harness to prove it), and context handoff gets outline mode, continuation pointers, and labelled bulk reads. Filtered searches are ~8× faster.

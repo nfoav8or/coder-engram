@@ -483,6 +483,26 @@ describe("RateLimiter.enforceWindow", () => {
     expect(out).toContain("Notes/c.md");
   });
 
+  it("find_related_notes caps a hub note's links and names the remainder", async () => {
+    // A Map-of-Content note linking hundreds of notes is exactly what an agent
+    // navigates from, and this was the only read surface with no bound: the
+    // full list cost more than the largest budgeted read.
+    const seed: Record<string, string> = {
+      "Notes/hub.md": `# Hub\n\n${Array.from({ length: 120 }, (_, i) => `[[n${i}]]`).join(" ")}`,
+    };
+    for (let i = 0; i < 120; i++) seed[`Notes/n${i}.md`] = `# n${i}\n\nBody ${i}.`;
+    const { engine, ctx } = makeContext(seed);
+    await engine.reindex();
+    const registry = new ToolRegistry();
+    const out = await registry.call("find_related_notes", { path: "Notes/hub.md" }, ctx);
+
+    const listed = out.split("\n").filter((l) => l.startsWith("- ") && !l.includes("more,"));
+    expect(listed).toHaveLength(50);
+    expect(out).toContain("(70 more, 120 total)");
+    // The bound is the point: the uncapped list ran past 3,000 chars.
+    expect(out.length).toBeLessThan(3_000);
+  });
+
   it("find_related_notes refuses a note that is not indexed", async () => {
     const { engine, ctx } = makeContext(
       { "Secret/keys.md": "# Keys\n\n[[a]]" },

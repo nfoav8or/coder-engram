@@ -112,6 +112,11 @@ const NOTE_CONTEXT_MAX_CHARS = 50_000;
 const CONTEXT_MAX_PER_MINUTE = 60;
 const CONTEXT_DEFAULT_MAX_CHARS = 12_000;
 const CONTEXT_MAX_CHARS = 50_000;
+// Links listed per direction by find_related_notes. Hub/MOC notes — the ones
+// an agent is most likely to navigate from — can link hundreds of notes, and
+// this was the only read surface with no bound at all: every other one caps by
+// result count or maxChars. Generous enough that ordinary notes list in full.
+const RELATED_MAX_PER_SECTION = 50;
 
 /**
  * Full heading breadcrumb for a chunk. `headingPath` holds ANCESTORS only (the
@@ -715,7 +720,8 @@ const findRelatedNotesTool: Tool = {
       "Navigate the memory graph from one INDEXED note: returns the indexed notes " +
       "it links to and the indexed notes that link back to it. Links resolve by " +
       "note name (Obsidian-style); only notes in the index appear, and an excluded " +
-      "or unindexed note is refused.",
+      `or unindexed note is refused. Each direction lists at most ${RELATED_MAX_PER_SECTION} ` +
+      "notes; a hub note over that reports how many more it has.",
     inputSchema: {
       type: "object",
       properties: {
@@ -733,8 +739,15 @@ const findRelatedNotesTool: Tool = {
     if (related.linksTo.length === 0 && related.linkedFrom.length === 0) {
       return `No linked notes found for "${path}".`;
     }
-    const section = (title: string, notes: string[]) =>
-      notes.length ? `${title}:\n${notes.map((n) => `- ${n}`).join("\n")}` : "";
+    const section = (title: string, notes: string[]) => {
+      if (notes.length === 0) return "";
+      const shown = notes.slice(0, RELATED_MAX_PER_SECTION);
+      const body = `${title}:\n${shown.map((n) => `- ${n}`).join("\n")}`;
+      const rest = notes.length - shown.length;
+      // Name the remainder rather than truncating silently: a hub note's link
+      // list is exactly where the agent needs to know it is seeing a slice.
+      return rest > 0 ? `${body}\n- …(${rest} more, ${notes.length} total)` : body;
+    };
     return [
       section("Links to", related.linksTo),
       section("Linked from", related.linkedFrom),
