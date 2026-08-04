@@ -104,6 +104,15 @@ export class EngramSettingTab extends PluginSettingTab {
       cls: "engram-stat-row",
     });
 
+    this.renderIndexingSection();
+    this.renderEmbeddingSection();
+    this.renderServerSection();
+    this.renderWriteSafetySection();
+    this.renderAdvancedSection();
+  }
+
+  private renderIndexingSection(): void {
+    const { containerEl } = this;
     this.section("Indexing");
 
     new Setting(containerEl)
@@ -201,9 +210,10 @@ export class EngramSettingTab extends PluginSettingTab {
         }),
       );
 
-    this.renderEmbeddingSection();
-    this.renderServerSection();
-    this.renderWriteSafetySection();
+  }
+
+  private renderAdvancedSection(): void {
+    const { containerEl } = this;
 
     this.section("Advanced");
     new Setting(containerEl)
