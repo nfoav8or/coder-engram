@@ -285,7 +285,15 @@ export class EngramEngine {
       }
       if (entry.text) {
         remainingChars -= entry.text.length;
-        const metadata = extractMetadata(entry.text);
+        // Derived once per (path, mtime) and cached with the text: this pass
+        // runs over EVERY attachment on every refresh, while the markdown side
+        // is O(changed), so re-deriving it here costs ~700 ms at the corpus
+        // budget for text that did not change.
+        let metadata = entry.metadata;
+        if (metadata === undefined) {
+          metadata = extractMetadata(entry.text);
+          this.extractionCache.rememberMetadata(f.path, metadata);
+        }
         // Tag exclusions apply to extracted text exactly as to notes; checked
         // at emit time (not cached), so a tag-config change re-evaluates
         // without re-extraction.

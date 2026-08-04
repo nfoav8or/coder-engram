@@ -282,6 +282,89 @@ describe("ExtractionCache", () => {
     expect(cache3.get("b.pdf", 200)).toBeUndefined();
   });
 
+  it("reuses cached metadata instead of re-deriving it from the text each scan", async () => {
+    // The attachment pass runs over EVERY attachment on every refresh, while
+    // the markdown side is O(changed) — so deriving tags/links again for text
+    // that did not change is the dominant cost of an incremental refresh.
+    // Poisoning the cached metadata is the decisive proof it is trusted: the
+    // text below has no tags at all, so an exclusion can only bite if the
+    // cached value was used.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    adapter.seedBinary("Data/a.txt", new TextEncoder().encode("kakapo quarterly report"));
+    const cachePath = "Claude Code/Index/extracted.json";
+    const build = (settings: Partial<EngramSettings>) => {
+      let t = 10_000;
+      return new EngramEngine(
+        adapter,
+        { ...DEFAULT_SETTINGS, indexAttachments: true, ...settings },
+        NULL_LOGGER,
+        () => t++,
+        { extractors: [new PlainTextExtractor()] },
+      );
+    };
+
+    await build({}).reindex();
+    const cached = JSON.parse(await adapter.read(cachePath)) as {
+      entries: Record<string, { metadata?: { tags: string[] } }>;
+    };
+    expect(cached.entries["Data/a.txt"].metadata?.tags).toEqual([]);
+
+    cached.entries["Data/a.txt"].metadata = {
+      tags: ["secret"],
+      aliases: [],
+      links: [],
+      bodyStartLine: 0,
+    } as never;
+    await adapter.write(cachePath, JSON.stringify(cached));
+
+    const excluded = build({ excludedTags: ["secret"] });
+    await excluded.reindex();
+    expect(excluded.getNoteChunks("Data/a.txt")).toEqual([]);
+  });
+
+  it("fills in metadata for a cache file written before it existed, without re-extracting", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    adapter.seedBinary("Data/b.txt", new TextEncoder().encode("takahe ledger"));
+    const cachePath = "Claude Code/Index/extracted.json";
+    let extractions = 0;
+    const counting: TextExtractor = {
+      extensions: [".txt"],
+      async extract(path: string, data: ArrayBuffer) {
+        extractions++;
+        return `# ${path}\n\n${new TextDecoder().decode(data)}`;
+      },
+    };
+    const build = () => {
+      let t = 10_000;
+      return new EngramEngine(
+        adapter,
+        { ...DEFAULT_SETTINGS, indexAttachments: true },
+        NULL_LOGGER,
+        () => t++,
+        { extractors: [counting] },
+      );
+    };
+
+    await build().reindex();
+    expect(extractions).toBe(1);
+
+    // Strip the field, as an older build would have left it.
+    const stripped = JSON.parse(await adapter.read(cachePath)) as {
+      entries: Record<string, { metadata?: unknown }>;
+    };
+    delete stripped.entries["Data/b.txt"].metadata;
+    await adapter.write(cachePath, JSON.stringify(stripped));
+
+    const engine = build();
+    await engine.reindex();
+    expect(engine.getNoteChunks("Data/b.txt").length).toBeGreaterThan(0);
+    expect(extractions).toBe(1); // upgraded in place, not re-extracted
+    const upgraded = JSON.parse(await adapter.read(cachePath)) as {
+      entries: Record<string, { metadata?: unknown }>;
+    };
+    expect(upgraded.entries["Data/b.txt"].metadata).toBeDefined();
+  });
+
   it("tolerates a corrupt cache file", async () => {
     const adapter = new InMemoryVaultAdapter("v", { "Index/extracted.json": "{not json" });
     const cache = new ExtractionCache(adapter, "Index/extracted.json");

@@ -6,18 +6,27 @@
  * files) are cached too, so a broken PDF isn't re-parsed on every refresh.
  */
 
+import { NoteMetadata } from "../core/metadata-extractor";
 import { VaultAdapter } from "../core/vault-adapter";
 import { toMessage } from "../utils/errors";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 
-// Bump when the cache-file format OR any extractor's output logic changes: the
-// cache is keyed on path+mtime, so a fixed extractor would otherwise keep
-// returning a stale (possibly negatively-cached) result for an unchanged file.
+// Bump when the cache-file format, any extractor's output logic, OR the
+// metadata extractor's output changes: the cache is keyed on path+mtime, so a
+// fixed extractor would otherwise keep returning a stale (possibly
+// negatively-cached) result for an unchanged file — and `metadata` below is
+// derived from the text, so it goes stale the same way.
 const CACHE_VERSION = 2;
 
 interface CacheEntry {
   mtime: number;
   text: string | null;
+  /**
+   * Tags/links/title derived from `text`. Optional so a cache file written
+   * before this field self-upgrades on the next scan instead of forcing every
+   * attachment to be re-extracted.
+   */
+  metadata?: NoteMetadata;
 }
 
 interface CacheFile {
@@ -78,6 +87,18 @@ export class ExtractionCache {
   set(path: string, mtime: number, text: string | null): void {
     if (this.state === null) this.state = {};
     this.state[path] = { mtime, text };
+    this.dirty = true;
+  }
+
+  /**
+   * Store metadata derived from an entry's text. Kept separate from `set`
+   * because the caller derives it after extraction, and because an entry
+   * restored from an older cache file needs it filled in without re-extracting.
+   */
+  rememberMetadata(path: string, metadata: NoteMetadata): void {
+    const entry = this.state?.[path];
+    if (!entry || entry.metadata !== undefined) return;
+    entry.metadata = metadata;
     this.dirty = true;
   }
 
