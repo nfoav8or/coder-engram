@@ -66,7 +66,7 @@ Coder Engram is built in milestones. Milestones 1 through 9 are complete (throug
 ## Milestone 8 — sharper, safer, cheaper agent loop (done, v0.4.0)
 
 - Ranged reads: `get_note_context` accepts `startLine`/`endLine` from a search hit.
-- Search pages de-duplicated (near-dup collapse), backfilled to the requested limit, dated, and line-ranged; inbox hits labelled `[PENDING REVIEW]`.
+- Search pages backfilled to the requested limit, dated, and line-ranged; inbox hits labelled `[PENDING REVIEW]`. Near-duplicate collapse shipped here as always-on and became an opt-in toggle in a later release.
 - Output caps (`maxChars`) and rate limits on the session-priming context tools.
 - O(changed) refresh file I/O (skip-unchanged scanning, config-keyed) and truly free no-op refreshes; the watcher ignores the plugin's own index writes.
 - Fixed: embedding-provider settings changes now apply without a plugin reload; exclusion changes trigger their own refresh.
