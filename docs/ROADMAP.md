@@ -1,6 +1,6 @@
 # Roadmap
 
-Coder Engram is built in milestones. Milestones 1 through 9 are complete (through v0.5.0); further work is tracked under "Deferred / future" below.
+Coder Engram is built in milestones. Milestones 1 through 12 are complete (through v0.8.0); work since the last release is listed under "In progress", and anything not scheduled is under "Deferred / future".
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -80,8 +80,33 @@ Coder Engram is built in milestones. Milestones 1 through 9 are complete (throug
 - Exclusion changes trigger their own refresh (0.4.0 audit follow-up).
 - e2e coverage of the MCP server over the wire (14 checks), including the inbox → `[PENDING REVIEW]` safety loop.
 
+## Milestone 10 — attachments become memory (done, v0.6.0)
+
+- Opt-in attachment indexing (`indexAttachments`), dependency-free: PDF via Obsidian's bundled pdf.js, docx/pptx/xlsx and odt/odp/ods via an in-repo ZIP+XML reader, RTF, txt/csv, and Canvas. Extracted text flows through the same chunk/refresh/exclusion/retrieval path as a note, so every MCP tool reads it like one.
+- Extraction cached by (path, mtime) in `Index/extracted.json`, negative results included, so a reload costs one JSON read.
+- Field matching: queries now hit filenames, frontmatter aliases, and ancestor headings, and frontmatter-only hub notes became findable.
+- A golden-query relevance eval harness (`npm run eval`) alongside the scale bench.
+- Hardening pass over untrusted bytes: linear-time link scanning (the old regexes backtracked quadratically), per-archive aggregate inflate and part caps, and cache-version bumps that actually reach already-indexed chunks.
+
+## Milestone 11 — bounded by the unit you pay in (done, v0.7.0, v0.7.1)
+
+- Every agent-facing read path bounded in **characters** rather than in counts: `summarize_note` at 4 000, `find_related_notes` link lists by budget, `get_note_context` truncation that names where to resume.
+- The chunker no longer emits a 100 KB chunk for a paragraph containing no blank line; such paragraphs break at whitespace, with a hard slice for a token that offers no boundary at all.
+- Section budget raised 1 200 → 2 000 characters, set by measured relevance rather than by the cost curve (`INDEX_VERSION` bumped, so indexes rebuild once).
+- Fixed a search that failed outright when one indexed chunk carried an unusable modified time.
+
+## Milestone 12 — the agent's context is your choice (done, v0.8.0)
+
+- The three output reductions that previously ran always-on — near-duplicate collapse, per-note share cap, overlapping-passage merge — became individual opt-in toggles, all off by default (settings schema v7), with a migration that preserves an earlier all-or-nothing opt-in.
+
+## In progress (unreleased)
+
+- Image text (OCR) as **plugin interop**: `indexImageText` delegates to the Text Extractor plugin's API rather than bundling an engine (see docs/SECURITY.md for why), at a cost of ~1.2 KB of bundle.
+- Attachment robustness at scale: a per-file text ceiling, a corpus-wide budget that keeps a large vault's index serializable, no file read for extractors that work from the path alone, and attachment metadata cached rather than re-derived on every refresh.
+
 ## Deferred / future
 
 - Non-desktop support (currently `isDesktopOnly`).
-- Image OCR shipped as **plugin interop**: `indexImageText` delegates to Text Extractor's API rather than bundling an engine (see docs/SECURITY.md for why). Scanned-PDF OCR is still open — the same delegation would need Text Extractor's PDF path, which its own README flags as unreliable. Text-bearing attachment formats are done: PDF, docx/pptx/xlsx, odt/odp/ods, RTF, txt/csv, and Canvas all index opt-in as of the post-0.5.0 cycle, dependency-free.
+- Scanned-PDF OCR. The same delegation would need Text Extractor's PDF path, which its own README flags as unreliable.
+- Cost control for a first refresh over thousands of images: OCR is serial and expensive per cache miss, and capping the work per scan would mean partial-index semantics.
 - Alternative local vector stores (SQLite, LanceDB, DuckDB) behind the storage model.
