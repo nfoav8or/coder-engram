@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-08-04
+
+A crash fix and internal tidying. No settings changes, no index rebuild.
+
+### Fixed
+
+- **A search no longer fails outright when one indexed chunk has an unusable modified time.** The result formatter built each hit's date inline with `new Date(mtime).toISOString()`, which throws `RangeError: Invalid time value` for a non-numeric mtime — taking down the whole `search_vault_memory` response rather than leaving one date blank. The index is a rebuildable cache, so a corrupt or partially-written entry can produce exactly that. The desktop search already had a guarded formatter for this; both now share it.
+
+### Changed
+
+- Internal tidying with no behaviour change: the shared line-normalization and modified-date helpers each have one implementation instead of two, error text everywhere goes through the existing `toMessage` helper, and the settings tab builds its scan-list fields and its sections through shared builders.
+
 ## [0.7.0] — 2026-08-04
 
 Every read path an agent can pull on is now bounded by the unit it is actually paid in — characters. Three tools could return far more than their nominal limits suggested (one had no limit at all), and the chunker could emit a single 100 KB chunk against a 1,200-character target. Chunking is also faster and smaller, with the budget set by measured relevance rather than by the cost curve. **Existing indexes rebuild once on upgrade** (`INDEX_VERSION` bumped), since chunk boundaries changed.
@@ -266,7 +278,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.7.0...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.7.1...HEAD
+[0.7.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.7.1
 [0.7.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.7.0
 [0.6.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.6.0
 [0.5.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.5.0
