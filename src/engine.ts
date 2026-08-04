@@ -80,6 +80,30 @@ const SUMMARY_MAX_SENTENCES = 20;
 const SUMMARY_MAX_UNITS = 200;
 /** Attachments above this size are skipped (whole-file reads into memory). */
 const ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
+/**
+ * Ceiling on the TEXT one attachment contributes.
+ *
+ * The 50 MB input cap above bounds what is read, not what comes back out, and
+ * the two are only loosely related: the PDF and Office extractors cap pages and
+ * parts, but a plain 50 MB csv, an RTF, or a docx whose whole body sits in one
+ * `document.xml` had no bound at all. Unbounded, one such file becomes tens of
+ * thousands of chunks — inflating the index, the search corpus, and (with a
+ * provider configured) the number of embedding requests it costs.
+ *
+ * 1 MB comfortably holds a whole book's worth of extracted text (~2 000
+ * characters a page over 500 pages), so real documents are unaffected.
+ */
+const EXTRACTED_TEXT_MAX_CHARS = 1024 * 1024;
+
+/**
+ * Clip extracted text to the ceiling, saying so in the text itself. Null stays
+ * null: "no text found" must not become "a notice and nothing else", or an
+ * image-only PDF would index as a document whose entire content is the notice.
+ */
+function capExtractedText(text: string | null): string | null {
+  if (text === null || text.length <= EXTRACTED_TEXT_MAX_CHARS) return text;
+  return `${text.slice(0, EXTRACTED_TEXT_MAX_CHARS)}\n\n(extraction truncated at ${EXTRACTED_TEXT_MAX_CHARS} characters)`;
+}
 
 export class EngramEngine {
   private settings: EngramSettings;
@@ -223,7 +247,7 @@ export class EngramEngine {
               extractor.needsBytes === false
                 ? new ArrayBuffer(0)
                 : await this.adapter.readBinary(f.path);
-            text = await extractor.extract(f.path, data);
+            text = capExtractedText(await extractor.extract(f.path, data));
           } catch (err) {
             this.logger.warn(`Attachment extraction failed: ${f.path}`, {
               error: toMessage(err),

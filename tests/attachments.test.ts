@@ -6,6 +6,7 @@ import { NULL_LOGGER } from "../src/utils/logger";
 import { TextExtractor, renderPdfMarkdown, joinPdfTextItems } from "../src/extract/text-extractor";
 import { ExtractionCache } from "../src/extract/extraction-cache";
 import { CanvasExtractor } from "../src/extract/canvas-extractor";
+import { PlainTextExtractor } from "../src/extract/plain-text-extractor";
 
 /** Extracts "pages" from the file's bytes (tests seed text under a .pdf path). */
 class FakePdfExtractor implements TextExtractor {
@@ -286,5 +287,49 @@ describe("ExtractionCache", () => {
     const cache = new ExtractionCache(adapter, "Index/extracted.json");
     await cache.load();
     expect(cache.get("x.pdf", 1)).toBeUndefined();
+  });
+});
+
+describe("extracted-text ceiling", () => {
+  it("caps one attachment's text and says so, without inventing text for an empty result", async () => {
+    // The 50 MB input cap bounds what is READ, not what comes back: a plain
+    // text file yields text roughly its own size, and unbounded that becomes
+    // tens of thousands of chunks from a single file.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const huge = "kokako ".repeat(400_000); // ~2.8 MB of text, well under the read cap
+    adapter.seedBinary("Data/huge.txt", new TextEncoder().encode(huge));
+    let t = 10_000;
+    const engine = new EngramEngine(
+      adapter,
+      { ...DEFAULT_SETTINGS, indexAttachments: true },
+      NULL_LOGGER,
+      () => t++,
+      { extractors: [new PlainTextExtractor()] },
+    );
+    await engine.reindex();
+
+    const chunks = engine.getNoteChunks("Data/huge.txt");
+    expect(chunks.length).toBeGreaterThan(0);
+    const total = chunks.reduce((n, c) => n + c.text.length, 0);
+    // Bounded by the ceiling (plus chunk overlap), not by the file's size.
+    expect(total).toBeLessThan(1024 * 1024 * 1.5);
+    expect(chunks.some((c) => c.text.includes("extraction truncated"))).toBe(true);
+    // The file is still findable — truncation is not exclusion.
+    expect((await engine.search({ query: "kokako" }))[0]?.chunk.notePath).toBe("Data/huge.txt");
+  });
+
+  it("leaves a no-text attachment as no text, not as a truncation notice", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    adapter.seedBinary("Data/empty.txt", new TextEncoder().encode("   \n  "));
+    let t = 10_000;
+    const engine = new EngramEngine(
+      adapter,
+      { ...DEFAULT_SETTINGS, indexAttachments: true },
+      NULL_LOGGER,
+      () => t++,
+      { extractors: [new PlainTextExtractor()] },
+    );
+    await engine.reindex();
+    expect(engine.getNoteChunks("Data/empty.txt")).toHaveLength(0);
   });
 });
