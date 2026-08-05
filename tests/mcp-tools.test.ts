@@ -119,6 +119,28 @@ describe("add_memory", () => {
     expect(inbox).toContain("docs/architecture.md");
   });
 
+  it("bounds how MANY list items there are, and the content itself", async () => {
+    // The other two halves of the same limit, and the two a mutation sweep
+    // found nothing was checking: 129 short paths, or 65 short tags, carry as
+    // much into the vault as one oversized item does, and the 50 000-character
+    // content cap is the headline bound the per-item caps exist to protect.
+    const { ctx } = makeContext();
+    const registry = new ToolRegistry();
+    await expect(
+      registry.call(
+        "add_memory",
+        { content: "hi", relatedPaths: new Array(129).fill("docs/a.md") },
+        ctx,
+      ),
+    ).rejects.toThrow(/too many items/);
+    await expect(
+      registry.call("add_memory", { content: "hi", tags: new Array(65).fill("decision") }, ctx),
+    ).rejects.toThrow(/too many items/);
+    await expect(
+      registry.call("add_memory", { content: "x".repeat(50_001) }, ctx),
+    ).rejects.toThrow(/exceeds maximum length/);
+  });
+
   it("coerces an unknown type to 'note'", async () => {
     const { adapter, ctx } = makeContext();
     const registry = new ToolRegistry();
