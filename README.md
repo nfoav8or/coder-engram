@@ -103,7 +103,7 @@ less install.sh   # read what you're about to run
 bash install.sh --vault "/path/to/YourVault"
 ```
 
-Run `bash install.sh --help` for options (`--version x.y.z`, `--enable`). Requires `curl` plus `python3` or `jq` for vault auto-detection.
+Run `bash install.sh --help` for options (`--version x.y.z`, `--enable`). Requires `curl` plus `python3` or `jq` for vault auto-detection. Checksum verification uses whichever of `sha256sum`, `shasum`, or `openssl` the machine has — stock macOS ships no `sha256sum` — and refuses to install on a mismatch, or on an asset the manifest does not cover.
 
 ## Manual installation (from source)
 

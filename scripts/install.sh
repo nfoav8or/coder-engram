@@ -121,10 +121,31 @@ done
 # Verify against the release's checksum manifest when it exists (releases
 # older than 0.6.0 don't ship one — the installer says so rather than skipping
 # silently).
+# sha256sum is GNU coreutils and is NOT present on a stock macOS, which this
+# script supports — using it unconditionally made every macOS install die with
+# "verification FAILED", blaming the release for a missing tool. Try each of
+# the three tools a machine plausibly has.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 "$1" | awk '{print $NF}'
+  else return 1
+  fi
+}
+
 if curl -fsSL "$BASE/SHA256SUMS" -o "$TMP/SHA256SUMS" 2>/dev/null; then
-  ( cd "$TMP" && sha256sum -c SHA256SUMS --ignore-missing --quiet ) \
-    || die "checksum verification FAILED — refusing to install"
-  say "Checksums verified."
+  if ! sha256_of "$TMP/SHA256SUMS" >/dev/null 2>&1; then
+    say "note: no sha256 tool found (sha256sum, shasum, or openssl); skipping checksum verification."
+  else
+    for a in "${ASSETS[@]}"; do
+      expected="$(awk -v f="$a" '$2 == f || $2 == "*" f {print $1}' "$TMP/SHA256SUMS" | head -1)"
+      [ -n "$expected" ] || die "SHA256SUMS has no entry for $a — refusing to install"
+      actual="$(sha256_of "$TMP/$a")" || die "could not hash $a — refusing to install"
+      [ "$actual" = "$expected" ] \
+        || die "checksum verification FAILED for $a — refusing to install"
+    done
+    say "Checksums verified."
+  fi
 else
   say "note: this release publishes no SHA256SUMS; skipping checksum verification."
 fi
