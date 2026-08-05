@@ -48,6 +48,21 @@ jobs:
             echo "Run 'npm version $VERSION' to sync manifest + versions.json, then push the tag." >&2
             exit 1
           fi
+          # versions.json is what Obsidian reads to decide which build an older
+          # app version may install. version-bump.mjs writes both files, so a
+          # missing entry means the manifest was edited by hand — and the
+          # release would publish while older clients are never offered it.
+          VERSIONS_ENTRY="$(node -p "require('./versions.json')['$VERSION'] || ''")"
+          if [ -z "$VERSIONS_ENTRY" ]; then
+            echo "versions.json has no entry for '$VERSION'." >&2
+            echo "Run 'npm version $VERSION' rather than editing manifest.json by hand." >&2
+            exit 1
+          fi
+          MIN_APP="$(node -p "require('./manifest.json').minAppVersion")"
+          if [ "$VERSIONS_ENTRY" != "$MIN_APP" ]; then
+            echo "versions.json maps '$VERSION' to minAppVersion '$VERSIONS_ENTRY', but manifest.json says '$MIN_APP'." >&2
+            exit 1
+          fi
 
       - name: Create GitHub release
         env:
