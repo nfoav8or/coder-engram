@@ -39,7 +39,27 @@ Copy or symlink `main.js`, `manifest.json`, and `styles.css` there, then enable 
 
 Before committing, run `npm run typecheck`, `npm run test`, and `npm run build`.
 
-## End-to-end UI test (`npm run test:e2e`)
+## Checking that a test actually holds something
+
+A green suite says the tests pass, not that they would fail if the code broke.
+When you add a test for an invariant — especially a security one — break the
+line that enforces it and confirm that test goes red. Turning a guard into
+`if (false)` for one run is usually enough.
+
+Sweeping this way over the load-bearing guards has repeatedly found tests that
+passed for the wrong reason: an error-class assertion satisfied by a different
+guard throwing the same class, a write test that used a path where append and
+overwrite look identical, a cap whose effect the assertions never observed.
+
+Two caveats worth knowing before treating a surviving mutation as a gap:
+
+- **Equivalent mutations exist.** Some edits change the code without changing
+  observable behavior — an early `return` whose fall-through computes the same
+  result. Confirm the mutation really breaks something before writing a test
+  for it.
+- **Some invariants aren't observable this way.** `timingSafeStrEqual` can be
+  made non-constant-time without any assertion noticing, because timing is not
+  what the suite measures. Say so rather than writing a test that pretends.
 
 `tests/e2e/run.mjs` drives the **real plugin inside a real Obsidian** with
 Playwright, asserting on rendered DOM (e.g. that search snippets highlight

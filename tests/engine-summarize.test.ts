@@ -44,6 +44,24 @@ describe("EngramEngine.summarizeNote", () => {
     expect(["lexical", "embedding"]).toContain(summary.method);
   });
 
+  it("feeds at most SUMMARY_MAX_UNITS sentences into the summarizer", async () => {
+    // The cap bounds the WORK one call can trigger: with an embedding provider
+    // configured every unit becomes a vector, so an enormous note would
+    // otherwise turn one summarize into hundreds of embeddings. `totalUnits`
+    // reports the bounded count, which is what makes the cap observable —
+    // `truncated` alone would still be true with the cap removed.
+    const lines = Array.from(
+      { length: 280 },
+      (_, i) => `Line ${i} concerns topic${i} and nothing else whatsoever.`,
+    );
+    const { engine } = makeEngine({ "Notes/big.md": `# Big\n${lines.join("\n")}` });
+    await engine.reindex();
+
+    const summary = await engine.summarizeNote("Notes/big.md", { maxSentences: 5 });
+    expect(summary.truncated).toBe(true);
+    expect(summary.totalUnits).toBe(200); // SUMMARY_MAX_UNITS
+  });
+
   it("rejects a nonexistent (unindexed) path", async () => {
     const { engine } = makeEngine({ "Notes/a.md": NOTE });
     await engine.reindex();

@@ -62,6 +62,21 @@ describe("search_vault_memory", () => {
     expect(out).toMatch(/result/i);
   });
 
+  it("returns no more results than `limit` asks for", async () => {
+    // With both context savings off (the default) the page is just the ranked
+    // results cut to `limit` — and that cut is the only thing bounding how
+    // much of the vault one call can pull into an agent's context.
+    const { engine, ctx } = makeContext({
+      "Notes/a.md": "# A\nthe indexing pipeline chunks markdown",
+      "Notes/b.md": "# B\nthe indexing pipeline handles retrieval",
+      "Notes/c.md": "# C\nindexing and retrieval over markdown",
+      "Notes/d.md": "# D\nmarkdown indexing notes",
+    });
+    await engine.reindex();
+    const out = await registry.call("search_vault_memory", { query: "indexing markdown", limit: 2 }, ctx);
+    expect(out.startsWith("2 result(s):")).toBe(true);
+  });
+
   it("reports no results cleanly", async () => {
     const { engine, ctx } = makeContext({ "Notes/a.md": "# A\nalpha" });
     await engine.reindex();
