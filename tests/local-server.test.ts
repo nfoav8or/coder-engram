@@ -78,8 +78,13 @@ describe("LocalServer.validateConfig", () => {
   });
 
   it("refuses a non-localhost host without explicit opt-in", () => {
-    const s = { ...base, server: { ...base.server, host: "0.0.0.0" } };
+    // A token is set on purpose, and the MESSAGE is asserted rather than the
+    // error class: with the default empty token the token guard below throws
+    // first, so a plain `toThrow(ConfigError)` passed even with this guard
+    // removed entirely. Only the opt-in check can satisfy this.
+    const s = { ...base, server: { ...base.server, host: "0.0.0.0", token: "abc" } };
     expect(() => LocalServer.validateConfig(s)).toThrow(ConfigError);
+    expect(() => LocalServer.validateConfig(s)).toThrow(/refusing to bind non-localhost/i);
   });
 
   it("refuses a non-localhost host without a token even when opted in", () => {

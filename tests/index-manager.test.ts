@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { IndexManager, IndexPaths } from "../src/indexing/index-manager";
+import { IndexManager, IndexPaths, INDEX_VERSION } from "../src/indexing/index-manager";
 import { VaultScanner } from "../src/indexing/vault-scanner";
 import { InMemoryVaultAdapter } from "../src/core/vault-adapter";
 
@@ -50,6 +50,24 @@ describe("IndexManager build + persist + load", () => {
     const loaded = await reloaded.load();
     expect(loaded).not.toBeNull();
     expect(loaded!.chunks.length).toBe(mgr.getChunks().length);
+  });
+
+  it("refuses an index written by an older INDEX_VERSION", async () => {
+    // The version is what makes chunks.json a rebuildable CACHE rather than
+    // durable state: a chunker change alters chunk boundaries and line spans,
+    // so a stale file must force a rebuild instead of being served as if the
+    // current code had produced it.
+    const adapter = new InMemoryVaultAdapter("v", { "Notes/a.md": "# Alpha\ncontent" });
+    const notes = await new VaultScanner(adapter).scan(scanConfig());
+    const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
+    mgr.build(notes);
+    await mgr.persist();
+
+    const meta = JSON.parse(await adapter.read(PATHS.metadataFile));
+    expect(meta.version).toBe(INDEX_VERSION);
+    await adapter.write(PATHS.metadataFile, JSON.stringify({ ...meta, version: INDEX_VERSION - 1 }));
+
+    expect(await new IndexManager(adapter, PATHS, { clock: nextClock }).load()).toBeNull();
   });
 
   it("returns null when loading a missing index", async () => {

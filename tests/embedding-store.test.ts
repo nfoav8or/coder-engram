@@ -51,6 +51,26 @@ describe("EmbeddingStore.embedIndex", () => {
     expect(await adapter.exists(FILE)).toBe(true);
   });
 
+  it("refuses a batch whose vector dimensions disagree", async () => {
+    // A ragged batch means cosine similarity is comparing vectors of different
+    // widths — plausible-looking scores computed from nonsense. The provider
+    // layer rejects this too, but the store is what a MISBEHAVING or swapped
+    // provider reaches, so the guard has to hold here as well.
+    const adapter = new InMemoryVaultAdapter("v");
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    const ragged: EmbeddingProvider = {
+      id: "ragged",
+      model: "ragged-1",
+      dimensions: 3,
+      embed: async (texts) => texts.map((_, i) => (i === 0 ? [1, 0, 0] : [1, 0])),
+      isAvailable: async () => true,
+    };
+    await expect(store.embedIndex(makeChunks(2), ragged)).rejects.toThrow(
+      /inconsistent vector dimensions/i,
+    );
+  });
+
   it("reuses cached vectors when content + identity are unchanged (fresh store)", async () => {
     const adapter = new InMemoryVaultAdapter("v");
     const chunks = makeChunks(3);

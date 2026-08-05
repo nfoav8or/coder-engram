@@ -129,11 +129,32 @@ describe("MemoryWriter.directWrite gating", () => {
   });
 
   it("appends when direct writes are enabled and append-only is on", async () => {
-    const adapter = new InMemoryVaultAdapter("v", {});
+    // The file must already EXIST for this to mean anything: writing to a new
+    // path looks identical whether the writer appended or overwrote, so an
+    // append-only mode that silently overwrote passed this test for years.
+    const adapter = new InMemoryVaultAdapter("v", {
+      "Claude Code/Memory/Global/profile.md": "# Profile\n\nExisting notes the user wrote.\n",
+    });
     const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: true });
     const target = await writer.directWrite("Memory/Global/profile.md", entry());
     expect(target).toBe("Claude Code/Memory/Global/profile.md");
-    expect(await adapter.read(target)).toContain("## Pending Memory:");
+    const after = await adapter.read(target);
+    expect(after).toContain("Existing notes the user wrote.");
+    expect(after).toContain("## Pending Memory:");
+  });
+
+  it("never destroys existing content, even with append-only off", async () => {
+    // appendOnly governs HOW the write happens, not whether the user's file
+    // survives it: with it off the writer read-modify-writes, and that read is
+    // the only thing standing between a direct write and a wiped memory file.
+    const adapter = new InMemoryVaultAdapter("v", {
+      "Claude Code/Memory/Global/profile.md": "# Profile\n\nExisting notes the user wrote.\n",
+    });
+    const writer = new MemoryWriter(adapter, paths, { appendOnly: false, allowDirectWrites: true });
+    const target = await writer.directWrite("Memory/Global/profile.md", entry());
+    const after = await adapter.read(target);
+    expect(after).toContain("Existing notes the user wrote.");
+    expect(after).toContain("## Pending Memory:");
   });
 
   it("rejects a direct-write target that escapes the memory root", async () => {
