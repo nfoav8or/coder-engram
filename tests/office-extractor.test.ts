@@ -179,6 +179,32 @@ describe("OfficeExtractor", () => {
     expect(md!.indexOf("lyrebird")).toBeLessThan(md!.indexOf("bowerbird"));
   });
 
+  it("pptx: stops at the part cap instead of walking every slide", async () => {
+    // A deck is untrusted input: the zip directory says how many slides there
+    // are, so without a cap one crafted file decides how much work a refresh
+    // does. The cap is MAX_PARTS = 500.
+    const slide = (n: number) =>
+      `<p:sld><p:txBody><a:p><a:r><a:t>slide body ${n}</a:t></a:r></a:p></p:txBody></p:sld>`;
+    const entries: Record<string, string> = {};
+    for (let n = 1; n <= 520; n++) entries[`ppt/slides/slide${n}.xml`] = slide(n);
+    const md = await x.extract("Decks/Huge.pptx", buf(makeZip(entries)));
+    expect(md).toContain("## Slide 500");
+    expect(md).not.toContain("## Slide 501");
+    expect(md).not.toContain("slide body 520");
+  });
+
+  it("xlsx: stops at the part cap instead of walking every worksheet", async () => {
+    const sheet = (n: number) =>
+      `<worksheet><sheetData><row><c t="inlineStr"><is><t>cell marker ${n}</t></is></c></row></sheetData></worksheet>`;
+    const entries: Record<string, string> = {
+      "xl/workbook.xml": `<workbook><sheets><sheet name="S1" sheetId="1"/></sheets></workbook>`,
+    };
+    for (let n = 1; n <= 520; n++) entries[`xl/worksheets/sheet${n}.xml`] = sheet(n);
+    const md = await x.extract("Sheets/Huge.xlsx", buf(makeZip(entries)));
+    expect(md).toContain("cell marker 500");
+    expect(md).not.toContain("cell marker 501");
+  });
+
   it("xlsx: sheet names and shared strings", async () => {
     const md = await x.extract(
       "Sheets/Budget.xlsx",

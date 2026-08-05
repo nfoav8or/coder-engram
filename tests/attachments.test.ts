@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { EngramEngine, ATTACHMENT_TEXT_BUDGET_CHARS } from "../src/engine";
+import { EngramEngine, ATTACHMENT_TEXT_BUDGET_CHARS, ATTACHMENT_MAX_BYTES } from "../src/engine";
 import { InMemoryVaultAdapter } from "../src/core/vault-adapter";
 import { DEFAULT_SETTINGS, EngramSettings, migrateSettings } from "../src/settings/settings";
 import { NULL_LOGGER } from "../src/utils/logger";
@@ -415,6 +415,39 @@ describe("extracted-text ceiling", () => {
     expect(chunks.some((c) => c.text.includes("extraction truncated"))).toBe(true);
     // The file is still findable — truncation is not exclusion.
     expect((await engine.search({ query: "kokako" }))[0]?.chunk.notePath).toBe("Data/huge.txt");
+  });
+
+  it("skips an attachment larger than the read cap without reading it", async () => {
+    // Extraction reads the whole file into memory, so the size cap is what
+    // stops one enormous attachment from being read at all. The fixture really
+    // is cap-sized — the filter reads `size` from the vault listing, so a
+    // smaller stand-in would not exercise it.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    adapter.seedBinary("Data/oversized.txt", new Uint8Array(ATTACHMENT_MAX_BYTES + 1));
+    adapter.seedBinary("Data/ordinary.txt", new TextEncoder().encode("kokako field notes"));
+    let reads = 0;
+    const counting: TextExtractor = {
+      extensions: [".txt"],
+      async extract(path, data) {
+        reads++;
+        const text = new TextDecoder().decode(data).trim();
+        return text ? `# ${path}\n\n${text}` : null;
+      },
+    };
+    let t = 10_000;
+    const engine = new EngramEngine(
+      adapter,
+      { ...DEFAULT_SETTINGS, indexAttachments: true },
+      NULL_LOGGER,
+      () => t++,
+      { extractors: [counting] },
+    );
+    await engine.reindex();
+
+    expect(engine.getNoteChunks("Data/oversized.txt")).toEqual([]);
+    expect(engine.getNoteChunks("Data/ordinary.txt").length).toBeGreaterThan(0);
+    // The oversized file was never handed to an extractor at all.
+    expect(reads).toBe(1);
   });
 
   it("stops indexing attachments once the whole-corpus text budget is spent", async () => {

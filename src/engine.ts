@@ -79,7 +79,7 @@ const SUMMARY_MAX_SENTENCES = 20;
  * can't fan out into an unbounded embedding request. */
 const SUMMARY_MAX_UNITS = 200;
 /** Attachments above this size are skipped (whole-file reads into memory). */
-const ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
+export const ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
 /**
  * Ceiling on the TEXT one attachment contributes.
  *
