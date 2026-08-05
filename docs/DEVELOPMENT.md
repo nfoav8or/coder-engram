@@ -29,7 +29,7 @@ Copy or symlink `main.js`, `manifest.json`, and `styles.css` there, then enable 
 | --- | --- |
 | `npm run dev` | esbuild watch build (development). |
 | `npm run build` | `tsc --noEmit` typecheck, then a production esbuild bundle. |
-| `npm run test` | Run the Vitest suite once. |
+| `npm run test` | Run the Vitest suite once. Includes `tests/install-script.test.ts`, which drives `scripts/install.sh` against a `file://` stand-in for a GitHub release (via its `CODER_ENGRAM_BASE_URL` override) and skips where `curl` or a sha256 tool is unavailable. |
 | `npm run test:watch` | Vitest in watch mode. |
 | `npm run test:e2e` | Local-only UI smoke test in real Obsidian (see below). |
 | `npm run bench` | Local-only retrieval scale benchmark (`tests/scale.bench.ts`; excluded from `npm test`/CI). Prints build/refresh/query numbers over a large synthetic vault. Override size with `BENCH_NOTES=5000`. Also reports a warm attachment refresh (`BENCH_ATTACHMENTS=300`), the path an idle vault pays on every auto-index. |
