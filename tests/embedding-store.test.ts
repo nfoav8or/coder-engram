@@ -152,7 +152,7 @@ describe("EmbeddingStore.embedIndex", () => {
       id: "mock",
       model: "other-model",
       dimensions: 8,
-      embed: async (texts) => texts.map(() => new Array(8).fill(0.5)),
+      embed: async (texts) => texts.map(() => new Array<number>(8).fill(0.5)),
       isAvailable: async () => true,
     };
     const result = await store.embedIndex(chunks, altProvider);

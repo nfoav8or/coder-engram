@@ -223,7 +223,7 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
     const { adapter, engine } = makeEngine({});
     await engine.backupSettings({ ...DEFAULT_SETTINGS, defaultProject: "Demo" });
     const backup = await adapter.read("Claude Code/Config/plugin-settings-backup.json");
-    expect(JSON.parse(backup).defaultProject).toBe("Demo");
+    expect((JSON.parse(backup) as { defaultProject: string }).defaultProject).toBe("Demo");
   });
 });
 

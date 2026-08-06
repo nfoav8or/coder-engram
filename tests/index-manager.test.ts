@@ -63,7 +63,7 @@ describe("IndexManager build + persist + load", () => {
     mgr.build(notes);
     await mgr.persist();
 
-    const meta = JSON.parse(await adapter.read(PATHS.metadataFile));
+    const meta = JSON.parse(await adapter.read(PATHS.metadataFile)) as { version: number };
     expect(meta.version).toBe(INDEX_VERSION);
     await adapter.write(PATHS.metadataFile, JSON.stringify({ ...meta, version: INDEX_VERSION - 1 }));
 

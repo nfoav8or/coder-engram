@@ -67,6 +67,8 @@ function raw(
   });
 }
 
+type RpcError = { error: { code: number; message: string } };
+
 const RPC = (method: string, params?: unknown, id: number | string = 1) =>
   JSON.stringify({ jsonrpc: "2.0", id, method, params });
 
@@ -112,7 +114,7 @@ describe("LocalServer over a real socket", () => {
     const { addr } = await startServer();
     const res = await raw(addr.port, { body: RPC("initialize", { protocolVersion: "2025-06-18" }) });
     expect(res.status).toBe(200);
-    const json = JSON.parse(res.body);
+    const json = JSON.parse(res.body) as { result: { serverInfo: { name: string } } };
     expect(json.result.serverInfo.name).toBe("coder-engram");
   });
 
@@ -122,7 +124,9 @@ describe("LocalServer over a real socket", () => {
       body: RPC("tools/call", { name: "search_vault_memory", arguments: { query: "chunking retrieval" } }),
     });
     expect(res.status).toBe(200);
-    const json = JSON.parse(res.body);
+    const json = JSON.parse(res.body) as {
+      result: { isError: boolean; content: Array<{ text: string }> };
+    };
     expect(json.result.isError).toBe(false);
     expect(json.result.content[0].text).toContain("Notes/rag.md");
   });
@@ -184,7 +188,7 @@ describe("LocalServer over a real socket", () => {
     const { addr } = await startServer();
     const res = await raw(addr.port, { body: "{not json" });
     expect(res.status).toBe(400);
-    expect(JSON.parse(res.body).error.code).toBe(-32700);
+    expect((JSON.parse(res.body) as RpcError).error.code).toBe(-32700);
   });
 
   it("rejects an oversized JSON-RPC batch (400)", async () => {
@@ -194,7 +198,7 @@ describe("LocalServer over a real socket", () => {
     );
     const res = await raw(addr.port, { body: batch });
     expect(res.status).toBe(400);
-    expect(JSON.parse(res.body).error.message).toMatch(/batch too large/i);
+    expect((JSON.parse(res.body) as RpcError).error.message).toMatch(/batch too large/i);
   });
 
   it("returns 202 for a batch of only notifications", async () => {

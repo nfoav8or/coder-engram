@@ -34,7 +34,7 @@ Copy or symlink `main.js`, `manifest.json`, and `styles.css` there, then enable 
 | `npm run test:e2e` | Local-only UI smoke test in real Obsidian (see below). |
 | `npm run bench` | Local-only retrieval scale benchmark (`tests/scale.bench.ts`; excluded from `npm test`/CI). Prints build/refresh/query numbers over a large synthetic vault. Override size with `BENCH_NOTES=5000`. Also reports a warm attachment refresh (`BENCH_ATTACHMENTS=300`), the path an idle vault pays on every auto-index. |
 | `npm run eval` | Local-only relevance eval (`tests/relevance.bench.ts`; excluded from `npm test`/CI). Golden-query recall@8 + MRR per query class over planted needle notes — run before/after any ranking change. |
-| `npm run lint` | ESLint over `.ts` sources. |
+| `npm run lint` | ESLint over `.ts` sources, **type-aware** (`recommended-requiring-type-checking`, via `tsconfig.eslint.json`). This is what catches unchecked `any` and floating promises locally — the class of finding the Obsidian plugin review scan reports, which an untyped config cannot see. |
 | `npm run typecheck` | `tsc --noEmit --skipLibCheck`. |
 
 Before committing, run `npm run typecheck`, `npm run test`, and `npm run build`.
