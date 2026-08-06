@@ -1,6 +1,6 @@
 # Roadmap
 
-Coder Engram is built in milestones. Milestones 1 through 12 are complete (through v0.8.0); work since the last release is listed under "In progress", and anything not scheduled is under "Deferred / future".
+Coder Engram is built in milestones. Milestones 1 through 13 are complete (through v0.9.0); work since the last release is listed under "In progress", and anything not scheduled is under "Deferred / future".
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -99,10 +99,19 @@ Coder Engram is built in milestones. Milestones 1 through 12 are complete (throu
 
 - The three output reductions that previously ran always-on — near-duplicate collapse, per-note share cap, overlapping-passage merge — became individual opt-in toggles, all off by default (settings schema v7), with a migration that preserves an earlier all-or-nothing opt-in.
 
-## In progress (unreleased)
+## Milestone 13 — untrusted files, safely (done, v0.9.0)
 
 - Image text (OCR) as **plugin interop**: `indexImageText` delegates to the Text Extractor plugin's API rather than bundling an engine (see docs/SECURITY.md for why), at a cost of ~1.2 KB of bundle.
 - Attachment robustness at scale: a per-file text ceiling, a corpus-wide budget that keeps a large vault's index serializable, no file read for extractors that work from the path alone, and attachment metadata cached rather than re-derived on every refresh.
+- Bounds in TIME as well as size — PDF parsing, image OCR, and outbound HTTP each race a timer, because work that hangs throws nothing for a `catch` and would leave a refresh waiting forever.
+- Four security fixes to existing paths: plaintext secrets in the settings backup, inbox format forgery through `add_memory`, list fields that walked around its size caps, and a failed write that destroyed both the old and the new copy of a file.
+- `minAppVersion` raised to 1.7.2, matching the `workspace.revealLeaf` the control panel actually calls.
+- Supply chain and packaging: signed build provenance on release assets, a `versions.json` release gate, checksum verification that works on macOS and refuses an asset it cannot account for, and one fewer dependency.
+- Test discipline: type-aware linting, an architecture test that enforces the layering rules, first coverage for the installer, and e2e checks for the two adapters no unit test can reach.
+
+## In progress (unreleased)
+
+- Nothing yet — 0.9.0 has just been cut.
 
 ## Deferred / future
 

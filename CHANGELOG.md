@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-08-06
+
+Attachments become memory — and the release is mostly about what that made necessary. Text now comes out of PDFs, Office and LibreOffice documents, RTF, plain text, Canvas boards, and (opt-in, by delegating to the Text Extractor plugin) images. Everything else here is the work of making an untrusted-file pipeline safe to leave running: bounds on what one file can cost, on what a whole vault of them can cost, and on how long any of it may take — because a parser that hangs throws nothing for a `catch` to see. Alongside that, four security fixes to existing paths, one of which was writing your server token and embedding API key into the vault in plaintext. **If you have enabled the local server or an embedding provider, rotate both and delete `Claude Code/Config/plugin-settings-backup.json`.**
+
 ### Security
 
-- **A stuck OCR call can no longer wedge a refresh.** Indexing text inside images delegates to the Text Extractor plugin, and that call had no time bound — slow is fine, but a call that never settles throws nothing for a `catch` to see, so the refresh waiting on it would never finish. It is now bounded at five minutes per image: generous on purpose, since the companion plugin downloads its language data on first use, so a timeout means genuinely stuck rather than merely slow. PDF extraction has been bounded this way since 0.8.0; both now share one helper, which is unit-tested in its own right.
+- **A stuck OCR call can no longer wedge a refresh.** Indexing text inside images delegates to the Text Extractor plugin, and that call had no time bound — slow is fine, but a call that never settles throws nothing for a `catch` to see, so the refresh waiting on it would never finish. It is now bounded at five minutes per image: generous on purpose, since the companion plugin downloads its language data on first use, so a timeout means genuinely stuck rather than merely slow. PDF parsing gained the same bound in this release; both share one helper, which is unit-tested in its own right.
 
 ### Changed
 
@@ -324,7 +328,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.8.0...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.9.0...HEAD
+[0.9.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.0
 [0.8.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.8.0
 [0.7.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.7.1
 [0.7.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.7.0
