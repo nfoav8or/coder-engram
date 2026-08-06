@@ -17,6 +17,7 @@
  * and connect with chromium.connectOverCDP.
  */
 import playwright from "playwright-core";
+import http from "node:http";
 import { spawn, execSync, spawnSync } from "node:child_process";
 import { deflateRawSync } from "node:zlib";
 import fs from "node:fs";
@@ -434,7 +435,14 @@ try {
     // reported, making this check pass for the wrong reason.
     await engine.refresh();
     const file = app.vault.getAbstractFileByPath("Notes/ollama.md");
+    const before = file.stat.mtime;
     await app.vault.modify(file, "# Ollama notes\n\nlocal embeddings via a wombat-relay endpoint\n");
+    // Obsidian's cached stat is what the adapter reports, and it does not
+    // update synchronously with modify(). Refreshing before it settles reads
+    // the note as unchanged — a real flake, not a stale index.
+    for (let i = 0; i < 40 && file.stat.mtime === before; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
     await engine.refresh();
   });
   const edited = await rpc("tools/call", {
@@ -448,6 +456,68 @@ try {
     /Notes\/ollama\.md/.test(toolText(edited)) && !/No results/.test(toolText(edited)),
     toolText(edited).split("\n")[0] ?? "",
   );
+
+  // ObsidianHttpClient is the plugin's ONLY outbound network path and, like the
+  // vault adapter, has no unit test — the suite drives embedding providers
+  // through FakeHttpClient, so `requestUrl` itself never runs there. A stub
+  // endpoint on loopback exercises the real one, and lets the API key's
+  // handling be checked where it actually travels: in the header, and nowhere
+  // else. The key is fake and the server is local, so nothing leaves the box.
+  const seen = [];
+  const stub = http.createServer((sreq, sres) => {
+    let body = "";
+    sreq.on("data", (c) => (body += c));
+    sreq.on("end", () => {
+      seen.push({ url: sreq.url, auth: sreq.headers.authorization ?? "", body });
+      if (sreq.url?.endsWith("/models")) {
+        sres.writeHead(200, { "Content-Type": "application/json" });
+        sres.end(JSON.stringify({ data: [{ id: "stub-embed" }] }));
+        return;
+      }
+      const count = (JSON.parse(body || "{}").input ?? []).length;
+      sres.writeHead(200, { "Content-Type": "application/json" });
+      sres.end(
+        JSON.stringify({
+          data: Array.from({ length: count }, (_, i) => ({ index: i, embedding: [0.1, 0.2, 0.3, 0.4] })),
+        }),
+      );
+    });
+  });
+  await new Promise((res) => stub.listen(0, "127.0.0.1", res));
+  const stubPort = stub.address().port;
+  const FAKE_KEY = "e2e-not-a-real-key";
+  await page.evaluate(
+    async ([port, key]) => {
+      const plugin = window.app.plugins.plugins["coder-engram"];
+      Object.assign(plugin.settings, {
+        embeddingProvider: "openai-compatible",
+        embeddingModel: "stub-embed",
+        embeddingEndpoint: `http://127.0.0.1:${port}`,
+        embeddingApiKey: key,
+        retrievalMode: "hybrid",
+      });
+      await plugin.onSettingsChanged();
+      await plugin.engine.syncEmbeddings();
+    },
+    [stubPort, FAKE_KEY],
+  );
+  const embedCalls = seen.filter((r) => (r.url ?? "").endsWith("/embeddings"));
+  check(
+    "embedding request reaches a real endpoint through requestUrl",
+    embedCalls.length > 0,
+    `${seen.length} request(s): ${seen.map((r) => r.url).join(", ")}`,
+  );
+  check(
+    "the API key travels in the Authorization header and nowhere else",
+    embedCalls.length > 0 &&
+      embedCalls.every((r) => r.auth === `Bearer ${FAKE_KEY}` && !r.body.includes(FAKE_KEY)),
+    embedCalls[0] ? `auth ${embedCalls[0].auth.slice(0, 12)}…, body ${embedCalls[0].body.length}b` : "",
+  );
+  const mode = await page.evaluate(() =>
+    window.app.plugins.plugins["coder-engram"].engine.getRetrievalMode(),
+  );
+  check("retrieval switches to hybrid once vectors exist", mode === "hybrid", mode);
+  await new Promise((res) => stub.close(res));
 
   // Every durable write goes temp-sibling → move the old copy aside → rename
   // into place → delete the backup. That last step only runs on the success

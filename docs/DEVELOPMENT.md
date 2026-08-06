@@ -69,12 +69,22 @@ PDF/docx attachment extraction through Obsidian's own engines. It complements
 the Vitest suite, which covers the pure core but never renders the Obsidian UI
 and never starts a real listener.
 
-It is also the **only** place `ObsidianVaultAdapter` runs at all: the `obsidian`
-package ships types with no runtime, so that adapter — and the temp-sibling,
-backup-aside write dance every durable write goes through — cannot be unit
-tested. The run ends by checking the vault holds no `.engram-tmp-*` or
-`.engram-bak-*` leftovers, which is what proves the success path cleans up
-after itself.
+It is also the **only** place `ObsidianVaultAdapter` and `ObsidianHttpClient`
+run at all: the `obsidian` package ships types with no runtime, so neither can
+be unit tested — the Vitest suite drives the pure interfaces through
+`InMemoryVaultAdapter` and `FakeHttpClient`, which means `requestUrl` and the
+temp-sibling write dance never execute there. The run therefore checks the
+things only a real adapter can get wrong: that a second inbox proposal appends
+rather than replacing the first, that an edit to an indexed note is picked up
+by an *incremental* refresh (which depends on real mtimes being reported), that
+the vault holds no `.engram-tmp-*` or `.engram-bak-*` leftovers, and that an
+embedding request reaches a stub endpoint on loopback with the API key in the
+`Authorization` header and nowhere else.
+
+When adding a check here, verify it by breaking the line it holds and
+rebuilding — `main.js` is what Obsidian loads, so a source edit alone changes
+nothing. For the same reason, always rebuild after such an experiment: a stale
+bundle silently keeps the mutation.
 
 It is **local-only and deliberately excluded from `npm test` and CI**: it needs
 Obsidian installed and a display, which CI runners don't have. Run it after a
