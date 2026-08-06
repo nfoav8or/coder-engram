@@ -55,7 +55,7 @@ With **Index attachments** on, text-bearing attachments are extracted and indexe
 - **Microsoft Office** — `docx`, `pptx`, `xlsx` — and **LibreOffice** — `odt`, `odp`, `ods`.
 - **RTF**, plain text (`txt`, `csv`), and **Canvas** boards (text cards, group labels, edge labels).
 
-All extraction is dependency-free and fully local: the bytes never leave your machine, extracted text is cached in a rebuildable index file, and turning the setting off deletes that cache.
+Extraction for all of the above is dependency-free and fully local: the bytes never leave your machine, extracted text is cached in a rebuildable index file, and turning the setting off deletes that cache. (Images are the one exception, and are a separate opt-in — see below.)
 
 **Text inside images** is a separate opt-in (**Index text inside images**). Rather than bundling an OCR engine — megabytes of WebAssembly, plus language data fetched at runtime, which Obsidian's developer policy disallows — it delegates to the [Text Extractor](https://github.com/scambier/obsidian-text-extractor) plugin if you have it. With that plugin absent, nothing happens. Note that Text Extractor downloads its OCR language data on first use, so this is the one attachment path that can touch the network. Scanned PDFs still yield no text.
 
@@ -265,13 +265,15 @@ By default the plugin makes **no network connections at all**: search is offline
 - **Embeddings (opt-in).** If you set the embedding provider to **Ollama**, the plugin sends indexed note text to your configured Ollama endpoint (local by default, `http://127.0.0.1:11434`) to compute embeddings. If you set it to **OpenAI-compatible**, indexed note text is sent to the endpoint you configure (which may be a remote service such as OpenAI) for the same purpose; the API key is sent only in the `Authorization` header and never logged. Notes excluded from indexing are never embedded, so their content is never sent anywhere.
 - **Local MCP/HTTP server (opt-in).** When enabled, the plugin listens on `127.0.0.1` so local tools such as Claude Code can query memory and propose entries to the review inbox. It makes no outbound connections; binding a non-localhost address requires an explicit second opt-in plus a token.
 
-Attachment (PDF) text extraction, when enabled, also runs entirely locally via Obsidian's bundled PDF engine. There is no telemetry of any kind, and nothing is read or written outside the vault.
+- **Text inside images (opt-in).** This path delegates OCR to the [Text Extractor](https://github.com/scambier/obsidian-text-extractor) plugin, which downloads its language data from the internet on first use. That download is the companion plugin's behaviour, not this one's — your image bytes are not sent anywhere — but enabling **Index text inside images** is what triggers it, so it is listed here rather than buried in the feature description.
+
+Every other attachment path — PDF, Office, RTF, plain text, Canvas — runs entirely locally, and the bytes never leave your machine. There is no telemetry of any kind, and nothing is read or written outside the vault.
 
 ## Limitations
 
 - **`summarize_note` is extractive, not abstractive.** It selects the note's own sentences; there is no LLM/generative backend, so it never rewrites or paraphrases. It also only works on notes that are in the index.
 - **Desktop only.** `isDesktopOnly: true`.
-- Attachment indexing covers born-digital **PDF text, Microsoft Office (docx/pptx/xlsx/rtf), LibreOffice (odt/odp/ods), plain text (txt/csv), and Canvas text cards** (opt-in). Scanned/image-only PDFs and images are not indexed (no OCR); spreadsheet numeric cells are skipped (text cells and sheet names are indexed).
+- Attachment indexing covers born-digital **PDF text, Microsoft Office (docx/pptx/xlsx/rtf), LibreOffice (odt/odp/ods), plain text (txt/csv), and Canvas text cards** (opt-in). **Text inside images** is a separate opt-in that needs the Text Extractor plugin installed; without it, images stay unindexed. Scanned/image-only PDFs still yield no text either way — Text Extractor's own PDF OCR path is not used, as its README flags it as unreliable. Spreadsheet numeric cells are skipped (text cells and sheet names are indexed).
 
 ## Roadmap
 
