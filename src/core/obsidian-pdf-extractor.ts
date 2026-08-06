@@ -13,6 +13,7 @@
 
 import { loadPdfJs } from "obsidian";
 import { TextExtractor, attachmentTitle, renderPdfMarkdown, joinPdfTextItems } from "../extract/text-extractor";
+import { withTimeout } from "../utils/timeout";
 
 /** Bound on pages extracted per PDF, so one huge scan can't stall a refresh. */
 const MAX_PAGES = 500;
@@ -31,23 +32,6 @@ const MAX_PAGES = 500;
  * far short of a user noticing a wedged refresh.
  */
 const EXTRACT_TIMEOUT_MS = 60_000;
-
-/**
- * Reject if `work` has not settled within the timeout. The underlying work is
- * abandoned rather than cancelled — pdf.js offers no cancellation — so this
- * bounds the WAIT, not the worker.
- */
-async function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`PDF extraction timed out after ${ms}ms: ${label}`)), ms);
-  });
-  try {
-    return await Promise.race([work, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
 
 export class ObsidianPdfExtractor implements TextExtractor {
   readonly extensions = [".pdf"];

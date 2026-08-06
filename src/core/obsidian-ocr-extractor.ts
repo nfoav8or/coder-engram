@@ -27,6 +27,7 @@
 
 import { App, TFile } from "obsidian";
 import { TextExtractor, attachmentTitle } from "../extract/text-extractor";
+import { withTimeout } from "../utils/timeout";
 
 /** The slice of Text Extractor's published API this uses. */
 interface TextExtractorApi {
@@ -39,6 +40,24 @@ interface TextExtractorApi {
  * here that it cannot handle costs a wasted round trip per file per refresh.
  */
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".bmp"];
+
+/**
+ * Wall-clock bound on one image.
+ *
+ * `extractText` is another plugin's code, and on first use it downloads its
+ * language data — so this call can be slow for reasons that have nothing to do
+ * with the image. Slow is fine; NEVER SETTLING is not: a hung call throws
+ * nothing for the `catch` below to see, and the refresh waiting on it never
+ * finishes (the same failure mode bounded in the PDF extractor and in
+ * `ObsidianHttpClient`).
+ *
+ * Five minutes is generous on purpose. It is far past OCR of any real image
+ * (seconds) and past a first-use language download on a poor connection, so a
+ * timeout here means genuinely stuck rather than merely slow — which matters
+ * because the result is cached by mtime, so a false timeout would leave the
+ * image unindexed until it is edited.
+ */
+const EXTRACT_TIMEOUT_MS = 300_000;
 
 export class ObsidianOcrExtractor implements TextExtractor {
   /**
@@ -80,7 +99,7 @@ export class ObsidianOcrExtractor implements TextExtractor {
       const file = this.app.vault.getAbstractFileByPath(path);
       // Duck-typed rather than `instanceof TFile`: a folder has no `stat`.
       if (!file || !("stat" in file)) return null;
-      const text = (await api.extractText(file as TFile))?.trim();
+      const text = (await withTimeout(api.extractText(file as TFile), EXTRACT_TIMEOUT_MS, path))?.trim();
       if (!text) return null;
       return `# ${attachmentTitle(path)}\n\n${text}`;
     } catch {

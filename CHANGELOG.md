@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **A stuck OCR call can no longer wedge a refresh.** Indexing text inside images delegates to the Text Extractor plugin, and that call had no time bound — slow is fine, but a call that never settles throws nothing for a `catch` to see, so the refresh waiting on it would never finish. It is now bounded at five minutes per image: generous on purpose, since the companion plugin downloads its language data on first use, so a timeout means genuinely stuck rather than merely slow. PDF extraction has been bounded this way since 0.8.0; both now share one helper, which is unit-tested in its own right.
+
 ### Changed
 
 - **The minimum Obsidian version is now 1.7.2** (was 1.5.0). The control-panel view calls `workspace.revealLeaf`, which returns a promise as of 1.7.2 — so the manifest was claiming support for versions the code did not actually target. The call is now awaited as well, rather than leaving a promise unhandled.
