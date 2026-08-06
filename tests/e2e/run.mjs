@@ -407,6 +407,24 @@ try {
     toolText(docxSearch).split("\n")[2] ?? "",
   );
 
+  // Every durable write goes temp-sibling → move the old copy aside → rename
+  // into place → delete the backup. That last step only runs on the success
+  // path, and nothing else can check it: the InMemoryVaultAdapter does not
+  // implement the dance, and `obsidian` ships types with no runtime, so
+  // ObsidianVaultAdapter cannot be unit-tested at all. By now the run has
+  // written the index, the extraction cache and the inbox several times over,
+  // so leftovers would be sitting in the vault the user has to look at.
+  const debris = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (/\.engram-(tmp|bak)-/.test(e.name)) debris.push(path.relative(vault, full));
+    }
+  };
+  walk(vault);
+  check("writes leave no temp or backup files behind", debris.length === 0, debris.join(", "));
+
   await page.screenshot({ path: path.join(tmp, "search.png") });
 } catch (e) {
   check("harness ran without throwing", false, e.message);
