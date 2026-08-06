@@ -355,6 +355,20 @@ try {
   const add = await rpc("tools/call", { name: "add_memory", arguments: { content: proposal, type: "decision" } });
   check("MCP add_memory lands in the review inbox", /pending-memory\.md/.test(toolText(add)), toolText(add));
 
+  // A second proposal must not replace the first. The inbox is append-only,
+  // and `ObsidianVaultAdapter.append` is the production path that makes it so —
+  // the in-memory adapter the unit suite uses has its own implementation, so
+  // this is the only run where the real one is exercised at all.
+  const second = "Proposed decision: keep engram quokka-interval for attachment scans.";
+  await rpc("tools/call", { name: "add_memory", arguments: { content: second, type: "decision" } });
+  const inboxFile = path.join(vault, "Claude Code", "Memory", "Inbox", "pending-memory.md");
+  const inboxText = fs.existsSync(inboxFile) ? fs.readFileSync(inboxFile, "utf8") : "";
+  check(
+    "a second proposal appends rather than replacing the first",
+    /zebra-cadence/.test(inboxText) && /quokka-interval/.test(inboxText),
+    `${inboxText.length} chars, entries: ${(inboxText.match(/## Pending Memory:/g) ?? []).length}`,
+  );
+
   // Enable attachment indexing BEFORE the single server-side reindex (the
   // reindex tool has a 15s cooldown), so one reindex covers the inbox
   // proposal AND the PDF fixture.
@@ -405,6 +419,34 @@ try {
     "docx attachment text is indexed (DecompressionStream ZIP path)",
     /Papers\/charter\.docx/.test(toolText(docxSearch)),
     toolText(docxSearch).split("\n")[2] ?? "",
+  );
+
+  // An edit to an already-indexed note must reach search. An incremental
+  // refresh re-reads only files whose mtime moved, so this is what proves the
+  // adapter reports real mtimes: with a constant one, every note looks
+  // unchanged forever and edits are silently never indexed.
+  await page.evaluate(async () => {
+    const app = window.app;
+    const engine = app.plugins.plugins["coder-engram"].engine;
+    // Refresh once first so the scan config matches the one the known mtimes
+    // were taken under — that is the condition for the INCREMENTAL path, and a
+    // full rescan would re-read the edit no matter what mtimes the adapter
+    // reported, making this check pass for the wrong reason.
+    await engine.refresh();
+    const file = app.vault.getAbstractFileByPath("Notes/ollama.md");
+    await app.vault.modify(file, "# Ollama notes\n\nlocal embeddings via a wombat-relay endpoint\n");
+    await engine.refresh();
+  });
+  const edited = await rpc("tools/call", {
+    name: "search_vault_memory",
+    arguments: { query: "wombat-relay endpoint" },
+  });
+  // NOT just /wombat-relay/: the no-results reply echoes the query back, so
+  // that alone passes while the edit never reached the index at all.
+  check(
+    "an edited note is re-indexed on refresh",
+    /Notes\/ollama\.md/.test(toolText(edited)) && !/No results/.test(toolText(edited)),
+    toolText(edited).split("\n")[0] ?? "",
   );
 
   // Every durable write goes temp-sibling → move the old copy aside → rename
