@@ -42,9 +42,9 @@ export class ObsidianHttpClient implements HttpClient {
     const timeoutMs = req.timeoutMs;
     if (!timeoutMs || timeoutMs <= 0) return send;
 
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: number | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(
+      timer = window.setTimeout(
         () => reject(new Error(`HTTP request to ${hostOnly(req.url)} timed out after ${timeoutMs}ms`)),
         timeoutMs,
       );
@@ -52,7 +52,7 @@ export class ObsidianHttpClient implements HttpClient {
     try {
       return await Promise.race([send, timeout]);
     } finally {
-      if (timer) clearTimeout(timer);
+      if (timer) window.clearTimeout(timer);
     }
   }
 }

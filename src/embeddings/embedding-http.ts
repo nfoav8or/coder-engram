@@ -30,13 +30,16 @@ export function parseVectorMatrix(
   }
   let dim = -1;
   const out: number[][] = [];
-  for (const row of value) {
+  for (const row of value as unknown[]) {
     if (!Array.isArray(row) || row.length === 0) {
       throw new Error(`${providerLabel}: an embedding row was empty or not an array`);
     }
-    const vec = new Array<number>(row.length);
-    for (let i = 0; i < row.length; i++) {
-      const n = row[i];
+    // `Array.isArray` widens to `any[]`, which would let a non-number through
+    // the checks below unnoticed; keep every cell `unknown` until validated.
+    const cells = row as unknown[];
+    const vec = new Array<number>(cells.length);
+    for (let i = 0; i < cells.length; i++) {
+      const n = cells[i];
       if (typeof n !== "number" || !Number.isFinite(n)) {
         throw new Error(`${providerLabel}: an embedding contained a non-finite value`);
       }

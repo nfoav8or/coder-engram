@@ -91,7 +91,7 @@ Embedding happens at index time (reindex/refresh) and is cached in `Index/embedd
 3. Copy the three files into that folder.
 4. In Obsidian: **Settings → Community plugins → Reload plugins**, then enable **Coder Engram**.
 
-This is a desktop-only plugin (`isDesktopOnly: true`, minimum Obsidian 1.5.0).
+This is a desktop-only plugin (`isDesktopOnly: true`, minimum Obsidian 1.7.2).
 
 ### Install script (Linux/macOS)
 

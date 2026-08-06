@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The minimum Obsidian version is now 1.7.2** (was 1.5.0). The control-panel view calls `workspace.revealLeaf`, which returns a promise as of 1.7.2 — so the manifest was claiming support for versions the code did not actually target. The call is now awaited as well, rather than leaving a promise unhandled.
+
 ### Security
 
 - **The settings backup no longer writes your server token and embedding API key into the vault in plaintext.** Every settings save also writes `Config/plugin-settings-backup.json` as a recovery point, and it contained the full settings object — including both secrets. That file lives inside the vault, so it travelled everywhere the vault goes: Obsidian Sync, iCloud or Dropbox, and any git remote the vault is committed to. Secrets are now redacted with the same rule the logger already applied to console output. Nothing reads the file back, so the recovery point is unaffected — the fields are present and marked redacted rather than dropped. **If you have enabled the server or an embedding provider, treat the existing backup file as exposed: rotate the token and key, and delete or overwrite the file.**

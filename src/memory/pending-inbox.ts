@@ -336,7 +336,9 @@ export function resolveApplyDestination(entry: PendingEntry, paths: MemoryPaths)
  */
 export function formatAppliedBlock(entry: PendingEntry): string {
   const lines: string[] = [];
-  const typeTitle = entry.type.replace(/(^|[-\s])(\w)/g, (_, sep, c) => (sep ? " " : "") + c.toUpperCase()).trim();
+  const typeTitle = entry.type
+    .replace(/(^|[-\s])(\w)/g, (_m: string, sep: string, c: string) => (sep ? " " : "") + c.toUpperCase())
+    .trim();
   lines.push(`## ${typeTitle} — ${entry.timestampLabel}`);
   lines.push("");
   lines.push(entry.content.trim());

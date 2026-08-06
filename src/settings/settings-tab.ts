@@ -518,6 +518,8 @@ export class EngramSettingTab extends PluginSettingTab {
 /** Generate a 256-bit random token as hex, using the platform CSPRNG. */
 function generateToken(): string {
   const bytes = new Uint8Array(32);
-  globalThis.crypto.getRandomValues(bytes);
+  // `window` rather than `globalThis`: Obsidian pops out views into separate
+  // windows, and plugin guidance is to reach the active window's globals.
+  window.crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }

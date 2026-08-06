@@ -103,7 +103,7 @@ export class EmbeddingStore {
           version: EMBED_STORE_VERSION,
           model: parsed.model,
           dim: parsed.dim,
-          vectors: parsed.vectors as Record<string, StoredVector>,
+          vectors: parsed.vectors,
         };
       } else {
         this.state = null;
@@ -199,7 +199,7 @@ export class EmbeddingStore {
 
     for (let i = 0; i < toEmbed.length; i += batchSize) {
       const batch = toEmbed.slice(i, i + batchSize);
-      // eslint-disable-next-line no-await-in-loop
+      // eslint-disable-next-line no-await-in-loop -- batches are deliberately SEQUENTIAL: firing them all at once would flood the provider and blow past its rate limit
       const vectors = await provider.embed(batch.map((c) => c.text));
       if (vectors.length !== batch.length) {
         throw new Error(

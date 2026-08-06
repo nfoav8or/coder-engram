@@ -15,7 +15,7 @@
 import { PathSecurityError } from "./errors";
 
 /** Characters that must never appear in a vault path. */
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- control characters are exactly what this pattern exists to reject in a vault path
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 /**

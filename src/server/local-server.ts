@@ -15,7 +15,6 @@
  */
 
 import * as http from "node:http";
-import { AddressInfo } from "node:net";
 
 import { EngramEngine } from "../engine";
 import { EngramSettings } from "../settings/settings";
@@ -179,7 +178,7 @@ export class LocalServer {
     // Reflect the actually-bound port (in case port 0 was requested for tests).
     const bound = server.address();
     if (bound && typeof bound === "object") {
-      this.address = { host: address.host, port: (bound as AddressInfo).port };
+      this.address = { host: address.host, port: bound.port };
     } else {
       this.address = address;
     }

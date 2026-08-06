@@ -46,8 +46,8 @@ function codePointChar(cp: number): string {
 /** Decode the five XML entities plus numeric character references. */
 export function decodeXmlEntities(s: string): string {
   return s
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => codePointChar(parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, d) => codePointChar(parseInt(d, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_m: string, h: string) => codePointChar(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_m: string, d: string) => codePointChar(parseInt(d, 10)))
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')

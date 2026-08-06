@@ -1,6 +1,6 @@
 import esbuild from "esbuild";
 import process from "node:process";
-import builtins from "builtin-modules";
+import { builtinModules as builtins } from "node:module";
 
 const banner = `/*
  * Coder Engram — bundled plugin artifact.
@@ -28,9 +28,10 @@ const context = await esbuild.context({
     "@lezer/common",
     "@lezer/highlight",
     "@lezer/lr",
-    // Node builtins are provided by the Electron host. `builtin-modules` lists
-    // bare names ("http"); we also externalize the "node:"-prefixed forms the
-    // server layer imports (e.g. "node:http", "node:crypto").
+    // Node builtins are provided by the Electron host. `node:module` lists bare
+    // names ("http"); we also externalize the "node:"-prefixed forms the server
+    // layer imports (e.g. "node:http", "node:crypto"). Node ships this list,
+    // so no dependency is needed to know it.
     ...builtins,
     ...builtins.map((m) => `node:${m}`),
   ],

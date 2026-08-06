@@ -66,7 +66,11 @@ export class ObsidianPdfExtractor implements TextExtractor {
     let doc: { numPages: number; getPage(n: number): Promise<unknown>; destroy(): Promise<void> } | null =
       null;
     try {
-      const pdfjs = await loadPdfJs();
+      // `loadPdfJs()` is typed `any`, so name the shape we actually use rather
+      // than letting that spread through the extraction path.
+      const pdfjs = (await loadPdfJs()) as {
+        getDocument(src: { data: ArrayBuffer }): { promise: Promise<typeof doc> };
+      };
       doc = await pdfjs.getDocument({ data }).promise;
       if (!doc) return null;
       const pageCount = Math.min(doc.numPages, MAX_PAGES);

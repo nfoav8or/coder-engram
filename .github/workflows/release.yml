@@ -15,6 +15,10 @@ on:
 # the publish step, so no external action can read the token.
 permissions:
   contents: write
+  # Build provenance: `id-token` mints the signing token and `attestations`
+  # records the statement. Both are scoped to this workflow run.
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -63,6 +67,19 @@ jobs:
             echo "versions.json maps '$VERSION' to minAppVersion '$VERSIONS_ENTRY', but manifest.json says '$MIN_APP'." >&2
             exit 1
           fi
+
+      # Signed provenance for exactly the bytes published below, so anyone can
+      # verify a downloaded main.js was built by this workflow from this tag
+      # (`gh attestation verify main.js --repo <owner>/<repo>`). This is the one
+      # first-party action trusted with the run's OIDC token; the publish step
+      # below still uses only `gh`.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
 
       - name: Create GitHub release
         env:

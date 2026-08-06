@@ -158,7 +158,7 @@ export class VaultScanner {
         continue;
       }
       try {
-        // eslint-disable-next-line no-await-in-loop
+        // eslint-disable-next-line no-await-in-loop -- sequential reads keep peak memory at one note; a whole vault read in parallel would hold every note at once
         const content = await this.adapter.read(normalizeVaultRelativePath(file.path));
         const metadata = extractMetadata(content);
         if (this.hasExcludedTag(metadata, config.excludedTags)) continue;

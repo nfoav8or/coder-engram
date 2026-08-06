@@ -52,10 +52,10 @@ export class ProjectMemory {
     await this.adapter.ensureFolder(project.sessions);
 
     for (const [key, template] of Object.entries(TEMPLATES)) {
-      const filePath = project[key as keyof typeof TEMPLATES] as string;
-      // eslint-disable-next-line no-await-in-loop
+      const filePath = project[key as keyof typeof TEMPLATES];
+      // eslint-disable-next-line no-await-in-loop -- scaffolding a fixed handful of template files; sequential keeps the vault quiet
       if (!(await this.adapter.exists(filePath))) {
-        // eslint-disable-next-line no-await-in-loop
+        // eslint-disable-next-line no-await-in-loop -- must follow the exists() check above, so it cannot be hoisted out of the loop
         await this.adapter.write(filePath, template(project.name));
       }
     }

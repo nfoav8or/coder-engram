@@ -55,9 +55,9 @@ export class MemoryStore {
 
     for (const [key, template] of Object.entries(GLOBAL_TEMPLATES)) {
       const file = this.paths.globalFiles[key as keyof typeof this.paths.globalFiles];
-      // eslint-disable-next-line no-await-in-loop
+      // eslint-disable-next-line no-await-in-loop -- scaffolding a few known files; sequential keeps folder creation ordered and the vault quiet
       if (!(await this.adapter.exists(file))) {
-        // eslint-disable-next-line no-await-in-loop
+        // eslint-disable-next-line no-await-in-loop -- must follow the exists() check above, so it cannot be hoisted out of the loop
         await this.adapter.write(file, template);
       }
     }

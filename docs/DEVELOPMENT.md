@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Node.js 20+ (matches `@types/node`).
-- An Obsidian desktop install (1.5.0+) with a test vault.
+- An Obsidian desktop install (1.7.2+) with a test vault.
 
 ## Setup
 

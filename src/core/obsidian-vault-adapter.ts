@@ -135,9 +135,9 @@ export class ObsidianVaultAdapter implements VaultAdapter {
     let acc = "";
     for (const part of parts) {
       acc = acc ? `${acc}/${part}` : part;
-      // eslint-disable-next-line no-await-in-loop
+      // eslint-disable-next-line no-await-in-loop -- each path segment must exist before the next is created, so these are inherently ordered
       if (!(await adapter.exists(acc))) {
-        // eslint-disable-next-line no-await-in-loop
+        // eslint-disable-next-line no-await-in-loop -- same ordering: the parent has to land before its child
         await adapter.mkdir(acc).catch(async (err) => {
           // Tolerate races where another operation created it first.
           if (!(await adapter.exists(acc))) throw err;
