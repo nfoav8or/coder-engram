@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- RTF extraction no longer stalls the app on a large document. It walked the
+  file one character at a time, allocating an array entry per byte, so a 19 MB
+  document took 1.2 s and 212 MB of heap to produce text the 1 MB extraction cap
+  immediately truncated. It now takes each run of body text in a single slice:
+  the same document extracts in 91 ms using 23 MB, with byte-identical output.
+
 ## [0.9.0] — 2026-08-06
 
 Attachments become memory — and the release is mostly about what that made necessary. Text now comes out of PDFs, Office and LibreOffice documents, RTF, plain text, Canvas boards, and (opt-in, by delegating to the Text Extractor plugin) images. Everything else here is the work of making an untrusted-file pipeline safe to leave running: bounds on what one file can cost, on what a whole vault of them can cost, and on how long any of it may take — because a parser that hangs throws nothing for a `catch` to see. Alongside that, four security fixes to existing paths, one of which was writing your server token and embedding API key into the vault in plaintext. **If you have enabled the local server or an embedding provider, rotate both and delete `Claude Code/Config/plugin-settings-backup.json`.**

@@ -41,6 +41,14 @@ describe("rtfToText", () => {
     expect(text.indexOf("First")).toBeLessThan(text.indexOf("Second"));
   });
 
+  it("treats the raw line breaks every real writer emits as layout, not text", () => {
+    // RTF writers hard-wrap the stream at ~255 columns with CRLF, mid-sentence
+    // and mid-word. Only \par is a paragraph break, so those bytes must vanish
+    // rather than chop the sentence up.
+    const rtf = `{\\rtf1\\ansi A sentence broken\r\nby the writer mid-\r\nsentence.\\par Next.}`;
+    expect(rtfToText(rtf)).toBe("A sentence brokenby the writer mid-sentence.\nNext.");
+  });
+
   it("skips metadata destinations, escaped braces survive, \\uc fallbacks swallowed", () => {
     const rtf =
       `{\\rtf1{\\info{\\author Secret Author}}\\uc2 A \\u960?? end \\{literal\\} \\\\slash}`;

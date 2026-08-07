@@ -193,7 +193,7 @@ The unit tests use `InMemoryVaultAdapter`, so most logic can be exercised withou
 
 ## Coding conventions
 
-- **The service and core layers must not import `obsidian`.** Only the UI layer (`main.ts`, `settings/settings-tab.ts`, `ui/*`), `core/obsidian-vault-adapter.ts`, `core/obsidian-http-client.ts`, and `core/obsidian-pdf-extractor.ts` may. This keeps indexing/retrieval/memory unit-testable and lets the server reuse `EngramEngine`.
+- **The service and core layers must not import `obsidian` or `node:*`.** Only the UI layer (`main.ts`, `settings/settings-tab.ts`, `ui/*`), the four adapters `core/obsidian-vault-adapter.ts`, `core/obsidian-http-client.ts`, `core/obsidian-pdf-extractor.ts` and `core/obsidian-ocr-extractor.ts`, and the Node-only server layer may. This keeps indexing/retrieval/memory unit-testable and lets the server reuse `EngramEngine`. `tests/architecture.test.ts` holds the allowlist and fails the build on drift, so widening it is a visible code change.
 - **All vault paths go through `utils/paths`.** Never build a vault path by ad-hoc string concatenation. Use `resolveInVault` / `joinVaultPath` / `normalizeVaultRelativePath`. `MemoryWriter` is the only component that writes memory.
 - **Keep modules small and functions testable.** Prefer pure functions in the core layer; inject the `VaultAdapter`, `Logger`, and clock.
 - **Safe defaults.** New settings must default to the privacy-preserving, local-only choice, and `migrateSettings` must degrade a corrupt settings blob to defaults without throwing.

@@ -131,12 +131,28 @@ export function rtfToText(rtf: string): string {
         if (!top().skip) out.push(" ");
       }
       i = j;
-    } else {
-      if (c !== "\r" && c !== "\n") {
-        if (pendingUc > 0) pendingUc--;
-        else if (!top().skip) out.push(c);
-      }
+    } else if (c === "\r" || c === "\n") {
+      // Raw line breaks are layout, not text — \par carries the real one.
       i++;
+    } else {
+      // Plain-text run, taken in one slice. Per character it would cost one
+      // array entry per byte of the document (~200MB of heap on a 20MB file)
+      // to build text the extraction cap then truncates to 1MB. Nothing in a
+      // run can change `skip` or the group depth, since a run stops at every
+      // character that could.
+      let j = i + 1;
+      while (j < n) {
+        const ch = rtf[j];
+        if (ch === "{" || ch === "}" || ch === "\\" || ch === "\r" || ch === "\n") break;
+        j++;
+      }
+      // \uN fallback bytes are swallowed one character at a time.
+      while (i < j && pendingUc > 0) {
+        pendingUc--;
+        i++;
+      }
+      if (i < j && !top().skip) out.push(rtf.slice(i, j));
+      i = j;
     }
   }
   return normalizeExtractedText(out.join("")).trim();
