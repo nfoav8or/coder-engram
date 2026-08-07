@@ -176,6 +176,7 @@ src/
     format.ts                   pure display helpers (line range, mtime day)
     validation.ts               small validators
     debounce.ts                 debounce helper
+    timeout.ts                  withTimeout — bounds a WAIT on work that may never settle
 tests/                          Vitest suite (mirrors src)
 ```
 

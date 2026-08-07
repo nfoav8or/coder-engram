@@ -13,7 +13,7 @@ Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an a
 - **Hardened by default.** Server off by default, localhost-only, constant-time token auth, DNS-rebinding guards, a curated tool surface, and no generic file access or full-vault dump.
 - **Local-first, no lock-in.** Markdown is the source of truth; embeddings are opt-in (default is fully-offline lexical search); no cloud key for the default experience.
 
-> **Status:** v0.8.0. The local server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too — the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. Attachment indexing is likewise opt-in and fully local. See [CHANGELOG.md](CHANGELOG.md) for release history and [docs/ROADMAP.md](docs/ROADMAP.md) for what is still deferred.
+> **Status:** v0.9.0. The local server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too — the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. Attachment indexing is likewise opt-in, and local for every format except image text — that one delegates OCR to the Text Extractor plugin, which fetches its language data on first use (see [Network use](#network-use)). See [CHANGELOG.md](CHANGELOG.md) for release history and [docs/ROADMAP.md](docs/ROADMAP.md) for what is still deferred.
 
 ## What Coder Engram does
 
@@ -87,9 +87,16 @@ Embedding happens at index time (reindex/refresh) and is cached in `Index/embedd
 ## Installation (from a release)
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from a release.
-2. Create the folder `<vault>/.obsidian/plugins/coder-engram/`.
-3. Copy the three files into that folder.
-4. In Obsidian: **Settings → Community plugins → Reload plugins**, then enable **Coder Engram**.
+2. Optionally verify them. Every release also publishes `SHA256SUMS`, and from v0.9.0 the assets carry signed build provenance, so you can confirm they were built by the release workflow from the tag they claim:
+
+   ```bash
+   sha256sum -c SHA256SUMS --ignore-missing        # or: shasum -a 256 -c
+   gh attestation verify main.js --repo nfoav8or/coder-engram
+   ```
+
+3. Create the folder `<vault>/.obsidian/plugins/coder-engram/`.
+4. Copy the three files into that folder.
+5. In Obsidian: **Settings → Community plugins → Reload plugins**, then enable **Coder Engram**.
 
 This is a desktop-only plugin (`isDesktopOnly: true`, minimum Obsidian 1.7.2).
 
@@ -144,17 +151,20 @@ Other scripts:
 
 ## Releasing
 
-Releases are published by the `release.yml` GitHub Actions workflow, which builds
-the plugin and attaches `main.js`, `manifest.json`, and `styles.css` to a GitHub
-release whenever a version tag is pushed. To cut a release:
+Releases are published by the `release.yml` GitHub Actions workflow whenever a
+version tag is pushed. It runs the full gate (typecheck, lint, test, build),
+attests the built artifacts, and attaches `main.js`, `manifest.json`,
+`styles.css`, and a `SHA256SUMS` manifest to a GitHub release. To cut one:
 
 ```bash
-npm version 0.2.0        # bumps package.json + syncs manifest.json / versions.json
+npm version 0.9.0        # bumps package.json + syncs manifest.json / versions.json
 git push --follow-tags   # pushes the commit and the tag
 ```
 
-The tag must equal the `manifest.json` version (a leading `v` is tolerated), or
-the workflow fails its verification step before publishing.
+Two checks run before anything is published: the tag must equal the
+`manifest.json` version (a leading `v` is tolerated), and `versions.json` must
+carry an entry for it that agrees with the manifest's `minAppVersion` — which is
+what `npm version` writes, so a mismatch means the manifest was edited by hand.
 
 ## Configuration
 
@@ -286,7 +296,11 @@ Every other attachment path — PDF, Office, RTF, plain text, Canvas — runs en
 - **M7 (done):** deeper Claude Code loop — `get_note_context`, `find_related_notes`, `add_memory` de-duplication, embeddings no-op-persist guard.
 - **M8 (done):** sharper/cheaper loop — ranged reads, dated + de-duplicated + backfilled search pages with `[PENDING REVIEW]` labels, bounded and rate-limited context tools, O(changed) refresh I/O, and the embedding-settings reload fix.
 - **M9 (done):** rename to Coder Engram, community-catalog compliance (sentence-case UI, `setHeading()`/`setTitle()`, CSS-class styling, network-use disclosure), and a settings/UI correctness bundle (blur-commit settings, server config snapshot + no-op rebind skip, reindex guard, search-race fix).
-- **Future:** non-desktop support, indexing of binary attachments, and alternative local vector stores.
+- **M10 (done):** attachments become memory — PDF (via Obsidian's bundled engine), Office/LibreOffice, RTF, plain text and Canvas extraction behind one injected boundary, with an mtime-keyed cache and field matching in ranking.
+- **M11 (done):** bounded by the unit you pay in — a per-file text ceiling, a corpus-wide budget that keeps a large vault's index serializable, and a section budget set by measured relevance.
+- **M12 (done):** the agent's context is your choice — the three output reductions became individual opt-in toggles, all off by default.
+- **M13 (done, v0.9.0):** untrusted files, safely — image text via plugin interop, bounds in time as well as size (PDF, OCR, and outbound HTTP each race a timer), four security fixes to existing paths, signed build provenance on release assets, and type-aware linting.
+- **Future:** non-desktop support, scanned-PDF OCR, and alternative local vector stores.
 
 Details: [docs/ROADMAP.md](docs/ROADMAP.md).
 

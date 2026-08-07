@@ -75,6 +75,7 @@ Pure, dependency-light modules with no Obsidian imports:
 - `core/markdown-chunker.ts` — heading- and fence-aware chunking.
 - `core/metadata-extractor.ts` — frontmatter/tag/link extraction with no YAML dependency.
 - `retrieval/ranking.ts` — tokenization, structural filtering, and snippet building shared by retrievers.
+- `utils/timeout.ts` — `withTimeout`, the one place that bounds a wait on work which may never settle. Used by PDF extraction, image OCR (a companion plugin's call), and the HTTP client; size caps bound what work may cost, this bounds how long it may take, and the two are not the same guard.
 - `utils/logger.ts` — debug-gated logger with secret redaction.
 - `utils/errors.ts` — typed errors (`PathSecurityError`, `ConfigError`, …) plus `toMessage(err)`, the one way an unknown thrown value becomes log or notice text. Use it rather than re-deriving `err instanceof Error ? …`, so a non-Error throw can't put `[object Object]` in front of a user.
 - `utils/validation.ts`, `utils/debounce.ts` — small helpers.
