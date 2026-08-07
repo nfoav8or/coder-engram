@@ -304,6 +304,10 @@ Every other attachment path — PDF, Office, RTF, plain text, Canvas — runs en
 
 Details: [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the gate to run, the two layering rules the build enforces, and how to check that a new test actually holds something.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
