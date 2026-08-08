@@ -175,7 +175,7 @@ Settings live under **Settings → Coder Engram**. Key settings and their safe d
 | Enable indexing | `true` | Scan and index vault notes. |
 | Memory root | `Claude Code` | Vault-relative folder for all plugin-managed memory. Must stay inside the vault. |
 | Included folders | *(empty)* | Allowlist; empty means the whole vault. |
-| Excluded folders | *(empty)* | Folders to skip. |
+| Excluded folders | *(empty)* | Folders to skip. Matched case-insensitively, on whole path segments. |
 | Excluded tags | *(empty)* | Notes with any of these tags are never indexed. |
 | Excluded path patterns | *(empty)* | Glob (`*`, `**`) or substring patterns for sensitive notes. |
 | Index attachments | `false` | Extract and index text from PDFs (Obsidian's bundled PDF engine), Office documents (docx/pptx/xlsx, odt/odp/ods, rtf — dependency-free extraction), plain text (txt/csv), and Canvas cards, locally. Exclusions apply; extracted text is searchable/readable over the local server like any note. |

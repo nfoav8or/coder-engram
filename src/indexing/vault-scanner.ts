@@ -62,11 +62,19 @@ function normalizeFolder(folder: string): string {
   return trimmed;
 }
 
-/** True if `path` is inside `folder` (or equals it). Segment-boundary aware. */
+/**
+ * True if `path` is inside `folder` (or equals it). Segment-boundary aware, and
+ * case-INSENSITIVE like the tag and pattern filters beside it: a user who types
+ * "private" for a folder named "Private" means that folder. Matching the case
+ * exactly would silently index the notes they asked to keep out — and on macOS
+ * and Windows, where the filesystem itself folds case, the two spellings are
+ * the same folder anyway.
+ */
 function isUnderFolder(path: string, folder: string): boolean {
-  const f = normalizeFolder(folder);
+  const f = normalizeFolder(folder).toLowerCase();
   if (f === "") return true;
-  return path === f || path.startsWith(f + "/");
+  const p = path.toLowerCase();
+  return p === f || p.startsWith(f + "/");
 }
 
 /** Convert a glob pattern to a RegExp. `**` matches across slashes, `*` within a segment. */

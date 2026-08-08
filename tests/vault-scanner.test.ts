@@ -52,6 +52,22 @@ describe("VaultScanner filtering", () => {
     expect(notes.map((n) => n.path)).not.toContain("Private/secret.md");
   });
 
+  it("excludes a folder the user spelled in a different case", async () => {
+    // The tag and pattern filters beside this one already fold case, so an
+    // exact-case folder match failed in the one direction that is unsafe: the
+    // note stays indexed, and every read tool will then serve it, with nothing
+    // to tell the user their exclusion did nothing.
+    for (const spelling of ["private", "PRIVATE", "pRiVaTe"]) {
+      const notes = await new VaultScanner(adapter).scan(config({ excludedFolders: [spelling] }));
+      expect(notes.map((n) => n.path)).not.toContain("Private/secret.md");
+    }
+  });
+
+  it("matches an included folder case-insensitively too", async () => {
+    const notes = await new VaultScanner(adapter).scan(config({ includedFolders: ["notes"] }));
+    expect(notes.map((n) => n.path)).toEqual(["Notes/a.md"]);
+  });
+
   it("honors an excluded path pattern", async () => {
     const notes = await new VaultScanner(adapter).scan(config({ excludedPathPatterns: ["secret"] }));
     expect(notes.map((n) => n.path)).not.toContain("Private/secret.md");
