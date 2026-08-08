@@ -84,6 +84,27 @@ describe("MemoryWriter.applyPending", () => {
     expect(written).toContain("We chose a local JSON index for v1.");
   });
 
+  it("keeps the entry in the inbox when the destination write fails", async () => {
+    // The two writes are ordered destination-first on purpose: whichever one
+    // fails, the entry must still exist somewhere. Clearing the inbox first
+    // would mean a failed destination write loses the memory outright, and
+    // nothing else in the suite notices that swap — the failure only appears
+    // when a write actually fails.
+    const { adapter, writer } = makeWriter({ appendOnly: true, allowDirectWrites: false });
+    await writer.proposeToInbox(entry());
+    const target = (await writer.readInbox()).entries[0];
+    const destination = resolveApplyDestination(target, paths);
+
+    const realWrite = adapter.write.bind(adapter);
+    adapter.write = (path: string, content: string) =>
+      path === destination ? Promise.reject(new Error("disk full")) : realWrite(path, content);
+
+    await expect(writer.applyPending(target)).rejects.toThrow(/disk full/);
+    adapter.write = realWrite;
+    expect((await writer.readInbox()).entries).toHaveLength(1);
+    expect(await adapter.exists(destination)).toBe(false);
+  });
+
   it("throws when the entry is no longer in the inbox", async () => {
     const { writer } = makeWriter({ appendOnly: true, allowDirectWrites: false });
     await writer.proposeToInbox(entry());

@@ -231,9 +231,8 @@ export class MemoryWriter {
         throw new ConfigError("The pending-memory inbox no longer exists.");
       }
       // Compute the inbox-without-this-entry FIRST and bail if the entry is
-      // already gone (e.g. a retry of an apply that actually succeeded). Doing
-      // this BEFORE touching the destination means a retry can never append a
-      // duplicate graduated block.
+      // already gone, so a retry of an apply that fully succeeded cannot append
+      // a second graduated block.
       const text = await this.adapter.read(target);
       const next = removeEntry(text, entry);
       if (next === null) {
@@ -241,6 +240,10 @@ export class MemoryWriter {
           "That entry is no longer in the inbox (it may have been applied or removed elsewhere). Refresh and try again.",
         );
       }
+      // Destination first, inbox second, and not the other way round: if either
+      // write fails the entry must still exist somewhere. Clearing the inbox
+      // first would lose the memory outright when the destination write fails,
+      // where this order costs at worst a duplicate block on a manual retry.
       const block = formatAppliedBlock(entry);
       if (await this.adapter.exists(destination)) {
         await this.adapter.append(destination, `\n${block}`);
