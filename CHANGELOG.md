@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] — 2026-08-08
+
+One hardening fix: the last tool that could be called without a rate limit now has one.
+
 ### Security
 
 - **`list_projects` is now rate-limited like every other tool (60/min).** It was the only one of the ten without a limit, presumably because listing project names reads as trivial — but it lists every Markdown file in the vault and scans the paths, so its cost grows with the vault (~0.5 ms at 1 000 notes, ~3.5 ms at 20 000) and is spent on the app's main thread. An agent polling it in a loop could degrade the UI while every genuinely expensive tool beside it was bounded. The limits are also now enforced as a registry-wide invariant in the test suite, so a tool cannot be added later without one.
@@ -352,7 +356,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.9.2...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.9.3...HEAD
+[0.9.3]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.3
 [0.9.2]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.2
 [0.9.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.1
 [0.9.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.0

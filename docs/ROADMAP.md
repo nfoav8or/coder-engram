@@ -111,7 +111,7 @@ Coder Engram is built in milestones. Milestones 1 through 13 are complete (throu
 
 ## In progress (unreleased)
 
-- Nothing yet — 0.9.2 has just been cut.
+- Nothing yet — 0.9.3 has just been cut.
 
 ## Deferred / future
 
