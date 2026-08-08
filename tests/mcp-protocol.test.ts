@@ -99,6 +99,28 @@ describe("handleRpcMessage", () => {
     ).toBeNull();
   });
 
+  it("does not RUN a write tool sent as a notification, not merely stay silent", async () => {
+    // The check above proves the response is null. That is the cheap half: a
+    // read-only tool executing unnoticed changes nothing. What must hold is
+    // that the tool never runs, because a notification has no id and so no
+    // reply — an executed `add_memory` would be a fire-and-forget write with
+    // nothing for the client to correlate it to. Restructuring this into
+    // "execute, then return null for notifications" reads as a faithful
+    // implementation of the JSON-RPC rule and would pass the other test.
+    const deps = makeDeps();
+    const res = await handleRpcMessage(
+      {
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { name: "add_memory", arguments: { content: "fire and forget" } },
+      },
+      deps,
+    );
+    expect(res).toBeNull();
+    const inbox = await deps.toolContext.engine.getPendingMemory();
+    expect(inbox.entries).toHaveLength(0);
+  });
+
   it("calls a tool and returns text content", async () => {
     const deps = makeDeps();
     await deps.toolContext.engine.ensureScaffold();
