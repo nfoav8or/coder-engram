@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-08-08
+
+A performance fix for one attachment format. Nothing else about the plugin changes, and no settings or stored data are affected.
+
 ### Changed
 
 - RTF extraction no longer stalls the app on a large document. It walked the
@@ -336,7 +340,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.9.0...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.9.1...HEAD
+[0.9.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.1
 [0.9.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.0
 [0.8.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.8.0
 [0.7.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.7.1
