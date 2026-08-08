@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-08-08
+
+One fix, to a privacy filter that could silently do nothing.
+
 ### Fixed
 
 - **An excluded folder typed in a different case no longer indexes the notes it was meant to keep out.** Folder exclusions were matched case-sensitively, so an entry of `private` did nothing to a folder named `Private` — the notes stayed in the index and every read tool would serve them, with nothing in the UI to say the exclusion had no effect. Excluded tags and excluded path patterns had always folded case, so this was the one filter that failed in the unsafe direction. Folder matching (excluded *and* included) is now case-insensitive; on macOS and Windows the filesystem folds case anyway, so the two spellings were the same folder all along. **If you rely on an excluded folder, check the setting once: any entry that was silently doing nothing now takes effect, and those notes will leave the index on the next refresh.**
@@ -344,7 +348,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.9.1...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.9.2...HEAD
+[0.9.2]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.2
 [0.9.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.1
 [0.9.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.0
 [0.8.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.8.0
