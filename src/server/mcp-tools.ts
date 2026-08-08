@@ -9,7 +9,9 @@
  *     when the desktop `allowDirectWrites` setting is on.
  *   - Arguments are validated with the dependency-free validators before they
  *     reach the engine; retrieval limits are capped.
- *   - Expensive operations (reindex) are rate-limited.
+ *   - EVERY tool is rate-limited: a sliding per-minute window, or a cooldown
+ *     for reindex. A tool with no limit is a hole in that defence, however
+ *     cheap it looks, so new tools take one too.
  *
  * These handlers are pure with respect to Obsidian — they drive the same
  * EngramEngine the UI uses — so they are fully unit-testable with an in-memory
@@ -443,6 +445,10 @@ const listProjectsTool: Tool = {
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   async handler(_args, ctx) {
+    // Cheap-looking, but it lists every Markdown file in the vault and scans
+    // the paths, so its cost grows with the vault (measured 0.5 ms at 1k notes,
+    // 3.5 ms at 20k) and it is spent on the app's main thread.
+    ctx.rateLimiter.enforceWindow("list_projects", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
     const projects = await ctx.engine.listProjects();
     return projects.length ? projects.join("\n") : "No projects yet.";
   },

@@ -22,6 +22,34 @@ function makeContext(seed: Record<string, string> = {}, overrides: Partial<Engra
 }
 
 describe("ToolRegistry", () => {
+  it("every tool consults the rate limiter, however cheap it looks", async () => {
+    // Asserted over the whole registry rather than tool by tool, so a tool
+    // added later cannot quietly ship without a limit — which is exactly how
+    // list_projects went unlimited while the other nine were covered. Empty
+    // arguments on purpose: the limiter has to be consulted BEFORE validation,
+    // or a flood of malformed calls costs nothing to send and is never bounded.
+    const { ctx } = makeContext();
+    const registry = new ToolRegistry();
+    const limiter = ctx.rateLimiter;
+    const consulted: string[] = [];
+    const realWindow = limiter.enforceWindow.bind(limiter);
+    const realCooldown = limiter.enforce.bind(limiter);
+    limiter.enforceWindow = (key, max, win) => {
+      consulted.push(key);
+      realWindow(key, max, win);
+    };
+    limiter.enforce = (key, cooldown) => {
+      consulted.push(key);
+      realCooldown(key, cooldown);
+    };
+
+    for (const def of registry.list()) {
+      consulted.length = 0;
+      await registry.call(def.name, {}, ctx).catch(() => undefined);
+      expect(consulted, `${def.name} never reached the rate limiter`).toContain(def.name);
+    }
+  });
+
   it("lists the expected tools with input schemas", () => {
     const registry = new ToolRegistry();
     const names = registry.list().map((t) => t.name);

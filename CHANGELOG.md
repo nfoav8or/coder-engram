@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`list_projects` is now rate-limited like every other tool (60/min).** It was the only one of the ten without a limit, presumably because listing project names reads as trivial — but it lists every Markdown file in the vault and scans the paths, so its cost grows with the vault (~0.5 ms at 1 000 notes, ~3.5 ms at 20 000) and is spent on the app's main thread. An agent polling it in a loop could degrade the UI while every genuinely expensive tool beside it was bounded. The limits are also now enforced as a registry-wide invariant in the test suite, so a tool cannot be added later without one.
+
 ## [0.9.2] — 2026-08-08
 
 One fix, to a privacy filter that could silently do nothing.
