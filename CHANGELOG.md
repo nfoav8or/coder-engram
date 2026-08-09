@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.7] — 2026-08-08
+
+One fix: the image-text setting takes effect when you toggle it, in both directions.
+
 ### Fixed
 
 - Toggling **Index text inside images** now takes effect immediately, in both
