@@ -519,6 +519,110 @@ try {
   check("retrieval switches to hybrid once vectors exist", mode === "hybrid", mode);
   await new Promise((res) => stub.close(res));
 
+  // --- declarative settings tab (Obsidian 1.13+) ---------------------------
+  // The settings UI is the one part of this plugin no unit test can reach:
+  // `setting-definitions.ts` is asserted as data, but whether Obsidian renders
+  // it — and whether it renders the DECLARATIVE path rather than the legacy
+  // `display()` — can only be seen in the real app.
+  const settings = await page.evaluate(async () => {
+    const app = window.app;
+    const plugin = app.plugins.plugins["coder-engram"];
+    app.setting.open();
+    app.setting.openTabById("coder-engram");
+    await new Promise((r) => setTimeout(r, 800));
+    const tab = app.setting.activeTab;
+    const el = () => app.setting.activeTab.containerEl;
+    const rowFor = (label) =>
+      Array.from(el().querySelectorAll(".setting-item")).find(
+        (row) => row.querySelector(".setting-item-name")?.textContent.trim() === label,
+      );
+    const shown = (label) => {
+      const row = rowFor(label);
+      return !!row && row.offsetParent !== null && getComputedStyle(row).display !== "none";
+    };
+    // Earlier checks left the provider on openai-compatible, so each assertion
+    // sets the state it is about rather than inheriting it.
+    // Re-render the way Obsidian does. NOT `tab.display()`: that is the
+    // pre-1.13 imperative path, still shipped for older apps, and calling it
+    // here would paint the legacy UI over the declarative one — which is
+    // exactly how an earlier version of this check passed while testing
+    // nothing.
+    const render = async (provider) => {
+      plugin.settings.embeddingProvider = provider;
+      tab.update?.();
+      app.setting.openTabById("coder-engram");
+      await new Promise((r) => setTimeout(r, 400));
+    };
+
+    await render("none");
+    const keyHiddenForNone = !shown("API key");
+    await render("ollama");
+    const keyHiddenForOllama = !shown("API key");
+    const endpointShownForOllama = shown("Endpoint");
+    await render("openai-compatible");
+    const keyShownForOpenAi = shown("API key");
+    const masked = el().querySelectorAll('input[type="password"]').length;
+    await render("none");
+
+    // Drive a real control the way a user would, to prove the value plumbing
+    // (getControlValue / setControlValue) is wired both ways.
+    const before = plugin.settings.indexingEnabled;
+    const toggle = rowFor("Enable indexing")?.querySelector(".checkbox-container");
+    toggle?.click();
+    await new Promise((r) => setTimeout(r, 200));
+    const afterClick = plugin.settings.indexingEnabled;
+    toggle?.click();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const headings = Array.from(el().querySelectorAll(".setting-item-heading"))
+      .map((n) => n.textContent.trim())
+      .filter(Boolean);
+    return {
+      declarativeGroups: Array.isArray(tab?.settingItems) ? tab.settingItems.length : -1,
+      rows: el().querySelectorAll(".setting-item").length,
+      headings,
+      masked,
+      keyHiddenForNone,
+      keyHiddenForOllama,
+      endpointShownForOllama,
+      keyShownForOpenAi,
+      toggleFlipped: toggle ? afterClick !== before : "no toggle found",
+      restored: plugin.settings.indexingEnabled === before,
+    };
+  });
+
+  check(
+    "settings render from the declarative definitions, not the legacy display()",
+    settings.declarativeGroups > 0,
+    `${settings.declarativeGroups} groups, ${settings.rows} rows`,
+  );
+  check(
+    "every settings group renders",
+    ["Indexing", "Retrieval & embeddings", "Memory write safety", "Advanced"].every((h) =>
+      settings.headings.some((x) => x.startsWith(h)),
+    ),
+    settings.headings.join(" · "),
+  );
+  check(
+    "the API key field appears only for the provider that sends one",
+    settings.keyHiddenForNone && settings.keyHiddenForOllama && settings.keyShownForOpenAi,
+    `none=${!settings.keyHiddenForNone} ollama=${!settings.keyHiddenForOllama} openai=${settings.keyShownForOpenAi}`,
+  );
+  check(
+    "the endpoint field appears for a local provider",
+    settings.endpointShownForOllama,
+  );
+  check(
+    "the token and API key render masked",
+    settings.masked === 2,
+    `${settings.masked} password input(s)`,
+  );
+  check(
+    "clicking a rendered control writes through to settings",
+    settings.toggleFlipped === true && settings.restored,
+    `flipped=${settings.toggleFlipped} restored=${settings.restored}`,
+  );
+
   // Every durable write goes temp-sibling → move the old copy aside → rename
   // into place → delete the backup. That last step only runs on the success
   // path, and nothing else can check it: the InMemoryVaultAdapter does not
