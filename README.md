@@ -162,7 +162,8 @@ git push --follow-tags   # pushes the commit and the tag
 ```
 
 Two checks run before anything is published: the tag must equal the
-`manifest.json` version (a leading `v` is tolerated), and `versions.json` must
+`manifest.json` version exactly — bare, with no `v` prefix, because Obsidian
+resolves the download from a release tagged identically to that version — and `versions.json` must
 carry an entry for it that agrees with the manifest's `minAppVersion` — which is
 what `npm version` writes, so a mismatch means the manifest was edited by hand.
 

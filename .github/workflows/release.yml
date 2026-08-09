@@ -6,7 +6,10 @@ name: Release
 on:
   push:
     tags:
-      # Accept both bare (`0.1.0`) and v-prefixed (`v0.1.0`) version tags.
+      # Bare (`0.1.0`) is the only valid form — Obsidian resolves a release by
+      # a tag identical to the manifest version. A v-prefixed tag is still
+      # matched here on purpose, so it fails loudly in the check below rather
+      # than publishing nothing at all.
       - "*.*.*"
       - "v*.*.*"
 
@@ -43,13 +46,22 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          # Tolerate a leading `v` so the standard `npm version` flow (which
-          # creates a v-prefixed tag) works as well as a bare version tag.
-          VERSION="${TAG#v}"
+          # The tag must be the BARE version. Obsidian resolves a plugin's
+          # download from a release tagged identically to the version in
+          # manifest.json (`releases/download/0.9.9/main.js`), so a `v` prefix
+          # publishes a release the plugin browser cannot reach — which is
+          # exactly what happened to every 0.9.x release until 0.9.9. This
+          # check used to strip the prefix and let it through; the repo's
+          # `.npmrc` now stops `npm version` producing one, and this refuses it
+          # if it ever comes back.
+          VERSION="$TAG"
           MANIFEST_VERSION="$(node -p "require('./manifest.json').version")"
           if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
-            echo "Tag '$TAG' (version '$VERSION') does not match manifest version '$MANIFEST_VERSION'." >&2
-            echo "Run 'npm version $VERSION' to sync manifest + versions.json, then push the tag." >&2
+            echo "Tag '$TAG' does not match manifest version '$MANIFEST_VERSION'." >&2
+            case "$TAG" in
+              v*) echo "Tags must be bare (e.g. '$MANIFEST_VERSION', not '$TAG') or Obsidian cannot resolve the release." >&2 ;;
+              *)  echo "Run 'npm version $VERSION' to sync manifest + versions.json, then push the tag." >&2 ;;
+            esac
             exit 1
           fi
           # versions.json is what Obsidian reads to decide which build an older

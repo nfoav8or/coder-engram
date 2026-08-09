@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Releases 0.9.1 through 0.9.9 are now reachable from Obsidian's plugin
+  browser.** Obsidian downloads a plugin from a GitHub release tagged
+  identically to the version in `manifest.json`, and every 0.9.x release was
+  tagged `v0.9.x` instead — `npm version`, the flow this project's own README
+  documented, adds that prefix by default. The releases existed and the
+  workflow was green, but the URL Obsidian asks for returned 404, so the
+  directory listing stayed on the version it had and no update ever arrived.
+  Each 0.9.x version has been re-published under its bare tag, `.npmrc` stops
+  npm adding the prefix, and the release workflow now rejects a prefixed tag
+  rather than tolerating it.
+
 ## [0.9.9] — 2026-08-08
 
 One security fix: an exclusion naming an accented folder, tag, or pattern could silently do nothing.
