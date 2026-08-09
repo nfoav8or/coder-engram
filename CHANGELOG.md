@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4] — 2026-08-08
+
+One fix: startups stop rewriting the whole index because of a blank note.
+
 ### Fixed
 
 - **A single empty note no longer makes every startup rewrite the whole index.** The skip-unchanged fast path is driven by a map of note mtimes that only ever lived in memory, so after a reload the mtimes were re-derived from the indexed chunks — and a note that chunks to nothing (empty, or only whitespace) leaves no chunk to derive from. It therefore read as newly added on the first refresh of every session, and "something was added" is exactly what makes the engine persist. On a large vault that is a multi-megabyte serialize and write on the app's main thread at every startup, caused by one blank note, and it never settled because the next launch re-derived the same way. The mtime map is now persisted alongside the index and restored on load. The field is optional, so an index written by an earlier version still loads and simply writes the map on its next persist — no forced reindex.
@@ -360,7 +364,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.9.3...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.9.4...HEAD
+[0.9.4]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.4
 [0.9.3]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.3
 [0.9.2]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.2
 [0.9.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.1
