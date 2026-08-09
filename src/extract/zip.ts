@@ -117,7 +117,11 @@ export async function readZipEntry(
       new DecompressionStream("deflate-raw"),
     );
     // Count while inflating — the declared uncompressedSize can lie.
-    const reader = stream.getReader();
+    // Annotated because `pipeThrough` loses the element type: without this the
+    // inflated chunks are `any`, and the size accounting below — the thing
+    // standing between a crafted archive and an unbounded allocation — would be
+    // unchecked arithmetic on an untyped value.
+    const reader: ReadableStreamDefaultReader<Uint8Array> = stream.getReader();
     const chunks: Uint8Array[] = [];
     let total = 0;
     for (;;) {

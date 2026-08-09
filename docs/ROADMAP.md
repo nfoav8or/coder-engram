@@ -1,6 +1,6 @@
 # Roadmap
 
-Coder Engram is built in milestones. Milestones 1 through 13 are complete (through v0.9.0), and the patch releases since are listed under "Patch releases since v0.9.0"; work not yet released is under "In progress", and anything not scheduled is under "Deferred / future".
+Coder Engram is built in milestones. Milestones 1 through 14 are complete (through 0.10.0); the patch releases between 0.9.0 and 0.9.9 are listed under "Patch releases since v0.9.0", the Obsidian review findings and what was done about each under "Plugin review findings", work not yet released under "In progress", and anything not scheduled under "Deferred / future".
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -109,6 +109,34 @@ Coder Engram is built in milestones. Milestones 1 through 13 are complete (throu
 - Supply chain and packaging: signed build provenance on release assets, a `versions.json` release gate, checksum verification that works on macOS and refuses an asset it cannot account for, and one fewer dependency.
 - Test discipline: type-aware linting, an architecture test that enforces the layering rules, first coverage for the installer, and e2e checks for the two adapters no unit test can reach.
 
+## Milestone 14 — declarative settings (done, 0.10.0)
+
+- **The settings tab is declarative** (`getSettingDefinitions()`), so every setting appears in Obsidian's settings search on 1.13 and later. A tab driven only by `display()` is absent from that search, which for a plugin with thirty settings is a real discoverability loss.
+- **The tab became data.** `settings/setting-definitions.ts` describes every setting — control, validation, provider-dependent visibility — and imports `obsidian` for types only, so it is erased at build time and unit-testable. `settings/settings-tab.ts` is the thin shell that supplies value reads/writes and what happens after a change. Roughly 500 lines of untestable UI became a value the suite asserts over: that every persisted setting is bound to a control, that no two controls share a key, that every key round-trips through the settings object, and that the API-key row is hidden for every provider except the one that needs it.
+- **`minAppVersion` stays 1.7.2** and `display()` stays with it. Obsidian ignores `display()` as soon as `getSettingDefinitions()` returns anything, so 1.13+ renders declaratively while older apps keep the imperative tab. Raising the floor instead would have stranded every user below 1.13 on 0.9.9.
+- Better than the imperative version in two places: the memory root is now rejected inline as you type (it was a `Notice` after the fact), and image-text indexing is visibly disabled until attachment indexing is on.
+- The layering test now distinguishes a **type-only** import of `obsidian` from a value import. The invariant it protects is "no runtime dependency on the host outside the adapters", and `import type` is erased — which is what makes the definitions testable.
+
+## Plugin review findings (Obsidian automated review of 0.9.9)
+
+Recorded in full, including the ones deliberately left alone. Reproduced locally with
+`eslint-plugin-obsidianmd`, run from the repo root so it can read `manifest.json`.
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| `Plugin.settings` requires 1.13.0 but minAppVersion is 1.7.2 (`settings-tab.ts`) | Error | **Fixed in 0.10.0.** Obsidian 1.13 added its own `Plugin.settings`, and the tab held its host as `Plugin & SettingsHost`, so the read resolved to Obsidian's property. The host is now held at its `SettingsHost` type. |
+| Avoid casting to `TFile` (`obsidian-ocr-extractor.ts`) | Warning | **Fixed in 0.10.0.** Replaced with a type predicate. Structural narrowing stays: `obsidian` ships types only, so naming `TFile` in a value position would break the Node test environment. |
+| Unnecessary type assertion (`settings.ts`) | Warning | **Fixed in 0.10.0.** |
+| PluginSettingTab does not implement `getSettingDefinitions()` | Warning | **Fixed in 0.10.0** — this milestone. |
+| `display` is deprecated since 1.13.0 | Recommendation | **Kept deliberately.** It is the pre-1.13 fallback and is never called on 1.13+. Removing it would mean raising `minAppVersion` to 1.13.0 and stranding older users. |
+| Use `window.setTimeout()` / `window.clearTimeout()` (7 sites) | Warning | **Not applicable.** All seven are in the pure core and the server layer, which also run in the Node test environment (no `window`) and, for the server, under Node itself. No UI file uses a timer. The rule targets popout-window lifetimes, which these timers do not participate in. |
+| Avoid using `global` (`memory-types.ts:63`) | Warning | **False positive.** That line is `global: string;`, a property of the `MemoryPaths` interface, not Node's `global`. |
+| Avoid unnecessary logging to console (`logger.ts`) | Warning | **Kept deliberately.** The logger is gated by the `debugLogging` setting; warnings and errors always emit because they are actionable, and every context object is redacted first. |
+| Release contains extra unsupported files (`SHA256SUMS`) | Recommendation | **Kept deliberately.** `scripts/install.sh` verifies downloads against it, and Obsidian simply does not download it. |
+| Vault enumeration (`getMarkdownFiles`) | Recommendation | **Inherent.** The plugin is a vault indexer; enumerating notes is the feature. Exclusions are applied before anything is read. |
+| Unsafe `any` in the ZIP inflate loop (`zip.ts`) | Error (their config) | **Fixed in 0.10.0.** `pipeThrough` loses the element type, so the inflated chunks were `any` — and the size accounting there is what stands between a crafted archive and an unbounded allocation. The reader is now annotated. |
+| Build reproduced the release `main.js` byte-for-byte; attestations verified | Pass | No action. |
+
 ## Patch releases since v0.9.0
 
 No new surface — nine releases of fixes found by auditing what was already shipped. Each is
@@ -133,12 +161,11 @@ is verified on the state an *upgrading* user actually has on disk (0.9.6).
 
 ## In progress (unreleased)
 
-- Nothing yet — 0.9.9 has just been cut.
+- Nothing yet — 0.10.0 has just been cut.
 
 ## Deferred / future
 
 - **MCP revision 2026-07-28.** This server implements 2025-06-18 and negotiates it honestly (see docs/MCP_SERVER.md); the current revision has since moved twice (2025-11-25, then 2026-07-28). The newer revision is a base-protocol rewrite, not a tools change: it removes the `initialize`/`notifications/initialized` handshake and `ping` in favour of a stateless model where each request carries `io.modelcontextprotocol/protocolVersion` in `_meta`, requires a new `server/discover` RPC, and answers a version mismatch with `UnsupportedProtocolVersionError`. The tool surface is untouched — `tools/list` and `tools/call` still use `inputSchema`, `content`, `isError`, and `nextCursor` — so the work is confined to the protocol layer. **Not urgent:** the spec explicitly permits a server to implement both eras ("A server that wishes to support both legacy clients … and modern clients … MAY implement both behaviors"), and its own compatibility matrix has legacy-client/legacy-server working, which is what Claude Code does today.
-- **Declarative settings (`getSettingDefinitions`), so settings show up in Obsidian's settings search.** Obsidian 1.13.0 added a declarative API (`SettingDefinitionItem`: groups, pages, lists, controls) and deprecated driving a tab purely from `display()`. On 1.13+ a plugin that only implements `display()` is absent from settings search — a real discoverability loss for a plugin with this many toggles. It does **not** require raising `minAppVersion`: older apps simply never call the method, so the two can coexist. What it does require is porting `settings-tab.ts` — roughly thirty settings across conditional sections, several of which enable or disable others — from imperative `new Setting(...)` calls to definitions, plus keeping the commit-on-blur behaviour that stops text fields rebinding the server on every keystroke. Sized as its own change rather than folded into unrelated work.
 - Non-desktop support (currently `isDesktopOnly`).
 - Scanned-PDF OCR. The same delegation would need Text Extractor's PDF path, which its own README flags as unreliable.
 - Cost control for a first refresh over thousands of images: OCR is serial and expensive per cache miss, and capping the work per scan would mean partial-index semantics.

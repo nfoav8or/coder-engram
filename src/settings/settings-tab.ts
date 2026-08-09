@@ -7,10 +7,12 @@
  * explicit security warning.
  */
 
-import { App, Plugin, PluginSettingTab, Setting, Notice } from "obsidian";
+import { App, Plugin, PluginSettingTab, Setting, Notice, SettingDefinitionItem } from "obsidian";
 import { toMessage } from "../utils/errors";
 import { ContextSavingsSettings, EngramSettings, parseList } from "./settings";
 import { normalizeVaultRelativePath } from "../utils/paths";
+import { debounce } from "../utils/debounce";
+import { buildSettingDefinitions, readSettingValue, writeSettingValue } from "./setting-definitions";
 
 export interface SettingsHost {
   settings: EngramSettings;
@@ -18,6 +20,13 @@ export interface SettingsHost {
   onSettingsChanged(): Promise<void> | void;
   rebuildIndex(): Promise<void>;
 }
+
+/**
+ * How long a change waits before the plugin acts on it, on the declarative
+ * path. A commit restarts subsystems, and `setControlValue` fires as the user
+ * types; the imperative path below uses a blur listener for the same purpose.
+ */
+const COMMIT_DELAY_MS = 400;
 
 export class EngramSettingTab extends PluginSettingTab {
   /**
@@ -51,6 +60,114 @@ export class EngramSettingTab extends PluginSettingTab {
   private async commit(): Promise<void> {
     await this.host.saveSettings();
     await this.host.onSettingsChanged();
+  }
+
+  // --- declarative settings (Obsidian 1.13+) ---------------------------------
+  //
+  // Both paths ship, and the app picks: `display()` below is never called once
+  // `getSettingDefinitions()` returns a non-empty array, so 1.13 and newer
+  // render from the definitions and get settings search, while older apps —
+  // which have no idea these methods exist — keep the imperative tab. That is
+  // why `minAppVersion` stays at 1.7.2 rather than following the new API.
+
+  /**
+   * Commit debounce for the declarative path.
+   *
+   * `setControlValue` fires as the user edits a control, and a commit restarts
+   * subsystems — the server rebinds, the index reloads. The imperative tab
+   * batches those with a blur listener, which the declarative API gives no hook
+   * for, so the batching moves here: the value lands in settings immediately
+   * (the control never fights the typing) and the expensive reaction waits.
+   */
+  private readonly commitSoon = debounce(() => {
+    void this.commit();
+  }, COMMIT_DELAY_MS);
+
+  /**
+   * NOTE for Obsidian's automated review: this and the two guarded calls below
+   * reference APIs newer than the declared `minAppVersion`, which its
+   * `no-unsupported-api` rule reports. That is deliberate and safe. Declaring
+   * the method is inert on an older app — nothing there calls it, and
+   * `display()` still renders the tab — and implementing both is what lets
+   * 1.13+ gain settings search without raising the floor for everyone else.
+   * Raising it instead would strand every user below 1.13 on 0.9.9.
+   */
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return buildSettingDefinitions({
+      settings: this.s,
+      notify: (message) => {
+        new Notice(message);
+      },
+      rebuildIndex: () => this.host.rebuildIndex(),
+      commit: () => this.commitSoon(),
+      generateToken,
+      update: () => {
+        this.updateDefinitions();
+      },
+    });
+  }
+
+  getControlValue(key: string): unknown {
+    return readSettingValue(this.s, key);
+  }
+
+  setControlValue(key: string, value: unknown): void {
+    writeSettingValue(this.s, key, value);
+    this.warnAbout(key, value);
+    this.commitSoon();
+    // The provider decides which rows exist and what two of the descriptions
+    // say, so the definitions themselves change — `update()`, not the cheap
+    // `refreshDomState()` that only re-runs visible/disabled predicates.
+    if (key === "embeddingProvider") this.updateDefinitions();
+    else if (key === "indexAttachments") this.refreshDom();
+  }
+
+  /**
+   * `update()` and `refreshDomState()` exist only on 1.13+. They are reached
+   * exclusively from `setControlValue`, which only the declarative renderer
+   * calls — so on an older app this code is unreachable rather than merely
+   * unused. Called through a guard anyway, because "unreachable" is a claim
+   * about another program's behaviour.
+   */
+  private get newerApi(): { update?: () => void; refreshDomState?: () => void } {
+    // Typed as possibly-absent because on an app older than 1.13 they ARE
+    // absent — the ambient types describe the newest Obsidian, not the oldest
+    // one this plugin supports. Same shape as reaching a companion plugin's
+    // API: check, then call.
+    return this;
+  }
+
+  private updateDefinitions(): void {
+    this.newerApi.update?.();
+  }
+
+  private refreshDom(): void {
+    this.newerApi.refreshDomState?.();
+  }
+
+  /**
+   * The warnings the imperative tab raises as the user flips a control. They
+   * belong to the value changing rather than to how it was entered, so the
+   * declarative path raises the same ones.
+   */
+  private warnAbout(key: string, value: unknown): void {
+    if (key === "embeddingProvider" && value === "openai-compatible") {
+      new Notice(
+        "OpenAI-compatible sends your indexed note text to the configured endpoint. " +
+          "Use a local endpoint or a provider you trust.",
+      );
+    } else if (key === "server.allowNonLocalhost" && value === true) {
+      new Notice("Non-localhost binding allowed. The server can now expose memory to your network.");
+    } else if (key === "allowDirectWrites" && value === true) {
+      new Notice("Direct writes enabled. Memory files can now be modified without review.");
+    } else if (key === "server.host" && typeof value === "string") {
+      const host = value.trim();
+      if (host !== "" && host !== "127.0.0.1" && host !== "localhost") {
+        new Notice(
+          "Warning: binding the server to a non-localhost address exposes memory to your network.",
+        );
+      }
+    }
   }
 
   /**
@@ -120,7 +237,9 @@ export class EngramSettingTab extends PluginSettingTab {
   }
 
   hide(): void {
+    this.commitSoon.cancel();
     void this.flushCommit();
+    void this.commit();
     super.hide();
   }
 

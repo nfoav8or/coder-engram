@@ -49,7 +49,8 @@ The plugin (`main.ts`) reconciles the server with settings on load, on settings 
 ## UI layer
 
 - `main.ts` (`EngramPlugin`) — the Obsidian `Plugin` subclass. It loads/migrates settings, constructs an `ObsidianVaultAdapter` and an `EngramEngine`, registers the commands, the control-panel view, the ribbon icon, the settings tab, debounced file-change watchers, and (in M2) reconciles the local server on load/settings-change/unload. It implements the `SettingsHost` and `ControlPanelActions` interfaces so the settings tab and control panel stay decoupled (no import cycles).
-- `settings/settings-tab.ts` — renders the settings UI, validates the memory root on entry, and carries the server security warning.
+- `settings/setting-definitions.ts` — the settings tab **as data**: every setting, its control, its validation, and which rows are visible for the selected embedding provider. Imports `obsidian` for types only, so it is erased at build time and unit-tested in the Node environment like the rest of the core.
+- `settings/settings-tab.ts` — the thin shell over those definitions. It supplies what a description cannot: where a value is read from and written to (`getControlValue` / `setControlValue`, keyed by a dotted path), what happens after a change (a debounced commit, because a commit rebinds the server and reloads the index), and the warnings that accompany the riskier toggles. It still implements the pre-1.13 `display()` as well, because `minAppVersion` is 1.7.2 and Obsidian only renders declaratively from 1.13 on.
 - `ui/control-panel-view.ts` — a right-sidebar `ItemView` showing index stats and quick-action buttons. It talks to `main.ts` only through the `ControlPanelActions` interface.
 - `ui/*-modal.ts` — `SearchModal`, `AddMemoryModal`, `PendingMemoryModal`, and the small `PromptModal` / `TextDisplayModal` helpers.
 

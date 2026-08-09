@@ -52,8 +52,20 @@ describe("layering", () => {
   });
 
   it("keeps `obsidian` out of everything but the UI layer and its four adapters", () => {
+    // Type-only imports do not count, and the distinction is the whole point
+    // of the rule rather than a hole in it: `import type` is erased, so it
+    // creates no runtime dependency on the host and the file still loads in
+    // the Node test environment. `setting-definitions.ts` relies on exactly
+    // that — it names Obsidian's declarative-settings types while remaining a
+    // plain value this suite can build and assert over. A value import is what
+    // couples a module to the host, and that is still refused everywhere below.
     const importers = files
-      .filter((f) => /from "obsidian"/.test(f.text) || /require\("obsidian"\)/.test(f.text))
+      .filter((f) => {
+        const withoutTypeImports = f.text.replace(/import\s+type\s+[^;]*?from\s+"obsidian";/g, "");
+        return (
+          /from "obsidian"/.test(withoutTypeImports) || /require\("obsidian"\)/.test(withoutTypeImports)
+        );
+      })
       .map((f) => f.path.replace(/\\/g, "/"));
     const uiLayer = (p: string) => p.startsWith("src/ui/");
     const offenders = importers.filter((p) => !uiLayer(p) && !OBSIDIAN_ALLOWED.includes(p));

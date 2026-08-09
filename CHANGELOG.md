@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-08-09
+
+Settings are declarative, so every one of them turns up in Obsidian's settings search — plus the fixes from Obsidian's automated review of 0.9.9.
+
+### Added
+
+- **Settings now appear in Obsidian's settings search** (1.13 and later). The tab
+  is described declaratively via `getSettingDefinitions()`; a tab driven only by
+  `display()` is absent from that search, which for thirty settings is a real
+  thing to lose. Nothing moves and nothing is renamed — the same settings, in
+  the same order, now findable by typing.
+- Two behaviours the imperative tab could not manage: the memory root is
+  rejected **inline as you type** rather than by a notice after the fact, and
+  **Index text inside images** is visibly disabled until attachment indexing is
+  on, instead of silently doing nothing.
+
+### Changed
+
+- **`minAppVersion` stays 1.7.2.** Obsidian ignores the old `display()` as soon
+  as the declarative definitions exist, so 1.13+ renders the new way while older
+  apps keep the previous tab, unchanged. Raising the floor would have stranded
+  everyone below 1.13.
+- Internally the tab became data: `setting-definitions.ts` describes every
+  setting and is unit-tested (every setting bound to a control, no two controls
+  sharing a key, every key round-tripping through the settings object), where
+  the imperative UI it replaces could not be tested at all.
+
 ### Fixed
 
 - **Settings are read through this plugin's own interface, not `Plugin`.**
@@ -21,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Node-environment tests — but a predicate says so in the type system rather
   than asserting past it.
 - Dropped a redundant type assertion in `migrateSettings`.
+- The ZIP inflate loop no longer accounts for sizes with untyped values.
+  `pipeThrough` loses the element type, so the inflated chunks arrived as `any`
+  — and that arithmetic is what stands between a crafted archive and an
+  unbounded allocation.
 - **Releases 0.9.1 through 0.9.9 are now reachable from Obsidian's plugin
   browser.** Obsidian downloads a plugin from a GitHub release tagged
   identically to the version in `manifest.json`, and every 0.9.x release was
