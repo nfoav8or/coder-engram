@@ -54,7 +54,7 @@ export interface ServerSettings {
  * who wants every copy of a memory may still want long notes merged sensibly.
  * All default OFF.
  *
- * The hard output caps (`maxChars`, the related-link and summary budgets) are
+ * The hard output caps (`maxChars`, the related-link, project-list, and summary budgets) are
  * deliberately NOT here: they bound worst-case output size rather than
  * exercising judgement about content, so they always apply.
  */

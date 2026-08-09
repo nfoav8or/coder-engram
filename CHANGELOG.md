@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`list_projects` no longer returns an unbounded list.** It was the one read
+  tool with no cap on its output, because a list of project names reads as a
+  handful of short strings — but the names are not the plugin's to assume short
+  (200 characters where an agent supplies one, longer for a folder made by
+  hand). Measured, a vault with 1 000 such projects returned 197 KB from a
+  single call, roughly 49 000 tokens spent by the tool whose purpose is to save
+  them. The list is now clipped at 4 000 characters and says how many projects
+  are not shown, so ordinary vaults are unaffected and large ones degrade
+  honestly instead of flooding the agent.
+
 ## [0.9.7] — 2026-08-08
 
 One fix: the image-text setting takes effect when you toggle it, in both directions.

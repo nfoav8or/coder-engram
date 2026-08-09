@@ -229,6 +229,27 @@ describe("context tools", () => {
     expect(await registry.call("get_global_context", {}, ctx)).toContain("Profile");
     expect(await registry.call("list_projects", {}, ctx)).toContain("Demo");
   });
+
+  it("bounds the project list instead of returning every name", async () => {
+    // The list reads as a few short names, which is how it stayed the one read
+    // tool with no output bound — but names are not ours (accepted up to 200
+    // chars where an agent supplies one), so a vault with hundreds of projects
+    // returned tens of thousands of tokens from the tool meant to save them.
+    const seed: Record<string, string> = {};
+    for (let i = 0; i < 400; i++) {
+      const name = `P-${String(i).padStart(4, "0")}-${"n".repeat(150)}`;
+      seed[`Claude Code/Memory/Projects/${name}/overview.md`] = "# x\n\nbody.\n";
+    }
+    const { ctx } = makeContext(seed);
+    const out = await new ToolRegistry().call("list_projects", {}, ctx);
+    expect(out.length).toBeLessThan(4_500);
+    expect(out).toContain("more not shown");
+    // Truncation must not be silent about its own size: the count has to be
+    // the real remainder, or an agent reads the short list as the whole vault.
+    const omitted = Number(/([0-9]+) more not shown/.exec(out)?.[1]);
+    const shown = out.split("\n").filter((l) => l.startsWith("P-")).length;
+    expect(shown + omitted).toBe(400);
+  });
 });
 
 describe("reindex_vault rate limiting", () => {

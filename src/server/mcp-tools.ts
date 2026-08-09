@@ -134,6 +134,15 @@ const CONTEXT_MAX_CHARS = 50_000;
 // chars) while still showing ~26 deep, ~50 typical, or ~100 shallow links, so
 // ordinary notes list in full and only hubs are clipped.
 const RELATED_MAX_CHARS = 1_500;
+// Budget for the project list. It reads as a handful of short names, which is
+// how it ended up the only read tool returning its whole result — but the names
+// are not ours: `project` is accepted up to 200 chars where an agent supplies
+// one, and a folder created by hand can be longer still. Measured at that
+// length, 1 000 projects is 197 KB and 5 000 is 985 KB — roughly 49k and 246k
+// tokens of the agent's context, spent by the tool whose job is to save it.
+// 4 000 chars lists ~190 names of ordinary length in full, so only a vault with
+// hundreds of projects is clipped, and it is told exactly how many are missing.
+const LIST_PROJECTS_MAX_CHARS = 4_000;
 
 /**
  * Full heading breadcrumb for a chunk. `headingPath` holds ANCESTORS only (the
@@ -441,7 +450,9 @@ const getGlobalContextTool: Tool = {
 const listProjectsTool: Tool = {
   definition: {
     name: "list_projects",
-    description: "List the project names under the projects root.",
+    description:
+      `List the project names under the projects root. Clipped at ` +
+      `${LIST_PROJECTS_MAX_CHARS} characters, saying how many are not shown.`,
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   async handler(_args, ctx) {
@@ -450,7 +461,19 @@ const listProjectsTool: Tool = {
     // 3.5 ms at 20k) and it is spent on the app's main thread.
     ctx.rateLimiter.enforceWindow("list_projects", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
     const projects = await ctx.engine.listProjects();
-    return projects.length ? projects.join("\n") : "No projects yet.";
+    if (projects.length === 0) return "No projects yet.";
+    const kept: string[] = [];
+    let used = 0;
+    for (const name of projects) {
+      const cost = kept.length === 0 ? name.length : name.length + 1; // + "\n"
+      if (used + cost > LIST_PROJECTS_MAX_CHARS) break;
+      kept.push(name);
+      used += cost;
+    }
+    const omitted = projects.length - kept.length;
+    return omitted === 0
+      ? kept.join("\n")
+      : `${kept.join("\n")}\n\n…(clipped at ${LIST_PROJECTS_MAX_CHARS} chars; ${omitted} more not shown)`;
   },
 };
 
