@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.9] — 2026-08-08
+
+One security fix: an exclusion naming an accented folder, tag, or pattern could silently do nothing.
+
 ### Fixed
 
 - **An exclusion naming an accented folder, tag, or pattern no longer silently
