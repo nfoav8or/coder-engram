@@ -147,7 +147,7 @@ export const DEFAULT_SETTINGS: EngramSettings = {
  * dropped. Never throws — a corrupt settings blob degrades to defaults.
  */
 export function migrateSettings(raw: unknown): EngramSettings {
-  const data = (raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {}) as Partial<EngramSettings> & { server?: Partial<ServerSettings> };
+  const data = (raw && typeof raw === "object" ? raw : {}) as Partial<EngramSettings> & { server?: Partial<ServerSettings> };
 
   const merged: EngramSettings = {
     ...DEFAULT_SETTINGS,

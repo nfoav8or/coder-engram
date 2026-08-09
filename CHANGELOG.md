@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Settings are read through this plugin's own interface, not `Plugin`.**
+  Obsidian 1.13 added a `settings` property to `Plugin`, and the settings tab
+  held its host as `Plugin & SettingsHost` — so reading `settings` resolved to
+  Obsidian's, an API that does not exist on the 1.7.2 this plugin declares as
+  its minimum. Obsidian's automated review flags it as an error, and it is the
+  kind of mistake that only surfaces on an older app.
+- The OCR extractor narrows a vault entry with a type predicate instead of
+  casting to `TFile`. Structural narrowing is still the right call — `obsidian`
+  ships types only, so naming `TFile` in a value position would break the
+  Node-environment tests — but a predicate says so in the type system rather
+  than asserting past it.
+- Dropped a redundant type assertion in `migrateSettings`.
 - **Releases 0.9.1 through 0.9.9 are now reachable from Obsidian's plugin
   browser.** Obsidian downloads a plugin from a GitHub release tagged
   identically to the version in `manifest.json`, and every 0.9.x release was

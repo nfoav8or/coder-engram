@@ -25,7 +25,7 @@
  * docs/SECURITY.md rather than folded into general attachment indexing.
  */
 
-import { App, TFile } from "obsidian";
+import { App, TAbstractFile, TFile } from "obsidian";
 import { TextExtractor, attachmentTitle } from "../extract/text-extractor";
 import { withTimeout } from "../utils/timeout";
 
@@ -58,6 +58,19 @@ const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".bmp"];
  * image unindexed until it is edited.
  */
 const EXTRACT_TIMEOUT_MS = 300_000;
+
+/**
+ * Narrow a vault entry to a file.
+ *
+ * Structural rather than `instanceof TFile`, and deliberately a type predicate
+ * rather than a cast: `obsidian` ships types only, so naming `TFile` in a value
+ * position would turn an erased type-import into a runtime one and break the
+ * Node-environment unit tests, which stand in for the vault. A folder has no
+ * `stat`, which is the only distinction this needs.
+ */
+function isFile(entry: TAbstractFile | null): entry is TFile {
+  return entry !== null && "stat" in entry;
+}
 
 export class ObsidianOcrExtractor implements TextExtractor {
   /**
@@ -97,9 +110,8 @@ export class ObsidianOcrExtractor implements TextExtractor {
     try {
       if (typeof api.canFileBeExtracted === "function" && !api.canFileBeExtracted(path)) return null;
       const file = this.app.vault.getAbstractFileByPath(path);
-      // Duck-typed rather than `instanceof TFile`: a folder has no `stat`.
-      if (!file || !("stat" in file)) return null;
-      const text = (await withTimeout(api.extractText(file as TFile), EXTRACT_TIMEOUT_MS, path))?.trim();
+      if (!isFile(file)) return null;
+      const text = (await withTimeout(api.extractText(file), EXTRACT_TIMEOUT_MS, path))?.trim();
       if (!text) return null;
       return `# ${attachmentTitle(path)}\n\n${text}`;
     } catch {

@@ -20,11 +20,22 @@ export interface SettingsHost {
 }
 
 export class EngramSettingTab extends PluginSettingTab {
-  constructor(
-    app: App,
-    private readonly host: Plugin & SettingsHost,
-  ) {
-    super(app, host);
+  /**
+   * The same object as the `Plugin` handed to `super()`, held at its
+   * `SettingsHost` type on purpose.
+   *
+   * Obsidian 1.13 gave `Plugin` a `settings` property of its own. Reading
+   * `settings` off a `Plugin & SettingsHost` therefore resolves to Obsidian's,
+   * which does not exist on the 1.7.2 this plugin declares as its minimum —
+   * `obsidianmd/no-unsupported-api` flags it, and it is the kind of accident
+   * that only shows up on an older app. This plugin's settings come from this
+   * plugin, so read them through the interface that declares them.
+   */
+  private readonly host: SettingsHost;
+
+  constructor(app: App, plugin: Plugin & SettingsHost) {
+    super(app, plugin);
+    this.host = plugin;
   }
 
   private get s(): EngramSettings {
