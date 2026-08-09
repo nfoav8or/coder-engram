@@ -68,6 +68,53 @@ describe("VaultScanner filtering", () => {
     expect(notes.map((n) => n.path)).toEqual(["Notes/a.md"]);
   });
 
+  it("excludes an accented folder whichever Unicode form each side is in", async () => {
+    // macOS stores an accented filename DECOMPOSED; the same name typed into
+    // the settings box arrives COMPOSED. One name to a person and to the
+    // filesystem, two different strings to a comparison — so this failed in
+    // the unsafe direction, exactly like matching case exactly used to.
+    const nfc = "Privé"; // é as one codepoint
+    const nfd = "Privé"; // e + combining acute
+    expect(nfc).not.toBe(nfd);
+    for (const [onDisk, typed] of [
+      [nfd, nfc],
+      [nfc, nfd],
+    ]) {
+      const vault = new InMemoryVaultAdapter("v", {
+        [`${onDisk}/secret.md`]: "# Secret\n\nsalary.\n",
+        "Public/open.md": "# Open\n\npublic.\n",
+      });
+      const notes = await new VaultScanner(vault).scan(config({ excludedFolders: [typed] }));
+      expect(notes.map((n) => n.path)).toEqual(["Public/open.md"]);
+    }
+  });
+
+  it("excludes an accented tag and path pattern across Unicode forms too", async () => {
+    const nfc = "privé";
+    const nfd = "privé";
+    const tagged = new InMemoryVaultAdapter("v", {
+      "Notes/secret.md": `---\ntags: [${nfd}]\n---\n\n# Secret\n\nsalary.\n`,
+      "Notes/open.md": "# Open\n\npublic.\n",
+    });
+    const byTag = await new VaultScanner(tagged).scan(config({ excludedTags: [nfc] }));
+    expect(byTag.map((n) => n.path)).toEqual(["Notes/open.md"]);
+
+    const named = new InMemoryVaultAdapter("v", {
+      [`Notes/${nfd}-notes.md`]: "# Secret\n\nsalary.\n",
+      "Notes/open.md": "# Open\n\npublic.\n",
+    });
+    const byPattern = await new VaultScanner(named).scan(config({ excludedPathPatterns: [nfc] }));
+    expect(byPattern.map((n) => n.path)).toEqual(["Notes/open.md"]);
+  });
+
+  it("excludes a folder written with a leading ./ like every other path here", async () => {
+    // normalizeVaultRelativePath drops "." segments everywhere else, so a
+    // folder setting that keeps them is the one place "./Private" names
+    // nothing.
+    const notes = await new VaultScanner(adapter).scan(config({ excludedFolders: ["./Private"] }));
+    expect(notes.map((n) => n.path)).not.toContain("Private/secret.md");
+  });
+
   it("honors an excluded path pattern", async () => {
     const notes = await new VaultScanner(adapter).scan(config({ excludedPathPatterns: ["secret"] }));
     expect(notes.map((n) => n.path)).not.toContain("Private/secret.md");

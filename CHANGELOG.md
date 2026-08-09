@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An exclusion naming an accented folder, tag, or pattern no longer silently
+  does nothing.** macOS stores an accented filename decomposed (`e` plus a
+  combining accent) while the same name typed into the settings box arrives
+  composed (one codepoint) — one name to a person and to the filesystem, two
+  different strings to a comparison. All three filters compared the raw strings,
+  so `Privé` typed into excluded folders could match a folder of that exact name
+  on disk and leave its notes indexed and readable over the local server, with
+  nothing in the UI to say the exclusion had no effect. This is the same
+  failure direction that matching case exactly had before 0.9.2, and it is now
+  folded the same way. **If you exclude anything with an accent or non-Latin
+  script, check it once: an entry that was quietly doing nothing now takes
+  effect, and those notes leave the index on the next refresh.**
+- An excluded folder written as `./Private` now matches, like every other path
+  in the plugin — leading `./` and repeated slashes are dropped rather than
+  treated as part of the folder name.
+
 ## [0.9.8] — 2026-08-08
 
 One fix: the project list can no longer flood an agent's context.

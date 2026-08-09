@@ -7,8 +7,8 @@ The retrieval pipeline is four stages: **scan → chunk → index → retrieve**
 `VaultScanner.scan(config)` enumerates all Markdown files via the `VaultAdapter` and applies filters in order of cheapness:
 
 1. **Included folders** — an allowlist. Empty means the whole vault. A note must be under one of these folders to survive.
-2. **Excluded folders** — a denylist. Folder matching is segment-boundary aware, so `Archive` does not accidentally match `Archived Notes`, and case-insensitive, so `private` excludes `Private/` (matching the case exactly would fail open — the notes would stay indexed with nothing to say the exclusion did nothing). Included folders match the same way.
-3. **Excluded path patterns** — glob (`*` within a segment, `**` across slashes) or plain substring, matched case-insensitively against the full path. Intended for sensitive notes.
+2. **Excluded folders** — a denylist. Folder matching is segment-boundary aware, so `Archive` does not accidentally match `Archived Notes`, and case-insensitive, so `private` excludes `Private/` (matching the case exactly would fail open — the notes would stay indexed with nothing to say the exclusion did nothing). Unicode form is folded for the same reason: macOS stores an accented name decomposed while the settings box receives it composed, which are different strings but one folder. Leading `./` and repeated slashes are dropped, as everywhere else paths are handled. Included folders match the same way.
+3. **Excluded path patterns** — glob (`*` within a segment, `**` across slashes) or plain substring, matched against the full path ignoring case and Unicode form. Intended for sensitive notes.
 4. **Excluded tags** — requires reading the file and extracting metadata; a note carrying any excluded tag is dropped.
 
 Steps 1–3 are path-only (no file read); step 4 reads and parses each surviving note. Read/parse failures on individual notes are logged and skipped, never fatal. The output is a list of `ScannedNote` records (`path`, `mtime`, `content`, `metadata`).

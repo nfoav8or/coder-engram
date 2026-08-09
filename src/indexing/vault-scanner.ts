@@ -57,23 +57,47 @@ export function isUnchangedNote(note: ScanResult): note is UnchangedNote {
   return "unchanged" in note && note.unchanged === true;
 }
 
+/**
+ * Fold a folder setting to the form the path comparisons use. Drops the empty
+ * and `.` segments that `normalizeVaultRelativePath` drops everywhere else, so
+ * "./Private", "/Private/" and "Private" all name the same folder here as they
+ * do in the rest of the codebase.
+ */
 function normalizeFolder(folder: string): string {
-  const trimmed = folder.trim().replace(/^\/+|\/+$/g, "");
-  return trimmed;
+  return folder
+    .trim()
+    .split("/")
+    .filter((segment) => segment !== "" && segment !== ".")
+    .join("/");
+}
+
+/**
+ * Fold a value for FILTER COMPARISON — never for storing a path or reading a
+ * file, where the exact bytes on disk are what the adapter needs.
+ *
+ * Case folds because a user who types "private" for a folder named "Private"
+ * means that folder, and on macOS and Windows the filesystem folds case anyway.
+ *
+ * Unicode normalization folds for the same reason one step further out: macOS
+ * stores an accented filename DECOMPOSED (NFD — "e" plus a combining accent)
+ * while the same name typed into the settings box arrives COMPOSED (NFC, one
+ * codepoint). They are one name to a person and to the filesystem, but two
+ * different strings, so an exclusion naming an accented folder silently matched
+ * nothing and left those notes indexed and readable over the server — the same
+ * failure direction as matching case exactly.
+ */
+function foldForCompare(value: string): string {
+  return value.normalize("NFC").toLowerCase();
 }
 
 /**
  * True if `path` is inside `folder` (or equals it). Segment-boundary aware, and
- * case-INSENSITIVE like the tag and pattern filters beside it: a user who types
- * "private" for a folder named "Private" means that folder. Matching the case
- * exactly would silently index the notes they asked to keep out — and on macOS
- * and Windows, where the filesystem itself folds case, the two spellings are
- * the same folder anyway.
+ * folded (case + Unicode form) like the tag and pattern filters beside it.
  */
 function isUnderFolder(path: string, folder: string): boolean {
-  const f = normalizeFolder(folder).toLowerCase();
+  const f = foldForCompare(normalizeFolder(folder));
   if (f === "") return true;
-  const p = path.toLowerCase();
+  const p = foldForCompare(path);
   return p === f || p.startsWith(f + "/");
 }
 
@@ -94,18 +118,19 @@ const MAX_PATTERN_LENGTH = 256;
 const MAX_WILDCARDS = 12;
 
 export function matchesPathPattern(path: string, pattern: string): boolean {
-  const p = pattern.trim();
+  const p = foldForCompare(pattern.trim());
   if (p === "") return false;
+  const target = foldForCompare(path);
   if (p.includes("*")) {
     // Guard against pathological patterns (many wildcards → catastrophic
     // regex backtracking). Overly complex patterns degrade to a literal test.
     const wildcards = (p.match(/\*/g) ?? []).length;
     if (p.length > MAX_PATTERN_LENGTH || wildcards > MAX_WILDCARDS) {
-      return path.toLowerCase().includes(p.replace(/\*/g, "").toLowerCase());
+      return target.includes(p.replace(/\*/g, ""));
     }
-    return globToRegExp(p).test(path);
+    return globToRegExp(p).test(target);
   }
-  return path.toLowerCase().includes(p.toLowerCase());
+  return target.includes(p);
 }
 
 export class VaultScanner {
@@ -131,8 +156,8 @@ export class VaultScanner {
 
   private hasExcludedTag(metadata: NoteMetadata, excludedTags: string[]): boolean {
     if (excludedTags.length === 0) return false;
-    const noteTags = new Set(metadata.tags.map((t) => t.toLowerCase().replace(/^#/, "")));
-    return excludedTags.some((t) => noteTags.has(t.toLowerCase().replace(/^#/, "")));
+    const noteTags = new Set(metadata.tags.map((t) => foldForCompare(t).replace(/^#/, "")));
+    return excludedTags.some((t) => noteTags.has(foldForCompare(t).replace(/^#/, "")));
   }
 
   /** Content-level eligibility (tag exclusions) — used by the engine's
