@@ -1,6 +1,6 @@
 # Roadmap
 
-Coder Engram is built in milestones. Milestones 1 through 13 are complete (through v0.9.0); work since the last release is listed under "In progress", and anything not scheduled is under "Deferred / future".
+Coder Engram is built in milestones. Milestones 1 through 13 are complete (through v0.9.0), and the patch releases since are listed under "Patch releases since v0.9.0"; work not yet released is under "In progress", and anything not scheduled is under "Deferred / future".
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -108,6 +108,28 @@ Coder Engram is built in milestones. Milestones 1 through 13 are complete (throu
 - `minAppVersion` raised to 1.7.2, matching the `workspace.revealLeaf` the control panel actually calls.
 - Supply chain and packaging: signed build provenance on release assets, a `versions.json` release gate, checksum verification that works on macOS and refuses an asset it cannot account for, and one fewer dependency.
 - Test discipline: type-aware linting, an architecture test that enforces the layering rules, first coverage for the installer, and e2e checks for the two adapters no unit test can reach.
+
+## Patch releases since v0.9.0
+
+No new surface — nine releases of fixes found by auditing what was already shipped. Each is
+described in full in [CHANGELOG.md](../CHANGELOG.md); the short version:
+
+| Version | Fix |
+| --- | --- |
+| 0.9.1 | RTF extraction stopped walking a document one character at a time (19 MB: 1.2 s and 212 MB of heap → 91 ms and 23 MB, byte-identical output). |
+| 0.9.2 | An excluded folder typed in a different case silently indexed the notes it named. |
+| 0.9.3 | `list_projects` was the only tool with no rate limit. |
+| 0.9.4 | One empty note made every startup rewrite the whole index. |
+| 0.9.5 | Startup stopped re-reading every note in the vault (the index now records which scan config its mtimes were gathered under). |
+| 0.9.6 | That optimization was reaching only new users; an index from an older version never acquired the record. |
+| 0.9.7 | Toggling **Index text inside images** did nothing until an unrelated edit — including turning it *off*, which left extracted text searchable. |
+| 0.9.8 | `list_projects` was the only read tool with no output cap (1 000 projects returned 197 KB). |
+| 0.9.9 | An exclusion naming an accented folder, tag, or pattern silently matched nothing across macOS's decomposed filenames. |
+
+Three themes run through them, and they are worth stating because they are where the next
+bug probably is: a filter that fails **open** is invisible (0.9.2, 0.9.7, 0.9.9); a tool that
+looks cheap gets bounded last (0.9.3, 0.9.8); and an optimization is not delivered until it
+is verified on the state an *upgrading* user actually has on disk (0.9.6).
 
 ## In progress (unreleased)
 

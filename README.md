@@ -300,6 +300,7 @@ Every other attachment path — PDF, Office, RTF, plain text, Canvas — runs en
 - **M11 (done):** bounded by the unit you pay in — a per-file text ceiling, a corpus-wide budget that keeps a large vault's index serializable, and a section budget set by measured relevance.
 - **M12 (done):** the agent's context is your choice — the three output reductions became individual opt-in toggles, all off by default.
 - **M13 (done, v0.9.0):** untrusted files, safely — image text via plugin interop, bounds in time as well as size (PDF, OCR, and outbound HTTP each race a timer), four security fixes to existing paths, signed build provenance on release assets, and type-aware linting.
+- **v0.9.1 – v0.9.9 (current):** no new surface — nine patch releases of fixes found by auditing what was already shipped, including three privacy filters that failed open (folder case, image-text toggle, Unicode form), two unbounded surfaces on the one tool that looked too cheap to bound, and a startup optimization that reached only new users. See [docs/ROADMAP.md](docs/ROADMAP.md#patch-releases-since-v090).
 - **Future:** non-desktop support, scanned-PDF OCR, and alternative local vector stores.
 
 Details: [docs/ROADMAP.md](docs/ROADMAP.md).
