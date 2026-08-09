@@ -158,10 +158,11 @@ export class EngramEngine {
    * snapshot (not object compare) for the same aliasing reason as
    * lastEmbeddingKey. Empty = no scan yet → next refresh reads everything. */
   private lastScanConfigKey = "";
-  /** Scan config as of the last constructor/updateSettings call — detects a
-   * scan-relevant settings CHANGE (vs lastScanConfigKey, which tracks what the
-   * index was last scanned under). Own string state for the same in-place-
-   * mutation aliasing reason as lastEmbeddingKey. */
+  /** Scan-relevant settings as of the last constructor/updateSettings call —
+   * detects a settings CHANGE (vs lastScanConfigKey, which tracks what the
+   * index was last scanned under, and is a different, narrower key: see
+   * scanSettingsKey). Own string state for the same in-place-mutation aliasing
+   * reason as lastEmbeddingKey. */
   private lastScanSettingsKey: string;
 
   constructor(
@@ -173,7 +174,7 @@ export class EngramEngine {
   ) {
     this.settings = settings;
     this.lastEmbeddingKey = embeddingKey(settings);
-    this.lastScanSettingsKey = JSON.stringify(toScanConfig(settings));
+    this.lastScanSettingsKey = scanSettingsKey(settings);
     this.http = deps.http;
     this.extractors = deps.extractors ?? [];
     this.paths = EngramEngine.resolvePaths(settings);
@@ -368,8 +369,9 @@ export class EngramEngine {
    * @returns rootChanged — the memory root moved and the index was reset (the
    * host should reload/reindex); embeddingChanged — the embedding identity or
    * retrieval mode moved (the host should syncEmbeddings() in the background);
-   * scanConfigChanged — the indexing eligibility rules moved (the host should
-   * refresh so new exclusions actually drop notes from the index).
+   * scanConfigChanged — what the index should contain moved (the host should
+   * refresh so a new exclusion actually drops notes from the index, and
+   * switching image text off actually evicts what OCR already extracted).
    */
   updateSettings(settings: EngramSettings): {
     rootChanged: boolean;
@@ -383,7 +385,7 @@ export class EngramEngine {
     const nextEmbeddingKey = embeddingKey(settings);
     const embeddingChanged = nextEmbeddingKey !== this.lastEmbeddingKey;
     this.lastEmbeddingKey = nextEmbeddingKey;
-    const nextScanSettingsKey = JSON.stringify(toScanConfig(settings));
+    const nextScanSettingsKey = scanSettingsKey(settings);
     const scanConfigChanged = nextScanSettingsKey !== this.lastScanSettingsKey;
     this.lastScanSettingsKey = nextScanSettingsKey;
 
@@ -844,4 +846,27 @@ function embeddingKey(s: EngramSettings): string {
     s.embeddingApiKey,
     s.retrievalMode,
   ].join(" ");
+}
+
+/**
+ * Identity of every setting that changes what the index should CONTAIN — the
+ * single definition of "what forces a refresh". A change here means the host
+ * must refresh, or the setting silently does nothing until something unrelated
+ * triggers a scan.
+ *
+ * Wider than `toScanConfig`, which carries only what the scanner itself needs
+ * to judge eligibility. `indexImageText` is the difference: it never reaches
+ * the scanner (the OCR extractor reads it directly, reporting no extensions
+ * while off), yet turning it off must EVICT the text already extracted from
+ * images, and turning it on must extract. Leaving it out left both directions
+ * waiting on an unrelated trigger — including the eviction, and OCR text can be
+ * as sensitive as a note.
+ *
+ * Deliberately NOT the same string as the persisted scan-config key: that one
+ * gates the skip-unchanged fast path over markdown, which `indexImageText`
+ * cannot affect, so adding it there would force a pointless full re-read of
+ * every note on the first launch after this change.
+ */
+function scanSettingsKey(s: EngramSettings): string {
+  return JSON.stringify([toScanConfig(s), s.indexImageText]);
 }

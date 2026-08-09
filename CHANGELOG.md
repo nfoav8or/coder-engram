@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Toggling **Index text inside images** now takes effect immediately, in both
+  directions. The setting was missing from the set that tells the plugin a
+  refresh is needed, so turning it on indexed nothing and — more importantly —
+  turning it off left the text already read out of images in the index, still
+  searchable over the local server, until some unrelated edit happened to
+  trigger a scan. Every other setting that changes what the index should
+  contain already scheduled that refresh; this one did not.
+
 ## [0.9.6] — 2026-08-08
 
 One fix: the startup optimization from 0.9.5 reaches upgrading users, instead of only new ones.

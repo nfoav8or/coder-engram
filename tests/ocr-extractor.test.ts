@@ -142,4 +142,38 @@ describe("engine integration with a setting-gated extractor", () => {
     expect(await engine.search({ query: "kereru invoice" })).toHaveLength(0);
     expect(await adapter.read(cachePath)).not.toContain("kereru invoice");
   });
+
+  it("reports the image-text setting as a change the host must refresh for", async () => {
+    // The eviction above only happens if SOMETHING re-scans, and toggling this
+    // setting is the only thing that should have to. The plugin refreshes when
+    // updateSettings reports scanConfigChanged, so a false here means turning
+    // image text off leaves already-extracted OCR text searchable — over the
+    // MCP server included — until an unrelated edit happens to trigger a scan.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    adapter.seedBinary("Images/receipt.png", new Uint8Array([1, 2, 3]));
+    const settings = { ...DEFAULT_SETTINGS, indexAttachments: true, indexImageText: true };
+    const gated: TextExtractor = {
+      get extensions() {
+        return settings.indexImageText ? [".png"] : [];
+      },
+      async extract() {
+        return "# receipt\n\nkereru invoice total";
+      },
+    };
+    let t = 10_000;
+    const engine = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++, {
+      extractors: [gated],
+    });
+    await engine.reindex();
+    expect(await engine.search({ query: "kereru invoice" })).toHaveLength(1);
+
+    // Mutated in place, exactly as the settings tab does it.
+    settings.indexImageText = false;
+    expect(engine.updateSettings(settings).scanConfigChanged).toBe(true);
+    expect(engine.updateSettings(settings).scanConfigChanged).toBe(false); // settled
+
+    // And the refresh that report earns actually drops the text.
+    await engine.refresh();
+    expect(await engine.search({ query: "kereru invoice" })).toHaveLength(0);
+  });
 });
