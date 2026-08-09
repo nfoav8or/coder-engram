@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-08-09
+
+Housekeeping only: nothing about the plugin's behaviour changes. It exists so Obsidian's automated plugin review reports nothing that is not worth reading.
+
 ### Changed
 
 - Internal: the resolved Global-memory folder path is now `MemoryPaths.globalDir`
@@ -14,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   identifier as a reach for Node's `global` object — a false positive on a
   property name, but one that would be reported on every release. No behaviour
   and no stored data change.
+- The settings tab is now covered end-to-end in a real Obsidian: six checks
+  assert it renders from the declarative definitions rather than the legacy
+  path, that the API key field appears for the provider that sends one and for
+  neither of the others, that both secrets render masked, and that clicking a
+  control writes through to settings.
 
 ## [0.10.0] — 2026-08-09
 

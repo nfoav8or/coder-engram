@@ -122,7 +122,7 @@ Coder Engram is built in milestones. Milestones 1 through 14 are complete (throu
 Recorded in full, including the ones deliberately left alone. Reproduced locally with
 `eslint-plugin-obsidianmd`, run from the repo root so it can read `manifest.json`.
 
-**The 0.10.0 review carries no errors.** Everything in the Error and Warning columns of the
+**The 0.10.0 review carried no errors, and 0.10.1 clears the last false positive.** Everything in the Error and Warning columns of the
 0.9.9 review is resolved except the four entries marked "kept" or "not applicable" below,
 which are deliberate and expected to recur. Build verification passed again: the release
 `main.js` was reproduced byte-for-byte from the repository, and both it and `styles.css`
@@ -136,7 +136,7 @@ have verified attestations.
 | PluginSettingTab does not implement `getSettingDefinitions()` | Warning | **Fixed in 0.10.0** — this milestone. |
 | `display` is deprecated since 1.13.0 | Recommendation | **Kept deliberately.** It is the pre-1.13 fallback and is never called on 1.13+. Removing it would mean raising `minAppVersion` to 1.13.0 and stranding older users. |
 | Use `window.setTimeout()` / `window.clearTimeout()` (7 sites) | Warning | **Not applicable.** All seven are in the pure core and the server layer, which also run in the Node test environment (no `window`) and, for the server, under Node itself. No UI file uses a timer. The rule targets popout-window lifetimes, which these timers do not participate in. |
-| Avoid using `global` (`memory-types.ts:63`) | Warning | **False positive, silenced anyway.** The line was `global: string;`, a property of the `MemoryPaths` interface rather than Node's `global` — but the rule matches the bare identifier, so it would be reported on every release. The field is now `globalDir`, which costs four lines and keeps future reviews signal-only. |
+| Avoid using `global` (`memory-types.ts:63`) | Warning | **False positive, silenced anyway.** The line was `global: string;`, a property of the `MemoryPaths` interface rather than Node's `global` — but the rule matches the bare identifier, so it would be reported on every release. The field is now `globalDir` (shipped in 0.10.1), which costs four lines and keeps future reviews signal-only. |
 | Avoid unnecessary logging to console (`logger.ts`) | Warning | **Kept deliberately.** The logger is gated by the `debugLogging` setting; warnings and errors always emit because they are actionable, and every context object is redacted first. |
 | Release contains extra unsupported files (`SHA256SUMS`) | Recommendation | **Kept deliberately.** `scripts/install.sh` verifies downloads against it, and Obsidian simply does not download it. |
 | Vault enumeration (`getMarkdownFiles`) | Recommendation | **Inherent.** The plugin is a vault indexer; enumerating notes is the feature. Exclusions are applied before anything is read. |
@@ -167,7 +167,7 @@ is verified on the state an *upgrading* user actually has on disk (0.9.6).
 
 ## In progress (unreleased)
 
-- Nothing yet — 0.10.0 has just been cut.
+- Nothing yet — 0.10.1 has just been cut.
 
 ## Deferred / future
 
