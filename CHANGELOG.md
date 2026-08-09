@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A single empty note no longer makes every startup rewrite the whole index.** The skip-unchanged fast path is driven by a map of note mtimes that only ever lived in memory, so after a reload the mtimes were re-derived from the indexed chunks — and a note that chunks to nothing (empty, or only whitespace) leaves no chunk to derive from. It therefore read as newly added on the first refresh of every session, and "something was added" is exactly what makes the engine persist. On a large vault that is a multi-megabyte serialize and write on the app's main thread at every startup, caused by one blank note, and it never settled because the next launch re-derived the same way. The mtime map is now persisted alongside the index and restored on load. The field is optional, so an index written by an earlier version still loads and simply writes the map on its next persist — no forced reindex.
+
 ## [0.9.3] — 2026-08-08
 
 One hardening fix: the last tool that could be called without a rate limit now has one.

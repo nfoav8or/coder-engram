@@ -41,6 +41,13 @@ export interface IndexMetadata {
   builtAt: number;
   noteCount: number;
   chunkCount: number;
+  /**
+   * mtime per indexed note, so a reload restores the skip-unchanged fast path
+   * exactly. Optional on purpose: an index written before this existed simply
+   * falls back to chunk-derived mtimes, and writes this field on its next
+   * persist — no version bump, so nobody is forced into a full reindex.
+   */
+  noteMtimes?: Record<string, number>;
 }
 
 export interface VaultIndex {
@@ -139,8 +146,9 @@ export class IndexManager {
 
   /**
    * mtimes of the notes in the current index, for the scanner's skip-unchanged
-   * fast path. Falls back to chunk-derived mtimes right after load() (zero-chunk
-   * notes are then absent, so they are re-read once and settle — same contract
+   * fast path. Restored by load() from the persisted map; the chunk-derived
+   * fallback is only for an index written before that map existed (zero-chunk
+   * notes are absent there, so they are re-read once and settle — same contract
    * as refresh()).
    */
   getNoteMtimes(): Map<string, number> {
@@ -247,7 +255,12 @@ export class IndexManager {
   async persist(): Promise<void> {
     if (!this.index) return;
     await this.adapter.write(this.paths.chunksFile, JSON.stringify(this.index.chunks));
-    await this.adapter.write(this.paths.metadataFile, JSON.stringify(this.index.metadata, null, 2));
+    // Carry the mtime map so the next load starts from it rather than deriving
+    // mtimes from chunks — a note that produced no chunks leaves no trace there.
+    const metadata: IndexMetadata = this.noteMtimes
+      ? { ...this.index.metadata, noteMtimes: Object.fromEntries(this.noteMtimes) }
+      : this.index.metadata;
+    await this.adapter.write(this.paths.metadataFile, JSON.stringify(metadata, null, 2));
     // Placeholder embeddings shell; populated when a vector provider is enabled.
     if (!(await this.adapter.exists(this.paths.embeddingsFile))) {
       await this.adapter.write(
@@ -274,6 +287,14 @@ export class IndexManager {
         return null;
       }
       this.index = { metadata, chunks };
+      // Restore the mtime map when the index carries one. Without it, a note
+      // that chunks to nothing (empty, or whitespace only) is invisible in the
+      // chunk-derived fallback and reads as newly added on the first refresh of
+      // every session — which persists the whole index, tens of MB at scale, on
+      // the app's main thread, at every startup.
+      this.noteMtimes = metadata.noteMtimes
+        ? new Map(Object.entries(metadata.noteMtimes))
+        : null;
       return this.index;
     } catch (err) {
       this.logger.warn("Failed to load index; rebuild required", {

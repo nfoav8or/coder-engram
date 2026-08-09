@@ -164,6 +164,57 @@ describe("IndexManager incremental refresh", () => {
     expect(result2.added).toBe(0);
     expect(mgr.getChunks().map((c) => c.notePath)).toContain("Notes/empty.md");
   });
+
+  it("still treats it as unchanged after a persist and reload, not just in-session", async () => {
+    // The test above proves it settles WITHIN one manager, which is where the
+    // mtime map lives in memory. Across a restart the map was gone and mtimes
+    // were re-derived from chunks, where a zero-chunk note leaves no trace — so
+    // it read as added on the first refresh of every session, and "added" is
+    // what makes the engine persist the whole index. One empty note therefore
+    // rewrote tens of MB on the app's main thread at every startup, forever.
+    const adapter = new InMemoryVaultAdapter("v", {
+      "Notes/a.md": "# Alpha\nstable",
+      "Notes/empty.md": "",
+      "Notes/blank.md": "   \n\n  \n",
+    });
+    const scanner = new VaultScanner(adapter);
+    const first = new IndexManager(adapter, PATHS, { clock: nextClock });
+    first.build(await scanner.scan(scanConfig()));
+    await first.persist();
+
+    for (let session = 0; session < 2; session++) {
+      const reloaded = new IndexManager(adapter, PATHS, { clock: nextClock });
+      expect(await reloaded.load()).not.toBeNull();
+      const result = reloaded.refresh(await scanner.scan(scanConfig(), reloaded.getNoteMtimes()));
+      expect(result).toEqual({ added: 0, updated: 0, removed: 0, unchanged: 3 });
+      await reloaded.persist();
+    }
+  });
+
+  it("reloads an index written before the mtime map existed", async () => {
+    // Backward compatibility: the field is optional, so an index persisted by
+    // an older build must still load and work rather than force a rebuild.
+    const adapter = new InMemoryVaultAdapter("v", { "Notes/a.md": "# Alpha\nstable" });
+    const scanner = new VaultScanner(adapter);
+    const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
+    mgr.build(await scanner.scan(scanConfig()));
+    await mgr.persist();
+
+    const meta = JSON.parse(await adapter.read(PATHS.metadataFile)) as Record<string, unknown>;
+    expect(meta.noteMtimes).toBeDefined();
+    delete meta.noteMtimes;
+    await adapter.write(PATHS.metadataFile, JSON.stringify(meta));
+
+    const reloaded = new IndexManager(adapter, PATHS, { clock: nextClock });
+    expect(await reloaded.load()).not.toBeNull();
+    expect(reloaded.getNoteMtimes().get("Notes/a.md")).toBeDefined();
+    const result = reloaded.refresh(await scanner.scan(scanConfig(), reloaded.getNoteMtimes()));
+    expect(result.removed).toBe(0);
+    // And it writes the map going forward, so the next session is clean.
+    await reloaded.persist();
+    const after = JSON.parse(await adapter.read(PATHS.metadataFile)) as Record<string, unknown>;
+    expect(after.noteMtimes).toBeDefined();
+  });
 });
 
 describe("frontmatter-only notes (alias hubs)", () => {
