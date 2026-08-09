@@ -13,7 +13,7 @@ Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an a
 - **Hardened by default.** Server off by default, localhost-only, constant-time token auth, DNS-rebinding guards, a curated tool surface, and no generic file access or full-vault dump.
 - **Local-first, no lock-in.** Markdown is the source of truth; embeddings are opt-in (default is fully-offline lexical search); no cloud key for the default experience.
 
-> **Status:** v0.9.5. The local server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too — the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. Attachment indexing is likewise opt-in, and local for every format except image text — that one delegates OCR to the Text Extractor plugin, which fetches its language data on first use (see [Network use](#network-use)). See [CHANGELOG.md](CHANGELOG.md) for release history and [docs/ROADMAP.md](docs/ROADMAP.md) for what is still deferred.
+> **Status:** v0.9.6. The local server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too — the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. Attachment indexing is likewise opt-in, and local for every format except image text — that one delegates OCR to the Text Extractor plugin, which fetches its language data on first use (see [Network use](#network-use)). See [CHANGELOG.md](CHANGELOG.md) for release history and [docs/ROADMAP.md](docs/ROADMAP.md) for what is still deferred.
 
 ## What Coder Engram does
 

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.6] — 2026-08-08
+
+One fix: the startup optimization from 0.9.5 reaches upgrading users, instead of only new ones.
+
 ### Fixed
 
 - **The startup optimization added in 0.9.5 now actually reaches anyone upgrading to it.** It depends on the index recording which scan config its note mtimes were gathered under, and an index written by an earlier version has no such record. The first launch after upgrading learns it — but the engine only writes the index when the vault's *content* changed, and on a typical launch nothing has, so the record was never written and the next launch re-read the whole vault again, forever. The index now also persists when it is holding metadata the file lacks, so the upgrade lands on the first launch and every one after it is fast. Both fields are type-checked when read, too: `metadata.json` lives in the vault, so a sync conflict can corrupt it, and a bad value now falls back to the slow-but-correct path and is rewritten rather than trusted.
@@ -376,7 +380,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.9.5...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.9.6...HEAD
+[0.9.6]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.6
 [0.9.5]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.5
 [0.9.4]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.4
 [0.9.3]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.3
