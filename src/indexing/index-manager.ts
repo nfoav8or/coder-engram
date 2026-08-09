@@ -48,6 +48,11 @@ export interface IndexMetadata {
    * persist — no version bump, so nobody is forced into a full reindex.
    */
   noteMtimes?: Record<string, number>;
+  /**
+   * The scan config `noteMtimes` was gathered under, so a reload can tell
+   * whether those verdicts still apply instead of assuming they don't.
+   */
+  scanConfigKey?: string;
 }
 
 export interface VaultIndex {
@@ -118,10 +123,16 @@ export class IndexManager {
   /**
    * mtime of every note seen by the last build/refresh — INCLUDING zero-chunk
    * notes (empty files), which leave no trace in `chunks` and would otherwise
-   * read as "added" on every refresh. Rebuilt from chunks on load(), so a
-   * zero-chunk note reads as added once after a plugin reload, then settles.
+   * read as "added" on every refresh. Persisted with the index and restored by
+   * load(); only an index written before that existed falls back to chunks.
    */
   private noteMtimes: Map<string, number> | null = null;
+  /**
+   * The scan config those mtimes were gathered under. The map's verdicts are
+   * only trustworthy while the config is unchanged — an exclusion added since
+   * would make an "unchanged" stub stand in for a note that should now be gone.
+   */
+  private scanConfigKey: string | null = null;
   private readonly chunkOptions?: ChunkOptions;
   private readonly logger: Logger;
   private readonly clock: () => number;
@@ -151,6 +162,16 @@ export class IndexManager {
    * notes are absent there, so they are re-read once and settle — same contract
    * as refresh()).
    */
+  /** The scan config the current mtimes were gathered under, if it is known. */
+  getScanConfigKey(): string | null {
+    return this.scanConfigKey;
+  }
+
+  /** Record the scan config the caller just scanned under. */
+  setScanConfigKey(key: string): void {
+    this.scanConfigKey = key;
+  }
+
   getNoteMtimes(): Map<string, number> {
     if (this.noteMtimes) return this.noteMtimes;
     const map = new Map<string, number>();
@@ -258,7 +279,11 @@ export class IndexManager {
     // Carry the mtime map so the next load starts from it rather than deriving
     // mtimes from chunks — a note that produced no chunks leaves no trace there.
     const metadata: IndexMetadata = this.noteMtimes
-      ? { ...this.index.metadata, noteMtimes: Object.fromEntries(this.noteMtimes) }
+      ? {
+          ...this.index.metadata,
+          noteMtimes: Object.fromEntries(this.noteMtimes),
+          ...(this.scanConfigKey === null ? {} : { scanConfigKey: this.scanConfigKey }),
+        }
       : this.index.metadata;
     await this.adapter.write(this.paths.metadataFile, JSON.stringify(metadata, null, 2));
     // Placeholder embeddings shell; populated when a vector provider is enabled.
@@ -295,6 +320,7 @@ export class IndexManager {
       this.noteMtimes = metadata.noteMtimes
         ? new Map(Object.entries(metadata.noteMtimes))
         : null;
+      this.scanConfigKey = metadata.scanConfigKey ?? null;
       return this.index;
     } catch (err) {
       this.logger.warn("Failed to load index; rebuild required", {

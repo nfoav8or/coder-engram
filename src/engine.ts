@@ -443,12 +443,13 @@ export class EngramEngine {
   async loadIndex(): Promise<boolean> {
     const loaded = (await this.index.load()) !== null;
     if (loaded) {
-      // A loaded index's eligibility verdicts were scanned under an UNKNOWN
-      // config (e.g. a moved-back root's index persisted before an exclusion
-      // was added). Reset the scan-key so the next refresh re-reads and
-      // re-checks every note instead of trusting stubs against foreign
-      // verdicts.
-      this.lastScanConfigKey = "";
+      // A loaded index's eligibility verdicts only stand if the config that
+      // produced them is known AND unchanged — an exclusion added while the app
+      // was closed would otherwise let an "unchanged" stub speak for a note
+      // that should now be gone. The index records that config, so trust it
+      // when it matches and fall back to re-reading every note when it does
+      // not (or when the index predates the record).
+      this.lastScanConfigKey = this.index.getScanConfigKey() ?? "";
       // Bring the vector cache back into memory and rebuild the retriever so a
       // reloaded index can serve vector/hybrid results immediately.
       await this.embeddingStore.load();
@@ -466,6 +467,7 @@ export class EngramEngine {
     ];
     this.extractionCache.consumeReset(); // a full build re-chunks everything
     this.lastScanConfigKey = JSON.stringify(scanConfig);
+    this.index.setScanConfigKey(this.lastScanConfigKey);
     const built = this.index.build(notes);
     await this.index.persist();
     this.logger.info("Reindexed vault", {
@@ -496,6 +498,7 @@ export class EngramEngine {
     const attachmentNotes = await this.scanAttachments(scanConfig);
     const notes = [...mdNotes, ...attachmentNotes];
     this.lastScanConfigKey = scanKey;
+    this.index.setScanConfigKey(scanKey);
     // A discarded extraction cache (version bump / corrupt file) means the
     // re-extracted text can differ under an unchanged mtime — force those
     // notes past the index's mtime short-circuit once.

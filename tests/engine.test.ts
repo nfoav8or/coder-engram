@@ -227,6 +227,60 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
   });
 });
 
+describe("startup scan after a reload", () => {
+  const seed = () => {
+    const notes: Record<string, string> = {};
+    for (let i = 0; i < 12; i++) notes[`Notes/n${i}.md`] = `# Note ${i}\n\nBody ${i}.`;
+    notes["Private/secret.md"] = "# Secret\n\nhidden";
+    return notes;
+  };
+
+  /** Count reads of note files during `run`, ignoring index/cache reads. */
+  async function countNoteReads(adapter: InMemoryVaultAdapter, run: () => Promise<unknown>) {
+    let reads = 0;
+    const real = adapter.read.bind(adapter);
+    adapter.read = async (p: string) => {
+      if (!p.startsWith("Claude Code/")) reads++;
+      return real(p);
+    };
+    await run();
+    adapter.read = real;
+    return reads;
+  }
+
+  it("re-reads nothing when the scan config is unchanged", async () => {
+    // The index records the config its mtimes were gathered under, so a reload
+    // can tell the verdicts still apply. Without that record every startup
+    // re-read every note in the vault — real disk I/O in Obsidian, not a cached
+    // read, and it grows with the vault.
+    const adapter = new InMemoryVaultAdapter("v", seed());
+    let t = 10_000;
+    const settings = { ...DEFAULT_SETTINGS };
+    const first = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++);
+    await first.reindex();
+
+    const reloaded = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++);
+    expect(await reloaded.loadIndex()).toBe(true);
+    expect(await countNoteReads(adapter, () => reloaded.refresh())).toBe(0);
+  });
+
+  it("re-reads everything when an exclusion was added while it was closed", async () => {
+    // The safety half, and the reason the fast path was skipped outright before:
+    // an "unchanged" stub must not stand in for a note a NEW exclusion should
+    // now hide. A different config means the stored verdicts are foreign.
+    const adapter = new InMemoryVaultAdapter("v", seed());
+    let t = 10_000;
+    const first = new EngramEngine(adapter, { ...DEFAULT_SETTINGS }, NULL_LOGGER, () => t++);
+    await first.reindex();
+
+    const stricter = { ...DEFAULT_SETTINGS, excludedFolders: ["Private"] };
+    const reloaded = new EngramEngine(adapter, stricter, NULL_LOGGER, () => t++);
+    expect(await reloaded.loadIndex()).toBe(true);
+    expect(await countNoteReads(adapter, () => reloaded.refresh())).toBeGreaterThan(0);
+    expect(reloaded.getNoteChunks("Private/secret.md")).toEqual([]);
+  });
+});
+
 describe("settings backup", () => {
   it("never writes the server token or embedding API key into the vault", async () => {
     // The backup lives inside the vault, and a vault gets synced, backed up,
