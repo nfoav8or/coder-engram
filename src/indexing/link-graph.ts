@@ -41,14 +41,19 @@ export interface RelatedNotes {
 export function relatedNotes(notePath: string, chunks: IndexedChunk[]): RelatedNotes {
   const targetKey = linkKey(notePath);
 
-  // notePath -> its distinct outbound link targets (raw), collected across chunks.
+  // notePath -> its distinct outbound link targets (raw), collected across
+  // chunks. The de-duplication is load-bearing, not tidiness: `links` is
+  // note-level metadata copied onto EVERY chunk of the note, so a note that
+  // chunks into three carries its whole link list three times, and keying them
+  // straight from the chunks would re-key each one per chunk.
   const outByNote = new Map<string, Set<string>>();
   // basename key -> indexed note paths carrying that basename (collisions kept).
   const byKey = new Map<string, Set<string>>();
 
   for (const c of chunks) {
-    let keySet = byKey.get(linkKey(c.notePath));
-    if (!keySet) byKey.set(linkKey(c.notePath), (keySet = new Set()));
+    const noteKey = linkKey(c.notePath);
+    let keySet = byKey.get(noteKey);
+    if (!keySet) byKey.set(noteKey, (keySet = new Set()));
     keySet.add(c.notePath);
 
     let outs = outByNote.get(c.notePath);
