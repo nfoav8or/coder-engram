@@ -511,7 +511,11 @@ export class EngramEngine {
     // index files live inside the vault — its own writes re-fire the vault
     // watcher and schedule the next debounced refresh, sustaining a
     // refresh/serialize/write cycle with auto-indexing on.
-    if (result.added + result.updated + result.removed > 0) {
+    // Persist when the CONTENT changed, or when the index is holding metadata
+    // the file does not have yet (an index written before the mtime map or the
+    // scan key existed). Without the second clause an unchanged vault never
+    // writes, so the upgrade never lands and every launch re-reads everything.
+    if (result.added + result.updated + result.removed > 0 || this.index.needsMetadataPersist()) {
       await this.index.persist();
     }
     await this.embedIndex();

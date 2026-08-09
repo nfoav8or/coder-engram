@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The startup optimization added in 0.9.5 now actually reaches anyone upgrading to it.** It depends on the index recording which scan config its note mtimes were gathered under, and an index written by an earlier version has no such record. The first launch after upgrading learns it — but the engine only writes the index when the vault's *content* changed, and on a typical launch nothing has, so the record was never written and the next launch re-read the whole vault again, forever. The index now also persists when it is holding metadata the file lacks, so the upgrade lands on the first launch and every one after it is fast. Both fields are type-checked when read, too: `metadata.json` lives in the vault, so a sync conflict can corrupt it, and a bad value now falls back to the slow-but-correct path and is rewritten rather than trusted.
+
 ## [0.9.5] — 2026-08-08
 
 One optimization: launching the plugin stops re-reading the whole vault.

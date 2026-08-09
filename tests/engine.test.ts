@@ -264,6 +264,59 @@ describe("startup scan after a reload", () => {
     expect(await countNoteReads(adapter, () => reloaded.refresh())).toBe(0);
   });
 
+  it("upgrades an index that predates the scan key, on a vault where nothing changed", async () => {
+    // The shape every user of the previous version has on disk. The first
+    // launch cannot use the fast path (the config the mtimes were gathered
+    // under is unknown) — but it must WRITE what it learned, or nothing ever
+    // does: an unchanged vault reports no additions, the engine skips the
+    // persist, and every launch after it re-reads the whole vault forever.
+    const adapter = new InMemoryVaultAdapter("v", seed());
+    let t = 10_000;
+    const settings = { ...DEFAULT_SETTINGS };
+    const first = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++);
+    await first.reindex();
+
+    const metaPath = "Claude Code/Index/metadata.json";
+    const meta = JSON.parse(await adapter.read(metaPath)) as Record<string, unknown>;
+    delete meta.scanConfigKey;
+    await adapter.write(metaPath, JSON.stringify(meta));
+
+    const upgrade = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++);
+    await upgrade.loadIndex();
+    expect(await countNoteReads(adapter, () => upgrade.refresh())).toBeGreaterThan(0);
+
+    const next = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++);
+    await next.loadIndex();
+    expect(await countNoteReads(adapter, () => next.refresh())).toBe(0);
+  });
+
+  it("recovers when the stored metadata has the wrong types", async () => {
+    // metadata.json sits in the vault, so a sync conflict can corrupt it. Both
+    // fields must be type-checked rather than trusted, and the launch that
+    // rejects them has to write good ones back.
+    const adapter = new InMemoryVaultAdapter("v", seed());
+    let t = 10_000;
+    const settings = { ...DEFAULT_SETTINGS };
+    const first = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++);
+    await first.reindex();
+
+    const metaPath = "Claude Code/Index/metadata.json";
+    const meta = JSON.parse(await adapter.read(metaPath)) as Record<string, unknown>;
+    await adapter.write(
+      metaPath,
+      JSON.stringify({ ...meta, scanConfigKey: { not: "a string" }, noteMtimes: "nonsense" }),
+    );
+
+    const recovering = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++);
+    expect(await recovering.loadIndex()).toBe(true);
+    await recovering.refresh();
+
+    const next = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++);
+    await next.loadIndex();
+    expect(await countNoteReads(adapter, () => next.refresh())).toBe(0);
+    expect((await next.search({ query: "Body 3", limit: 3 })).length).toBeGreaterThan(0);
+  });
+
   it("re-reads everything when an exclusion was added while it was closed", async () => {
     // The safety half, and the reason the fast path was skipped outright before:
     // an "unchanged" stub must not stand in for a note a NEW exclusion should

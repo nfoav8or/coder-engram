@@ -133,6 +133,14 @@ export class IndexManager {
    * would make an "unchanged" stub stand in for a note that should now be gone.
    */
   private scanConfigKey: string | null = null;
+  /**
+   * The metadata on disk is missing or stale relative to what we now know —
+   * true after a load that found no (or an unusable) mtime map or scan key.
+   * Without this, an index whose CONTENT is unchanged never persists, so the
+   * newly-learned metadata is never written and the fast path it enables never
+   * engages: the very next launch re-reads the whole vault again, forever.
+   */
+  private metadataStale = false;
   private readonly chunkOptions?: ChunkOptions;
   private readonly logger: Logger;
   private readonly clock: () => number;
@@ -155,13 +163,6 @@ export class IndexManager {
     return this.index?.chunks ?? [];
   }
 
-  /**
-   * mtimes of the notes in the current index, for the scanner's skip-unchanged
-   * fast path. Restored by load() from the persisted map; the chunk-derived
-   * fallback is only for an index written before that map existed (zero-chunk
-   * notes are absent there, so they are re-read once and settle — same contract
-   * as refresh()).
-   */
   /** The scan config the current mtimes were gathered under, if it is known. */
   getScanConfigKey(): string | null {
     return this.scanConfigKey;
@@ -169,9 +170,28 @@ export class IndexManager {
 
   /** Record the scan config the caller just scanned under. */
   setScanConfigKey(key: string): void {
-    this.scanConfigKey = key;
+    if (key !== this.scanConfigKey) {
+      this.scanConfigKey = key;
+      this.metadataStale = true;
+    }
   }
 
+  /**
+   * True when persisting would write metadata the file does not already hold.
+   * The caller skips a no-op persist to avoid re-serializing a large index, so
+   * it needs this to know when the metadata alone is worth writing.
+   */
+  needsMetadataPersist(): boolean {
+    return this.metadataStale;
+  }
+
+  /**
+   * mtimes of the notes in the current index, for the scanner's skip-unchanged
+   * fast path. Restored by load() from the persisted map; the chunk-derived
+   * fallback is only for an index written before that map existed (zero-chunk
+   * notes are absent there, so they are re-read once and settle — same contract
+   * as refresh()).
+   */
   getNoteMtimes(): Map<string, number> {
     if (this.noteMtimes) return this.noteMtimes;
     const map = new Map<string, number>();
@@ -286,6 +306,7 @@ export class IndexManager {
         }
       : this.index.metadata;
     await this.adapter.write(this.paths.metadataFile, JSON.stringify(metadata, null, 2));
+    this.metadataStale = false;
     // Placeholder embeddings shell; populated when a vector provider is enabled.
     if (!(await this.adapter.exists(this.paths.embeddingsFile))) {
       await this.adapter.write(
@@ -317,10 +338,19 @@ export class IndexManager {
       // chunk-derived fallback and reads as newly added on the first refresh of
       // every session — which persists the whole index, tens of MB at scale, on
       // the app's main thread, at every startup.
-      this.noteMtimes = metadata.noteMtimes
-        ? new Map(Object.entries(metadata.noteMtimes))
-        : null;
-      this.scanConfigKey = metadata.scanConfigKey ?? null;
+      // Both fields are optional and come off disk, so a file written by an
+      // older version — or corrupted by a sync conflict — must degrade to the
+      // slow-but-correct path rather than be trusted for its type.
+      const storedMtimes =
+        metadata.noteMtimes && typeof metadata.noteMtimes === "object"
+          ? Object.entries(metadata.noteMtimes).filter(([, v]) => typeof v === "number")
+          : null;
+      this.noteMtimes = storedMtimes ? new Map(storedMtimes) : null;
+      this.scanConfigKey =
+        typeof metadata.scanConfigKey === "string" ? metadata.scanConfigKey : null;
+      // Anything we could not restore has to be written back, and an unchanged
+      // vault never persists on its own.
+      this.metadataStale = this.noteMtimes === null || this.scanConfigKey === null;
       return this.index;
     } catch (err) {
       this.logger.warn("Failed to load index; rebuild required", {
