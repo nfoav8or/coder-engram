@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5] — 2026-08-08
+
+One optimization: launching the plugin stops re-reading the whole vault.
+
 ### Changed
 
 - **Startup no longer re-reads every note in the vault.** The skip-unchanged scan was disabled after a reload on purpose: the index recorded which notes it had seen, but not which exclusion settings that verdict was made under, so trusting it could have let an "unchanged" note stand in for one a newly-added exclusion should hide. The safe answer was to re-read everything — measured at 2 000 file reads on a 2 000-note vault, at every launch, and those are real disk reads rather than cached ones. The index now records the scan config alongside the mtimes, so a reload can tell the verdicts still apply and skips straight to the fast path; when the config differs (an exclusion added while the app was closed) or is absent on an index from an earlier version, it re-reads and re-checks everything exactly as before.
@@ -368,7 +372,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.9.4...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.9.5...HEAD
+[0.9.5]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.5
 [0.9.4]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.4
 [0.9.3]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.3
 [0.9.2]: https://github.com/nfoav8or/coder-engram/releases/tag/0.9.2
