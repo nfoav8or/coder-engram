@@ -60,7 +60,11 @@ export const DEFAULT_LAYOUT: MemoryLayoutConfig = {
 export interface MemoryPaths {
   root: string;
   memory: string;
-  global: string;
+  /** Resolved path of the Global memory folder. Named `globalDir` rather than
+   * `global` because Obsidian's plugin review flags the bare identifier as a
+   * reach for Node's `global` object — a false positive on a property name,
+   * but one that would be reported on every release. */
+  globalDir: string;
   projects: string;
   inbox: string;
   index: string;
@@ -86,7 +90,7 @@ export function resolveMemoryPaths(
   layout: MemoryLayoutConfig = DEFAULT_LAYOUT,
 ): MemoryPaths {
   const memory = resolveInVault(root, layout.memoryFolder);
-  const global = resolveInVault(memory, layout.globalFolder);
+  const globalDir = resolveInVault(memory, layout.globalFolder);
   const projects = resolveInVault(memory, layout.projectsFolder);
   const inbox = resolveInVault(memory, layout.inboxFolder);
   const index = resolveInVault(root, layout.indexFolder);
@@ -95,7 +99,7 @@ export function resolveMemoryPaths(
   return {
     root: resolveInVault(root, ""),
     memory,
-    global,
+    globalDir,
     projects,
     inbox,
     index,
@@ -106,9 +110,9 @@ export function resolveMemoryPaths(
     embeddingsFile: resolveInVault(index, "embeddings.json"),
     settingsBackupFile: resolveInVault(config, "plugin-settings-backup.json"),
     globalFiles: {
-      profile: resolveInVault(global, "profile.md"),
-      preferences: resolveInVault(global, "preferences.md"),
-      conventions: resolveInVault(global, "conventions.md"),
+      profile: resolveInVault(globalDir, "profile.md"),
+      preferences: resolveInVault(globalDir, "preferences.md"),
+      conventions: resolveInVault(globalDir, "conventions.md"),
     },
   };
 }

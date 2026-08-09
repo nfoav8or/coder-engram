@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Internal: the resolved Global-memory folder path is now `MemoryPaths.globalDir`
+  rather than `MemoryPaths.global`. Obsidian's plugin review reads the bare
+  identifier as a reach for Node's `global` object — a false positive on a
+  property name, but one that would be reported on every release. No behaviour
+  and no stored data change.
+
 ## [0.10.0] — 2026-08-09
 
 Settings are declarative, so every one of them turns up in Obsidian's settings search — plus the fixes from Obsidian's automated review of 0.9.9.

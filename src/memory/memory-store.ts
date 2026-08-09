@@ -47,7 +47,7 @@ export class MemoryStore {
 
   /** Ensure base folders, global files, and an empty inbox exist. */
   async ensureScaffold(): Promise<void> {
-    await this.adapter.ensureFolder(this.paths.global);
+    await this.adapter.ensureFolder(this.paths.globalDir);
     await this.adapter.ensureFolder(this.paths.projects);
     await this.adapter.ensureFolder(this.paths.inbox);
     await this.adapter.ensureFolder(this.paths.index);
