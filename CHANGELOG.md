@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.8] — 2026-08-08
+
+One fix: the project list can no longer flood an agent's context.
+
 ### Fixed
 
 - **`list_projects` no longer returns an unbounded list.** It was the one read
