@@ -306,3 +306,37 @@ describe("LocalServer over a real socket", () => {
     void addr;
   });
 });
+
+describe("rate limiting across requests", () => {
+  /**
+   * The limiter is a field on the server, but `buildProtocolDeps` runs per
+   * request and assembles the ToolContext three lines from the per-request
+   * `settings` — so a limiter constructed there instead would look right and
+   * enforce nothing, since each request would start a fresh window. The unit
+   * tests all hand-build a ToolContext, so none of them would notice.
+   *
+   * `reindex_vault` has a cooldown rather than a window, which makes this
+   * decisive in two calls: the second must be refused because the first was
+   * remembered.
+   */
+  it("remembers a call from an earlier request", async () => {
+    const { addr } = await startServer({}, { "Notes/a.md": "# Alpha\ncontent" });
+    const call = () =>
+      raw(addr.port, {
+        body: RPC("tools/call", { name: "reindex_vault", arguments: {} }),
+      });
+
+    const first = await call();
+    expect(first.status).toBe(200);
+    const firstResult = (JSON.parse(first.body) as { result: { isError: boolean } }).result;
+    expect(firstResult.isError, "the first reindex should be allowed").toBe(false);
+
+    const second = await call();
+    expect(second.status).toBe(200);
+    const secondResult = (
+      JSON.parse(second.body) as { result: { isError: boolean; content: { text: string }[] } }
+    ).result;
+    expect(secondResult.isError, "the cooldown did not survive into the next request").toBe(true);
+    expect(secondResult.content[0].text).toMatch(/Rate limited/);
+  });
+});
