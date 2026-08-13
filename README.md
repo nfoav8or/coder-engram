@@ -34,7 +34,7 @@ Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an a
 
 ### Retrieval
 
-- **Offline BM25 lexical search** with heading-match boost and folder / tag / project / recency filters. No API key, no network.
+- **Offline BM25 lexical search** with heading-match boost and folder / tag / project / recency filters. No API key, no network. Tokenization is Unicode-aware, so accented and non-Latin notes are searchable and the same word matches whichever encoding it arrived in.
 - **Optional vector and hybrid retrieval.** Cosine-similarity vector search and a hybrid retriever fusing lexical + vector rankings with Reciprocal Rank Fusion (the default when embeddings are configured). With no provider, or an unreachable one, retrieval silently stays lexical — vectors are never faked and never sit on the critical path.
 - **Matches on filenames, aliases, and headings**, not just body text, so a note named `Quartzine Protocol.md` is findable by its name and an alias-only hub note is reachable at all.
 - **Result pages built for an agent's context budget**: precise line ranges, modified dates for staleness judgement, and densest-window snippets. Three **Context savings** toggles — collapse near-duplicate hits, cap one note's share of a page, merge overlapping passages — are each opt-in and off by default, because each chooses what the agent doesn't need and can hide something you wanted to see.
@@ -322,6 +322,7 @@ Every other attachment path — PDF, Office, RTF, plain text, Canvas — runs en
 
 - **`summarize_note` is extractive, not abstractive.** It selects the note's own sentences; there is no LLM/generative backend, so it never rewrites or paraphrases. It also only works on notes that are in the index.
 - **Desktop only.** `isDesktopOnly: true`.
+- **Scripts written without spaces are indexed but not word-segmented.** Lexical search tokenizes CJK text as one token per run rather than per word, so it matches an identical query but not a substring of one. Real segmentation needs a dictionary this plugin does not bundle. Every other script tokenizes per word. Stopword removal is English-only.
 - Attachment indexing covers born-digital **PDF text, Microsoft Office (docx/pptx/xlsx/rtf), LibreOffice (odt/odp/ods), plain text (txt/csv), and Canvas text cards** (opt-in). **Text inside images** is a separate opt-in that needs the Text Extractor plugin installed; without it, images stay unindexed. Scanned/image-only PDFs still yield no text either way — Text Extractor's own PDF OCR path is not used, as its README flags it as unreliable. Spreadsheet numeric cells are skipped (text cells and sheet names are indexed).
 
 ## Roadmap

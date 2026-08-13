@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Notes that are not in English are searchable.** Lexical search split words on
+  anything outside `a-z0-9`, which treated every accented or non-Latin character
+  as a separator. German "Müller Straße" was indexed as `ller`, `stra`; Russian,
+  Greek, Japanese, Chinese and Hebrew notes yielded **no search terms at all**,
+  so they could never be found by the offline search that is the default and the
+  only mode needing no network. Words are now split on letters and numbers in
+  any script. English results are unchanged — the relevance eval scores
+  identically before and after — and no reindex is required. Scripts written
+  without spaces (CJK) are indexed as one term per run rather than per word,
+  which finds an identical query but not a substring of one; that limit is now
+  stated in the README.
+- **The same word matches whichever encoding it arrived in.** Accented text
+  reaches the plugin composed when typed and decomposed when it came from a
+  macOS path or filename. The two render identically but produced different
+  search terms (`café` became `caf` or `cafe`), so a note could fail to match a
+  query that was the same word.
+
 - **The review inbox no longer shows two cards that look identical.** Accented
   text reaches the plugin in two encodings that render the same: decomposed when
   it came from a path or filename read on macOS, composed when typed or pasted.

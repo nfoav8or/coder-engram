@@ -13,10 +13,31 @@ const STOPWORDS = new Set([
 /** Lowercase, split on non-word chars, drop stopwords and 1-char tokens. */
 export function tokenize(text: string): string[] {
   return text
+    .normalize("NFC")
     .toLowerCase()
-    .split(/[^a-z0-9]+/)
+    .split(NON_WORD)
     .filter((t) => t.length >= 2 && !STOPWORDS.has(t));
 }
+
+/**
+ * Anything that is not a letter or a number, in any script.
+ *
+ * An ASCII-only class (`[^a-z0-9]`) made every accented or non-Latin character
+ * a separator, which did not merely degrade those languages — it erased them.
+ * "Müller Straße" tokenized to `ller`, `stra`, `geb`; Russian, Greek, Japanese,
+ * Chinese and Hebrew text produced *no tokens at all*, so those notes could not
+ * be found by the offline lexical search that is this plugin's default and only
+ * no-network mode. Composed and decomposed spellings also tokenized differently
+ * ("café" → `caf` or `cafe` depending on where the text came from), so a note
+ * could fail to match a query that was the same word.
+ *
+ * For ASCII text this is exactly equivalent to the old class, so English
+ * relevance is unchanged — the golden-query eval scores the same before and
+ * after. Scripts written without spaces (CJK) become one token per run rather
+ * than per word: enough to index and to match an identical query, short of real
+ * word segmentation, which needs a dictionary this plugin does not carry.
+ */
+const NON_WORD = /[^\p{L}\p{N}]+/u;
 
 /**
  * Tokenize a chunk's text, memoized by chunk identity. `IndexManager` keeps the
@@ -97,7 +118,12 @@ export interface TermMatch {
 export function findTermMatches(text: string, terms: string[]): TermMatch[] {
   const clean = [...new Set(terms.map((t) => t.toLowerCase()).filter((t) => t.length > 0))];
   if (clean.length === 0) return [];
-  const pattern = new RegExp(`(?<![a-z0-9])(?:${clean.map(escapeRegExp).join("|")})(?![a-z0-9])`, "gi");
+  // Boundaries must use the same letter/number definition as `tokenize`, or a
+  // term BM25 scored would fail to highlight next to an accented character.
+  const pattern = new RegExp(
+    `(?<![\\p{L}\\p{N}])(?:${clean.map(escapeRegExp).join("|")})(?![\\p{L}\\p{N}])`,
+    "giu",
+  );
   const matches: TermMatch[] = [];
   for (const m of text.matchAll(pattern)) {
     const start = m.index ?? 0;
@@ -113,7 +139,11 @@ export function findTermMatches(text: string, terms: string[]): TermMatch[] {
  * Falls back to the head of the text when nothing matches.
  */
 export function buildSnippet(text: string, queryTerms: string[], window = 220): string {
-  const flat = text.replace(/\s+/g, " ").trim();
+  // Normalize once, then both match and slice against the same string: query
+  // terms arrive composed (via `tokenize`), so matching them against decomposed
+  // source text would find nothing, and normalizing only for the match would
+  // shift every offset used below.
+  const flat = text.normalize("NFC").replace(/\s+/g, " ").trim();
   if (flat.length <= window) return flat;
 
   const matches = findTermMatches(flat, queryTerms);

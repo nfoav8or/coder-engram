@@ -245,3 +245,54 @@ describe("buildSnippet", () => {
     expect(snippet.includes("restart")).toBe(false);
   });
 });
+
+describe("tokenize beyond ASCII", () => {
+  /**
+   * The class was `[^a-z0-9]`, which made every accented or non-Latin character
+   * a separator. That did not degrade those languages, it erased them: whole
+   * scripts produced no tokens, so notes written in them could not be found by
+   * the offline lexical search that is this plugin's default and only
+   * no-network mode.
+   */
+  it("keeps letters from any script instead of splitting on them", () => {
+    expect(tokenize("Müller Straße Gebäude")).toEqual(["müller", "straße", "gebäude"]);
+    expect(tokenize("el niño pequeño")).toEqual(["el", "niño", "pequeño"]);
+    expect(tokenize("развёртывание в полночь")).toEqual(["развёртывание", "полночь"]);
+    expect(tokenize("πριν τα μεσάνυχτα")).toEqual(["πριν", "τα", "μεσάνυχτα"]);
+    expect(tokenize("פריסה בחצות")).toEqual(["פריסה", "בחצות"]);
+  });
+
+  it("gives the same tokens whichever encoding the text arrived in", () => {
+    // Built with normalize(): the two forms render identically, so writing them
+    // as literals risks an editor folding them into one and asserting nothing.
+    const words = "le café ferme à minuit";
+    expect(words.normalize("NFC")).not.toBe(words.normalize("NFD"));
+    expect(tokenize(words.normalize("NFD"))).toEqual(tokenize(words.normalize("NFC")));
+    expect(tokenize(words.normalize("NFC"))).toContain("café");
+  });
+
+  it("leaves ASCII tokenization exactly as it was", () => {
+    // The control on the change: English relevance must not move, and the
+    // golden-query eval scores identically before and after.
+    expect(tokenize("The deploy runs at midnight, v2.")).toEqual(["deploy", "runs", "midnight", "v2"]);
+    expect(tokenize("snake_case and kebab-case")).toEqual(["snake", "case", "kebab", "case"]);
+  });
+
+  it("indexes a space-free script as one token per run, not zero", () => {
+    // Short of real word segmentation (which needs a dictionary this plugin
+    // does not carry), but enough to index and to match an identical query.
+    expect(tokenize("午夜部署")).toEqual(["午夜部署"]);
+  });
+
+  it("highlights and snippets a decomposed source with composed terms", () => {
+    // Query terms arrive composed via tokenize; source text read from a macOS
+    // path may be decomposed. buildSnippet normalizes once so the match offsets
+    // and the slice agree.
+    const body = `${"x".repeat(400)} le café ferme à minuit ${"y".repeat(400)}`.normalize("NFD");
+    const snippet = buildSnippet(body, tokenize("café"));
+    expect(snippet).toContain("café".normalize("NFC"));
+    expect(findTermMatches("le café ferme".normalize("NFC"), ["café"])).toHaveLength(1);
+    // "caf" is not a whole token inside "café" once é counts as a letter.
+    expect(findTermMatches("le café ferme".normalize("NFC"), ["caf"])).toHaveLength(0);
+  });
+});
