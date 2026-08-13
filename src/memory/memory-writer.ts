@@ -144,10 +144,6 @@ export class MemoryWriter {
   /** See InboxLock: shared when the caller supplies one, private otherwise. */
   private readonly inboxLock: InboxLock;
 
-  private enqueueInbox<T>(op: () => Promise<T>): Promise<T> {
-    return this.inboxLock.run(op);
-  }
-
   /**
    * Append a reviewable entry to the pending-memory inbox. Always available;
    * this is the safe default for both UI and server writes.
@@ -170,7 +166,7 @@ export class MemoryWriter {
     if (!isInsideRoot(this.paths.root, target)) {
       throw new PathSecurityError("Inbox path escapes the memory root");
     }
-    return this.enqueueInbox(async () => {
+    return this.inboxLock.run(async () => {
       if (!(await this.adapter.exists(target))) {
         await this.adapter.write(target, INBOX_HEADER + block);
         this.logger.info("Proposed memory to inbox", { type: entry.type, project: entry.project });
@@ -248,7 +244,7 @@ export class MemoryWriter {
     if (!isInsideRoot(this.paths.root, destination)) {
       throw new PathSecurityError("Apply destination escapes the memory root");
     }
-    return this.enqueueInbox(async () => {
+    return this.inboxLock.run(async () => {
       const target = this.paths.pendingMemoryFile;
       if (!(await this.adapter.exists(target))) {
         throw new ConfigError("The pending-memory inbox no longer exists.");
@@ -281,7 +277,7 @@ export class MemoryWriter {
 
   /** Remove a reviewed entry from the inbox without writing it anywhere. */
   async discardPending(entry: PendingEntry): Promise<void> {
-    await this.enqueueInbox(async () => {
+    await this.inboxLock.run(async () => {
       const target = this.paths.pendingMemoryFile;
       if (!(await this.adapter.exists(target))) {
         throw new ConfigError("The pending-memory inbox no longer exists.");
