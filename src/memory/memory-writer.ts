@@ -70,21 +70,30 @@ export class InboxLock {
 }
 
 /**
- * Content key for inbox dedup: case-folded with runs of whitespace collapsed.
+ * Content key for inbox dedup: Unicode-normalized, case-folded, with runs of
+ * whitespace collapsed.
  *
  * An agent re-proposing a fact across sessions rarely reproduces its own
  * wording byte-for-byte — it re-wraps a line, indents differently, or varies
  * capitalisation — and byte-equality treats each of those as a new memory, so
  * the inbox accumulates entries a reviewer has to recognise as the same fact.
- * Normalising only whitespace and case keeps this an EXACT comparison of the
- * words themselves: two proposals collide here only when they say the same
- * thing, never merely a similar one. Fuzzy (token-overlap) matching is
- * deliberately not used — suppressing a proposal that carries genuinely new
- * detail loses information permanently, which is far worse than a duplicate
- * a human can dismiss in one click.
+ * Normalising only whitespace, case, and Unicode form keeps this an EXACT
+ * comparison of the words themselves: two proposals collide here only when they
+ * say the same thing, never merely a similar one. Fuzzy (token-overlap)
+ * matching is deliberately not used — suppressing a proposal that carries
+ * genuinely new detail loses information permanently, which is far worse than a
+ * duplicate a human can dismiss in one click.
+ *
+ * NFC matters because the same accented text reaches this function in two
+ * encodings depending on where it came from: a path or filename read on macOS
+ * arrives decomposed, the same words typed or pasted elsewhere arrive composed.
+ * They render identically, so a reviewer sees two cards that look the same and
+ * cannot tell why both are there. Normalising form cannot suppress real detail
+ * — the two encodings ARE the same characters — so it costs the guarantee above
+ * nothing.
  */
 function contentKey(content: string): string {
-  return content.trim().replace(/\s+/g, " ").toLowerCase();
+  return content.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 /** Two proposals are the "same memory" for dedup when their content (normalized
@@ -95,7 +104,9 @@ function isSameMemory(existing: PendingEntry, entry: MemoryEntry): boolean {
   return (
     contentKey(existing.content) === contentKey(entry.content) &&
     existing.type === entry.type &&
-    (existing.project ?? "") === (entry.project ?? "")
+    // Same reason as contentKey: the project name reaching an agent from a
+    // macOS working-directory path is decomposed, the one a user types is not.
+    (existing.project ?? "").normalize("NFC") === (entry.project ?? "").normalize("NFC")
   );
 }
 

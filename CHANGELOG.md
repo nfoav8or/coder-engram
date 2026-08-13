@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The review inbox no longer shows two cards that look identical.** Accented
+  text reaches the plugin in two encodings that render the same: decomposed when
+  it came from a path or filename read on macOS, composed when typed or pasted.
+  Proposal de-duplication compared them as different words, so the same fact
+  proposed from both sources opened a second review card with nothing on screen
+  to explain why. Both encodings are now normalized before the comparison, which
+  cannot suppress a proposal carrying real detail — they are the same
+  characters.
+
 ## [0.10.3] — 2026-08-13
 
 Four fixes, no new surface and no behaviour change for a healthy vault. Three of them concern

@@ -30,7 +30,7 @@ Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an a
 
 - **Review inbox by default.** Every memory an agent proposes lands in `pending-memory.md` as a reviewable card showing its resolved destination, with per-entry **Apply**, **Edit & apply**, and **Discard**. Applying appends into the destination memory file and removes the entry from the inbox. Promotion is desktop-UI-only — never exposed over the network — always append-only, and validated inside the memory root.
 - **Structured global / project / session memory** as plain Markdown under `Claude Code/`: project overview, architecture, decisions, tasks, and open questions, plus timestamped session notes and global profile / preferences / conventions.
-- **De-duplicated proposals.** A repeat of a pending entry is not appended again, so a looping agent can't flood the inbox. Content is compared with whitespace collapsed and case folded — an exact match on the words, so a restatement that adds real detail is kept rather than silently dropped.
+- **De-duplicated proposals.** A repeat of a pending entry is not appended again, so a looping agent can't flood the inbox. Content is compared with whitespace collapsed, case folded, and Unicode form normalized (so accented text does not read as new just because it came from a macOS path) — an exact match on the words, so a restatement that adds real detail is kept rather than silently dropped.
 
 ### Retrieval
 

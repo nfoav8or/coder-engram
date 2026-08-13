@@ -86,6 +86,34 @@ describe("MemoryWriter.proposeToInbox", () => {
     expect(inbox.match(/## Pending Memory:/g)?.length).toBe(1);
   });
 
+  it("de-duplicates a restatement differing only in Unicode form", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+
+    // Built with normalize() rather than written as literals: the two forms
+    // render identically, so a literal pair can silently become one string in
+    // an editor and leave this asserting nothing.
+    const words = "The café deploy runs at midnight";
+    const project = "Café Project";
+    expect(words.normalize("NFC")).not.toBe(words.normalize("NFD"));
+
+    const composed = await writer.proposeToInbox(
+      entry({ content: words.normalize("NFC"), project: project.normalize("NFC") }),
+    );
+    expect(composed.duplicate).toBe(false);
+
+    // The same fact arriving from a macOS path or filename is decomposed. It is
+    // the same characters, so it must collide rather than open a second card
+    // the reviewer cannot tell apart from the first.
+    const decomposed = await writer.proposeToInbox(
+      entry({ content: words.normalize("NFD"), project: project.normalize("NFD") }),
+    );
+    expect(decomposed.duplicate).toBe(true);
+
+    const inbox = await adapter.read(composed.path);
+    expect(inbox.match(/## Pending Memory:/g)?.length).toBe(1);
+  });
+
   it("keeps a proposal that adds detail to a pending one", async () => {
     const adapter = new InMemoryVaultAdapter("v", {});
     const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
