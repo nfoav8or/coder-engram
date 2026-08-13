@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **An excluded tag written in any script now actually excludes.** Inline
+  `#tags` were recognized with an ASCII-only pattern, so `#privé` was read as
+  the tag `priv` and `#личное` as no tag at all. Tag exclusion is how you keep a
+  note away from the agent — and because the tag the parser saw was not the tag
+  you excluded, the filter failed open: the note was indexed and reachable over
+  the local server. Frontmatter tags were never affected, which is why the
+  earlier Unicode-form fix in 0.9.9 did not reveal this. Fixing the parser alone
+  would have left those notes sitting in your existing index, so this release
+  rebuilds the index once on first load to drop them — expect one reindex.
+
 ### Fixed
 
 - **Notes that are not in English are searchable.** Lexical search split words on

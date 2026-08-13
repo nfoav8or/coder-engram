@@ -107,6 +107,28 @@ describe("VaultScanner filtering", () => {
     expect(byPattern.map((n) => n.path)).toEqual(["Notes/open.md"]);
   });
 
+  /**
+   * The accented-tag test above uses FRONTMATTER tags, which always parsed
+   * correctly — which is exactly why the inline path stayed broken through the
+   * 0.9.9 Unicode-form fix. Inline tags were harvested with an ASCII-only
+   * class, so `#privé` became `priv` and `#личное` became nothing, and the
+   * exclusion silently failed open: a note the user marked to keep away from
+   * the agent was indexed and served anyway.
+   */
+  it("excludes a note carrying an INLINE tag written in any script", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {
+      "Notes/ascii.md": "# A\n\nsalary #private\n",
+      "Notes/accented.md": "# B\n\nsalary #privé\n",
+      "Notes/decomposed.md": `# C\n\nsalary #${"privé".normalize("NFD")}\n`,
+      "Notes/russian.md": "# D\n\nsalary #личное\n",
+      "Notes/open.md": "# Open\n\npublic.\n",
+    });
+    const scanned = await new VaultScanner(adapter).scan(
+      config({ excludedTags: ["private", "privé".normalize("NFC"), "личное"] }),
+    );
+    expect(scanned.map((n) => n.path)).toEqual(["Notes/open.md"]);
+  });
+
   it("excludes a folder written with a leading ./ like every other path here", async () => {
     // normalizeVaultRelativePath drops "." segments everywhere else, so a
     // folder setting that keeps them is the one place "./Private" names

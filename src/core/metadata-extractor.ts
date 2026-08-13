@@ -18,7 +18,22 @@ export interface NoteMetadata {
 }
 
 const FRONTMATTER_FENCE = /^---\s*$/;
-const INLINE_TAG = /(^|[\s(])#([A-Za-z0-9_][A-Za-z0-9_/-]*)/g;
+/**
+ * An inline `#tag`, using Obsidian's own character rules.
+ *
+ * Letters and numbers are matched in **any script**, because an ASCII-only
+ * class did not simply skip a non-Latin tag — it silently truncated one.
+ * `#privé` was harvested as `priv` and `#личное` as nothing at all, while the
+ * same tags written in frontmatter parsed correctly. Tag exclusion is a privacy
+ * control ("notes with any of these tags are never indexed"), so a tag the
+ * extractor cannot spell is an exclusion that **fails open**: the user marks a
+ * note to keep it away from the agent, and it is indexed and served anyway.
+ * Combining marks (`\p{M}`) are part of a tag after its first character, so a
+ * decomposed `#privé` is captured whole rather than truncated at the accent —
+ * the scanner folds to NFC before comparing, so both encodings then match the
+ * same exclusion. A mark cannot begin a tag, so the first character excludes it.
+ */
+const INLINE_TAG = /(^|[\s(])#([\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-]*)/gu;
 
 function uniq(values: string[]): string[] {
   return Array.from(new Set(values.filter((v) => v.length > 0)));

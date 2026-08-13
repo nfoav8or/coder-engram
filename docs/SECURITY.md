@@ -28,7 +28,7 @@ Coder Engram is local-first and privacy-preserving by default. It requires no cl
 
 ## Sensitive-note controls
 
-You can keep notes out of the index entirely with **Excluded folders**, **Excluded tags**, and **Excluded path patterns** (glob or substring). These filters run in the vault scanner before content is read where possible. Retrieval also only ever returns chunks that were indexed, so excluded notes cannot surface in search results.
+You can keep notes out of the index entirely with **Excluded folders**, **Excluded tags**, and **Excluded path patterns** (glob or substring). These filters run in the vault scanner before content is read where possible. Retrieval also only ever returns chunks that were indexed, so excluded notes cannot surface in search results. **Matching is case- and Unicode-form-insensitive, and tags are recognized in any script** — an exclusion the parser cannot spell is one that fails open. Inline `#tags` were previously harvested with an ASCII-only pattern, so `#privé` was read as `priv` and `#личное` as nothing at all: a note the user had marked to keep away from the agent was indexed and served anyway. Frontmatter tags were never affected, which is why the earlier Unicode-form fix (0.9.9) and its test did not reveal it. Fixing the parser alone would have left the already-indexed content in place — a refresh only re-reads notes whose mtime changed — so `INDEX_VERSION` was raised, forcing one rebuild that drops those notes from the index.
 
 ## Attachment indexing (opt-in)
 

@@ -132,4 +132,37 @@ describe("link extraction (linear walkers)", () => {
     for (const flood of floods) extractMetadata(flood);
     expect(Date.now() - start).toBeLessThan(2000);
   });
+
+  /**
+   * Inline tags used an ASCII-only class, which did not merely skip a
+   * non-Latin tag — it truncated one. `#privé` was harvested as `priv` and
+   * `#личное` as nothing at all, while the same tags in frontmatter parsed
+   * correctly. Tag exclusion is a privacy control, so a tag the extractor
+   * cannot spell is an exclusion that fails open.
+   */
+  it("harvests an inline tag written in any script", () => {
+    expect(extractMetadata("body #privé more").tags).toEqual(["privé"]);
+    expect(extractMetadata("body #persönlich more").tags).toEqual(["persönlich"]);
+    expect(extractMetadata("body #личное more").tags).toEqual(["личное"]);
+    expect(extractMetadata("body #個人 more").tags).toEqual(["個人"]);
+    expect(extractMetadata("body #travail/privé more").tags).toEqual(["travail/privé"]);
+  });
+
+  it("keeps a decomposed accent inside the tag rather than cutting at it", () => {
+    // A combining mark is not a letter, so without \\p{M} the tag stopped at the
+    // accent and became a different word. The scanner folds to NFC before
+    // comparing, so capturing it whole is what lets both encodings match one
+    // exclusion.
+    const decomposed = "privé".normalize("NFD");
+    expect(decomposed).not.toBe("privé".normalize("NFC"));
+    const tags = extractMetadata(`body #${decomposed} more`).tags;
+    expect(tags).toHaveLength(1);
+    expect(tags[0].normalize("NFC")).toBe("privé".normalize("NFC"));
+  });
+
+  it("still refuses a bare hash and keeps ASCII tags unchanged", () => {
+    expect(extractMetadata("body # not-a-tag").tags).toEqual([]);
+    expect(extractMetadata("body #private more").tags).toEqual(["private"]);
+    expect(extractMetadata("body #work/private more").tags).toEqual(["work/private"]);
+  });
 });

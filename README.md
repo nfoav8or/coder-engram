@@ -214,7 +214,7 @@ Settings live under **Settings → Coder Engram**. Key settings and their safe d
 | Memory root | `Claude Code` | Vault-relative folder for all plugin-managed memory. Must stay inside the vault. |
 | Included folders | *(empty)* | Allowlist; empty means the whole vault. |
 | Excluded folders | *(empty)* | Folders to skip. Matched on whole path segments, ignoring case and Unicode form (so an accented name typed here matches the same name stored decomposed by macOS). |
-| Excluded tags | *(empty)* | Notes with any of these tags are never indexed. |
+| Excluded tags | *(empty)* | Notes with any of these tags are never indexed. Matched ignoring case and Unicode form, in frontmatter and inline `#tags`, in any script. |
 | Excluded path patterns | *(empty)* | Glob (`*`, `**`) or substring patterns for sensitive notes. |
 | Index attachments | `false` | Extract and index text from PDFs (Obsidian's bundled PDF engine), Office documents (docx/pptx/xlsx, odt/odp/ods, rtf — dependency-free extraction), plain text (txt/csv), and Canvas cards, locally. Exclusions apply; extracted text is searchable/readable over the local server like any note. |
 | Index text inside images | `false` | Reads text out of PNG/JPG/WEBP/BMP attachments by delegating to the [Text Extractor](https://github.com/scambier/obsidian-text-extractor) plugin; with that plugin absent, nothing happens. **The one attachment path that can cause network activity** — Text Extractor downloads its OCR language data on first use. Requires **Index attachments**. |
