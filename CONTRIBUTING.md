@@ -80,6 +80,12 @@ the imperative, and a body that explains *why*, not what the diff already shows.
 Do not bump versions or edit `manifest.json` / `versions.json` by hand; releases
 run `npm version`, which syncs all three and is gated in CI.
 
+Cutting a release also means updating `CHANGELOG.md`, `README.md`, and
+`docs/ROADMAP.md` every time — see "Releasing" in the README for what to check in
+each. The README is easy to forget precisely because nothing breaks when it is
+wrong, so the suite asserts its stated version against the manifest; that check
+fails the release gate, not just the local run.
+
 ## Reporting a security issue
 
 Please do not open a public issue for a vulnerability. Use GitHub's private

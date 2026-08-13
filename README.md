@@ -13,7 +13,7 @@ Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an a
 - **Hardened by default.** Server off by default, localhost-only, constant-time token auth, DNS-rebinding guards, a curated tool surface, and no generic file access or full-vault dump.
 - **Local-first, no lock-in.** Markdown is the source of truth; embeddings are opt-in (default is fully-offline lexical search); no cloud key for the default experience.
 
-> **Status:** 0.10.1. The local server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too — the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. Attachment indexing is likewise opt-in, and local for every format except image text — that one delegates OCR to the Text Extractor plugin, which fetches its language data on first use (see [Network use](#network-use)). See [CHANGELOG.md](CHANGELOG.md) for release history and [docs/ROADMAP.md](docs/ROADMAP.md) for what is still deferred.
+> **Status:** 0.10.3. The local server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too — the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. Attachment indexing is likewise opt-in, and local for every format except image text — that one delegates OCR to the Text Extractor plugin, which fetches its language data on first use (see [Network use](#network-use)). See [CHANGELOG.md](CHANGELOG.md) for release history and [docs/ROADMAP.md](docs/ROADMAP.md) for what is still deferred.
 
 ## What Coder Engram does
 
@@ -148,17 +148,40 @@ Other scripts:
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run lint` | ESLint over `.ts` sources |
 | `npm run typecheck` | `tsc --noEmit` |
+| `npm run test:e2e` | Drives the built plugin in a real Obsidian. Needs a display — it **skips with exit 0** when `DISPLAY` is unset, so check its output rather than its exit code. |
+| `npm run bench` | Index build and query latency at production scale |
+| `npm run eval` | Relevance scoring (recall@8 / MRR per query class) over golden queries |
 
 ## Releasing
 
 Releases are published by the `release.yml` GitHub Actions workflow whenever a
 version tag is pushed. It runs the full gate (typecheck, lint, test, build),
 attests the built artifacts, and attaches `main.js`, `manifest.json`,
-`styles.css`, and a `SHA256SUMS` manifest to a GitHub release. To cut one:
+`styles.css`, and a `SHA256SUMS` manifest to a GitHub release.
+
+### Documentation that must be current before the tag
+
+These four files are **always** updated as part of cutting a release, not only when
+the change happened to touch them. They are the ones that go stale silently, because
+nothing fails when they do:
+
+| File | What to check |
+| --- | --- |
+| `CHANGELOG.md` | The `Unreleased` section becomes the new version with a date, and the link references at the bottom gain a row for it. |
+| `README.md` | The **Status:** line names the new version, and the **Roadmap** section's last bullet describes it. Anything the release changed about commands, settings, scripts, or defaults is reflected in the tables above. |
+| `docs/ROADMAP.md` | A row in the patch-release table, and "In progress (unreleased)" names the version just cut. |
+| Subsystem docs | `docs/SECURITY.md`, `docs/RAG_PIPELINE.md`, `docs/ARCHITECTURE.md`, `docs/MCP_SERVER.md`, `docs/MEMORY_MODEL.md` — whichever the change touched. |
+
+The README is on that list because it is the only one a reader sees first and the
+only one no other document links *to* for its facts, so nothing else going stale
+reveals it.
+
+### Cutting the release
 
 ```bash
-npm version 0.9.0        # bumps package.json + syncs manifest.json / versions.json
-git push --follow-tags   # pushes the commit and the tag
+npm version 0.10.3       # bumps package.json + syncs manifest.json / versions.json
+git push origin develop
+git push origin 0.10.3   # the bare tag; this is what triggers release.yml
 ```
 
 Two checks run before anything is published: the tag must equal the
@@ -166,6 +189,20 @@ Two checks run before anything is published: the tag must equal the
 resolves the download from a release tagged identically to that version — and `versions.json` must
 carry an entry for it that agrees with the manifest's `minAppVersion` — which is
 what `npm version` writes, so a mismatch means the manifest was edited by hand.
+
+### After the workflow is green
+
+`main` is **not** updated by the workflow. Fast-forward it so the release tag is in
+its history — otherwise the tags accumulate on `develop` only, and `main` keeps
+claiming an older version:
+
+```bash
+git push origin develop:main
+```
+
+Then verify the published bytes rather than assuming them: `sha256sum -c SHA256SUMS`
+against the downloaded assets, and `gh attestation verify main.js --repo <owner>/coder-engram`
+(exit 0 is the signal — it can print nothing on success).
 
 ## Configuration
 
@@ -205,20 +242,21 @@ The memory root is validated on entry: a value that would escape the vault is re
 
 ## Obsidian usage
 
-The plugin registers twelve commands (command-palette names shown):
+The plugin registers twelve commands. Obsidian prefixes each with the plugin name and shows
+them in sentence case, so search the palette for "Coder Engram":
 
-1. **Coder Engram: Open Control Panel**
-2. **Coder Engram: Reindex Vault**
-3. **Coder Engram: Search Memory**
-4. **Coder Engram: Summarize Current Note**
-5. **Coder Engram: Add Memory**
-6. **Coder Engram: Add Current Note to Project Memory**
-7. **Coder Engram: Create Project Memory Folder**
-8. **Coder Engram: Show Project Context**
-9. **Coder Engram: Review Pending Memory**
-10. **Coder Engram: Start Session Note**
-11. **Coder Engram: End Session Note**
-12. **Coder Engram: Restart Local Server**
+1. **Open control panel**
+2. **Reindex vault**
+3. **Search memory**
+4. **Add memory**
+5. **Add current note to project memory**
+6. **Create project memory folder**
+7. **Show project context**
+8. **Review pending memory**
+9. **Summarize current note**
+10. **Start session note**
+11. **End session note**
+12. **Restart local server**
 
 The **Control Panel** (right sidebar, also on the ribbon "brain-circuit" icon) shows the memory root, indexed-note and chunk counts, last-indexed time, and server status, plus quick buttons: Reindex, Search, Add memory, Review inbox, New project, Project context.
 

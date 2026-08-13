@@ -79,6 +79,30 @@ describe("layering", () => {
     expect(importers.filter((p) => !NODE_ALLOWED.includes(p))).toEqual([]);
   });
 
+  it("keeps the README's stated version in step with the manifest", () => {
+    // Same rationale as the layering rules above: a documented obligation that
+    // nothing enforces is one a release quietly skips. The README drifted
+    // several versions behind while every other doc was kept current, because
+    // it is the one file nothing else links to for its facts — no broken
+    // reference anywhere reveals that it is stale. Failing the gate does.
+    //
+    // Only the version is checked, because it is the only claim with a single
+    // machine-readable source of truth. The rest of the release documentation
+    // obligation is stated in CLAUDE.md and README's own "Releasing" section.
+    const version = (JSON.parse(readFileSync("package.json", "utf8")) as { version: string }).version;
+    const manifest = (JSON.parse(readFileSync("manifest.json", "utf8")) as { version: string }).version;
+    expect(manifest, "manifest.json and package.json disagree").toBe(version);
+
+    const readme = readFileSync("README.md", "utf8");
+    const status = /^> \*\*Status:\*\* (\d+\.\d+\.\d+)\./m.exec(readme);
+    expect(status, "README has no `> **Status:** x.y.z.` line to check").not.toBeNull();
+    expect(
+      status?.[1],
+      `README's Status line says ${status?.[1]}, but this is ${version}. ` +
+        "Update the README as part of the release — see CLAUDE.md, 'Build & release'.",
+    ).toBe(version);
+  });
+
   it("routes every vault path through the resolveInVault choke-point", () => {
     // A path built by concatenation skips normalization and the `..` rejection
     // that every other path gets. `paths.ts` is where that logic lives, so it
