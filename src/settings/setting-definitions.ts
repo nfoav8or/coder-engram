@@ -106,6 +106,24 @@ export function writeSettingValue(settings: EngramSettings, key: string, value: 
   cursor[last] = typeof value === "string" && TRIMMED_KEYS.has(key) ? value.trim() : value;
 }
 
+/**
+ * Reject a number outside its range, as an inline message.
+ *
+ * `min` and `max` on a number control are hints to the input element, not a
+ * bound the framework enforces — Obsidian's own docs list `number` among the
+ * controls where "the user can enter values the bind's type alone can't
+ * constrain", which is what `validate` is for. The imperative tab guarded these
+ * two fields by silently ignoring a bad value; saying so is better.
+ */
+function inRange(label: string, min: number, max: number) {
+  return (value: number): string | undefined => {
+    if (!Number.isFinite(value) || !Number.isInteger(value) || value < min || value > max) {
+      return `${label} must be a whole number from ${min} to ${max}.`;
+    }
+    return undefined;
+  };
+}
+
 /** Text keys stored trimmed: a stray space in a token or URL is never meant. */
 const TRIMMED_KEYS = new Set([
   "defaultProject",
@@ -321,7 +339,14 @@ export function buildSettingDefinitions(ctx: DefinitionContext): SettingDefiniti
           name: "Batch size",
           desc: "Chunks per embedding request (1–512). Lower this if the provider rejects large batches.",
           visible: usesEndpoint,
-          control: { type: "number", key: "embeddingBatchSize", min: 1, max: 512, step: 1 },
+          control: {
+            type: "number",
+            key: "embeddingBatchSize",
+            min: 1,
+            max: 512,
+            step: 1,
+            validate: inRange("Batch size", 1, 512),
+          },
         },
       ],
     },
@@ -361,7 +386,14 @@ export function buildSettingDefinitions(ctx: DefinitionContext): SettingDefiniti
         },
         {
           name: "Port",
-          control: { type: "number", key: "server.port", min: 1, max: 65535, step: 1 },
+          control: {
+            type: "number",
+            key: "server.port",
+            min: 1,
+            max: 65535,
+            step: 1,
+            validate: inRange("Port", 1, 65535),
+          },
         },
         {
           name: "Token",

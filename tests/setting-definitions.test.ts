@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   buildSettingDefinitions,
   readSettingValue,
@@ -131,6 +133,37 @@ describe("setting definitions", () => {
     expect(settings.memoryRoot).toBe("Claude Code");
   });
 
+  it("refuses a port or batch size outside its range", () => {
+    // The imperative tab guarded both fields by ignoring bad input. On the
+    // declarative path `min`/`max` are hints to the input element, not a bound
+    // the framework enforces, so without `validate` a nonsense port reaches
+    // settings — the server then refuses to start, and the next reload
+    // silently rewrites the value to the clamp.
+    const { ctx } = context();
+    const validatorFor = (key: string) => {
+      const found = buildSettingDefinitions(ctx)
+        .flatMap((item) => ("items" in item && item.items ? item.items : [item]))
+        .find((d) => "control" in d && d.control?.key === key);
+      return (found as { control: { validate?: (v: number) => string | undefined } }).control.validate;
+    };
+
+    const port = validatorFor("server.port");
+    expect(port, "port has no validator").toBeDefined();
+    expect(port!(3999)).toBeUndefined();
+    expect(port!(1)).toBeUndefined();
+    expect(port!(65535)).toBeUndefined();
+    expect(port!(0)).toContain("1 to 65535");
+    expect(port!(65536)).toContain("1 to 65535");
+    expect(port!(-5)).toContain("1 to 65535");
+    expect(port!(80.5)).toContain("whole number");
+
+    const batch = validatorFor("embeddingBatchSize");
+    expect(batch, "batch size has no validator").toBeDefined();
+    expect(batch!(16)).toBeUndefined();
+    expect(batch!(0)).toContain("1 to 512");
+    expect(batch!(513)).toContain("1 to 512");
+  });
+
   it("trims a token and an endpoint rather than storing stray whitespace", () => {
     const { settings } = context();
     writeSettingValue(settings, "server.token", "  secret-token  ");
@@ -182,6 +215,38 @@ describe("setting definitions", () => {
     };
     expect(disabledWhen(false)).toBe(true);
     expect(disabledWhen(true)).toBe(false);
+  });
+
+  it("offers the same settings as the imperative tab it ships alongside", () => {
+    // Two settings UIs ship: `display()` for apps below 1.13 and these
+    // definitions for 1.13+. Obsidian picks one, so a setting added to only
+    // one of them is invisible to half the users and nothing else would catch
+    // it — the imperative tab cannot be imported here (it extends a runtime
+    // Obsidian class), so this compares its source.
+    const tabSource = readFileSync(
+      join(__dirname, "..", "src", "settings", "settings-tab.ts"),
+      "utf8",
+    );
+    const imperative = new Set(
+      [
+        ...tabSource.matchAll(/\.setName\("([^"]+)"\)/g),
+        ...tabSource.matchAll(/add(?:List|Saving)Setting\(\s*containerEl,\s*"([^"]+)"/g),
+      ].map((m) => m[1].toLowerCase()),
+    );
+
+    const { ctx } = context();
+    // Section headings and the two informational rows have no counterpart:
+    // the imperative tab writes those as plain paragraphs, not settings.
+    const INFO_ROWS = new Set(["security notice", "about context savings"]);
+    const declarative = buildSettingDefinitions(ctx)
+      .flatMap((item) => ("items" in item && item.items ? item.items : [item]))
+      .map((d) => ("name" in d ? d.name : ""))
+      .filter(Boolean)
+      .map((n) => n.toLowerCase())
+      .filter((n) => !INFO_ROWS.has(n));
+
+    const missingFromImperative = declarative.filter((n) => !imperative.has(n));
+    expect(missingFromImperative, "settings only users on 1.13+ can reach").toEqual([]);
   });
 
   it("offers every provider and retrieval mode the settings model accepts", () => {

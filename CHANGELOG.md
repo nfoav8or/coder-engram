@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A port or batch size outside its range is refused again.** The declarative
+  settings tab introduced in 0.10.0 lost a guard the previous tab had: `min`
+  and `max` on a number field are hints to the input element, not a bound the
+  app enforces, so on Obsidian 1.13 and later a value like port `999999` was
+  accepted. Nothing broke outright — the server declined to start and the next
+  reload rewrote the value to the nearest legal one — but the setting silently
+  became something other than what was typed. Both fields now say so inline as
+  you type, which is better than the old behaviour of quietly ignoring the
+  input.
+
 ## [0.10.1] — 2026-08-09
 
 Housekeeping only: nothing about the plugin's behaviour changes. It exists so Obsidian's automated plugin review reports nothing that is not worth reading.
