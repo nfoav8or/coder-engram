@@ -359,3 +359,55 @@ describe("settings backup", () => {
     expect(parsed.embeddingApiKey).toBe("«redacted»");
   });
 });
+
+describe("inbox serialization across a settings change", () => {
+  const INBOX = "Claude Code/Memory/Inbox/pending-memory.md";
+
+  /** Holds every inbox read open until released, so two read-modify-writes overlap. */
+  class GatedVault extends InMemoryVaultAdapter {
+    gate: Promise<void> | null = null;
+    async read(path: string): Promise<string> {
+      const value = await super.read(path);
+      if (path === INBOX && this.gate) await this.gate;
+      return value;
+    }
+  }
+
+  async function seedThree(engine: EngramEngine) {
+    for (let i = 0; i < 3; i++) {
+      await engine.addMemory({ content: `memory number ${i}`, type: "note", project: "proj" });
+    }
+    return (await engine.getPendingMemory()).entries;
+  }
+
+  /**
+   * Discarding an entry is a read-modify-write of the whole inbox file, and the
+   * engine rebuilds its MemoryWriter on every settings change. When the mutex
+   * lived on the writer, the rebuilt one started with an empty chain: a discard
+   * still in flight was not waited for, so the next discard read the
+   * pre-discard file and wrote back a copy that still contained the entry the
+   * first one had removed. A settings commit is debounced while you type, so it
+   * can genuinely land between two clicks in the review UI.
+   */
+  it("does not resurrect an entry when settings commit mid-discard", async () => {
+    const adapter = new GatedVault("v", {});
+    const settings = { ...DEFAULT_SETTINGS };
+    let t = 10_000;
+    const engine = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++);
+    const entries = await seedThree(engine);
+
+    let release!: () => void;
+    adapter.gate = new Promise<void>((resolve) => (release = resolve));
+    const first = engine.discardPendingMemory(entries[0]);
+    engine.updateSettings({ ...settings, appendOnly: !settings.appendOnly });
+    const second = engine.discardPendingMemory(entries[1]);
+    // Let both reach their read before either is allowed to finish.
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    adapter.gate = null;
+    release();
+    await Promise.all([first, second]);
+
+    const remaining = (await engine.getPendingMemory()).entries.map((e) => e.content);
+    expect(remaining).toEqual(["memory number 2"]);
+  });
+});

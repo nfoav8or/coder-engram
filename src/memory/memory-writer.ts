@@ -32,6 +32,41 @@ export interface MemoryWriterOptions {
   appendOnly: boolean;
   allowDirectWrites: boolean;
   logger?: Logger;
+  /**
+   * Shared serializer for inbox read-modify-writes. Pass one that outlives any
+   * single writer: the guarantee below is about the inbox FILE, so a lock that
+   * a writer owns privately stops holding the moment the writer is replaced.
+   */
+  inboxLock?: InboxLock;
+}
+
+/**
+ * Serializes every inbox read-modify-write (propose / apply / discard) so
+ * overlapping calls — a double-clicked review button, or a server `add_memory`
+ * landing mid-apply — cannot interleave their read and write and clobber each
+ * other (a lost removal resurrects an entry; a duplicated graduation writes a
+ * block twice).
+ *
+ * This is a separate object rather than a field on `MemoryWriter` because the
+ * engine rebuilds its writer on every settings change, and a per-writer chain
+ * starts empty: a discard already in flight was left unwaited-for, so the next
+ * discard read the pre-discard file and wrote back a copy that still held the
+ * entry the first one removed. Measured, not theorised — with the chain on the
+ * writer, a settings commit landing between two discards resurrected an entry.
+ */
+export class InboxLock {
+  private chain: Promise<unknown> = Promise.resolve();
+
+  run<T>(op: () => Promise<T>): Promise<T> {
+    const started = this.chain.then(op, op);
+    // Swallow on the chain so one failed op doesn't reject the next; the caller
+    // still observes this op's own outcome via `started`.
+    this.chain = started.then(
+      () => undefined,
+      () => undefined,
+    );
+    return started;
+  }
 }
 
 /**
@@ -103,26 +138,14 @@ export class MemoryWriter {
     private readonly options: MemoryWriterOptions,
   ) {
     this.logger = options.logger ?? NULL_LOGGER;
+    this.inboxLock = options.inboxLock ?? new InboxLock();
   }
 
-  /**
-   * Serializes every inbox read-modify-write (propose / apply / discard) so
-   * overlapping calls — a double-clicked review button, or a server add_memory
-   * landing mid-apply — cannot interleave their read and write and clobber each
-   * other (a lost removal resurrects an entry; a duplicated graduation writes a
-   * block twice).
-   */
-  private inboxChain: Promise<unknown> = Promise.resolve();
+  /** See InboxLock: shared when the caller supplies one, private otherwise. */
+  private readonly inboxLock: InboxLock;
 
   private enqueueInbox<T>(op: () => Promise<T>): Promise<T> {
-    const run = this.inboxChain.then(op, op);
-    // Swallow on the chain so one failed op doesn't reject the next; the caller
-    // still observes this op's own outcome via `run`.
-    this.inboxChain = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
+    return this.inboxLock.run(op);
   }
 
   /**

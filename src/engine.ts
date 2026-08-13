@@ -27,7 +27,7 @@ import {
   resolveProjectPaths,
 } from "./memory/memory-types";
 import { MemoryStore, SessionNote, ContextPart } from "./memory/memory-store";
-import { MemoryWriter } from "./memory/memory-writer";
+import { InboxLock, MemoryWriter } from "./memory/memory-writer";
 import { ParsedInbox, PendingEntry } from "./memory/pending-inbox";
 import { extractiveSummary, splitIntoSentences, SummaryMethod } from "./summarize/extractive";
 import {
@@ -151,6 +151,9 @@ export class EngramEngine {
   /** Serializes embedding passes so overlapping reindex/refresh/sync can't
    * interleave (last-writer-wins persist / mid-pass index mutation). */
   private embedChain: Promise<void> = Promise.resolve();
+  /** Outlives the writers it is handed to: updateSettings rebuilds the writer,
+   * and the inbox file needs one serializer across all of them. */
+  private readonly inboxLock = new InboxLock();
   /** Scan config in effect at the last completed scan. The skip-unchanged scan
    * fast path is only valid while the config is unchanged: known mtimes encode
    * eligibility verdicts under the config they were scanned with, and a note
@@ -355,6 +358,7 @@ export class EngramEngine {
       appendOnly: this.settings.appendOnly,
       allowDirectWrites: this.settings.allowDirectWrites,
       logger: this.logger.child("writer"),
+      inboxLock: this.inboxLock,
     });
   }
 

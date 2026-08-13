@@ -35,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tag-exclusion check — so a malformed entry could have affected which
   attachments were excluded. Both are now validated on load and recomputed when
   they do not hold up.
+- **A reviewed memory can no longer come back from the dead.** Discarding or
+  applying an entry rewrites the whole review inbox, and those rewrites are
+  serialized so two of them cannot clobber each other. That serialization was
+  attached to an object the plugin replaces whenever any setting changes, so a
+  settings commit landing between two clicks in the review pane left the first
+  rewrite unwaited-for — and the entry you had just discarded reappeared. The
+  lock now outlives the settings change.
 
 ## [0.10.2] — 2026-08-12
 
