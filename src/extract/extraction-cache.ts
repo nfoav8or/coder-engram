@@ -34,6 +34,52 @@ interface CacheFile {
   entries: Record<string, CacheEntry>;
 }
 
+function isStringArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+/**
+ * The persisted entries, checked to be what the refresh pass assumes.
+ *
+ * `get` already ignores an entry whose `mtime` does not match the file on disk,
+ * which absorbs most damage — a `null` or a number simply misses and the
+ * attachment is re-extracted. Two things get past it, and both matter:
+ *
+ * An entry whose `mtime` does match but whose `text` is not a string reaches
+ * `remainingChars -= entry.text.length`, which is `NaN`. Every later
+ * `remainingChars <= 0` is then false, so the corpus-wide attachment budget
+ * stops being enforced for the rest of the scan — the budget that exists to
+ * keep a large vault from building an index string V8 refuses to serialize.
+ *
+ * `metadata` is cached alongside the text and feeds `isMetadataEligible`, so
+ * malformed `tags` could let an attachment the user excluded by tag be indexed
+ * anyway. Exclusions are a privacy control; they must not depend on the shape
+ * of a cache file.
+ */
+function areCacheEntries(value: unknown): value is Record<string, CacheEntry> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  for (const entry of Object.values(value)) {
+    if (typeof entry !== "object" || entry === null) return false;
+    const cached = entry as Record<string, unknown>;
+    if (typeof cached.mtime !== "number") return false;
+    if (cached.text !== null && typeof cached.text !== "string") return false;
+    if (cached.metadata !== undefined && !isNoteMetadata(cached.metadata)) return false;
+  }
+  return true;
+}
+
+function isNoteMetadata(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const metadata = value as Record<string, unknown>;
+  return (
+    isStringArray(metadata.tags) &&
+    isStringArray(metadata.aliases) &&
+    isStringArray(metadata.links) &&
+    typeof metadata.bodyStartLine === "number" &&
+    (metadata.title === undefined || typeof metadata.title === "string")
+  );
+}
+
 export class ExtractionCache {
   private state: Record<string, CacheEntry> | null = null;
   private dirty = false;
@@ -52,7 +98,7 @@ export class ExtractionCache {
     try {
       if (!(await this.adapter.exists(this.file))) return;
       const parsed = JSON.parse(await this.adapter.read(this.file)) as CacheFile;
-      if (parsed && parsed.version === CACHE_VERSION && parsed.entries) {
+      if (parsed && parsed.version === CACHE_VERSION && areCacheEntries(parsed.entries)) {
         this.state = parsed.entries;
       } else {
         this.reset = true;

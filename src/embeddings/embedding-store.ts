@@ -33,6 +33,35 @@ interface StoredEmbeddings {
   vectors: Record<string, StoredVector>;
 }
 
+/**
+ * The stored vectors, checked to be what cosine scoring assumes.
+ *
+ * `embeddings.json` lives in the vault, so a sync conflict or another tool can
+ * leave a file that still parses and still carries the right envelope. Checking
+ * only `typeof vectors === "object"` let the contents through, and the failures
+ * split two ways: an entry that is `null`, or missing `v`, threw out of
+ * `vectorsMap()` and killed every vector and hybrid search; an array of the
+ * wrong element type scored as `NaN`, which survives the retriever's
+ * `score <= 0` filter (`NaN <= 0` is false) and sorts to an arbitrary rank, so
+ * a corrupt vector shows up in results at a position nothing chose.
+ *
+ * Every element is checked, not just the array: at 19 000 vectors of 384
+ * dimensions that costs ~28 ms against a ~500 ms parse, and a partial check is
+ * how the contents got trusted in the first place.
+ */
+function isVectorMap(value: unknown): value is Record<string, StoredVector> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  for (const entry of Object.values(value)) {
+    if (typeof entry !== "object" || entry === null) return false;
+    const stored = entry as Record<string, unknown>;
+    if (typeof stored.h !== "string" || !Array.isArray(stored.v)) return false;
+    for (const component of stored.v) {
+      if (typeof component !== "number" || !Number.isFinite(component)) return false;
+    }
+  }
+  return true;
+}
+
 export interface EmbedIndexResult {
   embedded: number;
   reused: number;
@@ -96,8 +125,7 @@ export class EmbeddingStore {
         parsed.version === EMBED_STORE_VERSION &&
         typeof parsed.model === "string" &&
         typeof parsed.dim === "number" &&
-        parsed.vectors &&
-        typeof parsed.vectors === "object"
+        isVectorMap(parsed.vectors)
       ) {
         this.state = {
           version: EMBED_STORE_VERSION,

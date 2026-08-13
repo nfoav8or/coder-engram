@@ -282,6 +282,53 @@ describe("ExtractionCache", () => {
     expect(cache3.get("b.pdf", 200)).toBeUndefined();
   });
 
+  /**
+   * `get` ignores an entry whose mtime does not match, which absorbs most
+   * damage. What got past it was an entry with a matching mtime and a
+   * non-string `text`: the refresh does `remainingChars -= entry.text.length`,
+   * which is NaN, and every later `remainingChars <= 0` is then false — so one
+   * corrupt entry silently switched off the corpus-wide attachment budget.
+   * Cached `metadata` matters for the same reason: it feeds the tag-exclusion
+   * check, which is a privacy control and must not depend on a cache file's
+   * shape.
+   */
+  it("starts fresh rather than trusting malformed cached entries", async () => {
+    const file = "Index/extracted.json";
+    const wrapped = (entries: unknown) => JSON.stringify({ version: 2, entries });
+    const goodMetadata = { tags: [], aliases: [], links: [], bodyStartLine: 0 };
+
+    // The control: a well-formed file must still load.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    await adapter.write(file, wrapped({ "a.pdf": { mtime: 5, text: "hello" } }));
+    const healthy = new ExtractionCache(adapter, file);
+    await healthy.load();
+    expect(healthy.get("a.pdf", 5)?.text).toBe("hello");
+
+    const corruptions: unknown[] = [
+      { "a.pdf": null },
+      { "a.pdf": 7 },
+      { "a.pdf": { mtime: 5, text: 42 } },
+      { "a.pdf": { mtime: 5, text: {} } },
+      { "a.pdf": { mtime: "5", text: "hello" } },
+      { "a.pdf": { mtime: 5, text: "hello", metadata: { tags: "work" } } },
+      { "a.pdf": { mtime: 5, text: "hello", metadata: { ...goodMetadata, links: 7 } } },
+      [{ mtime: 5, text: "hello" }],
+      "nope",
+    ];
+
+    for (const entries of corruptions) {
+      await adapter.write(file, wrapped(entries));
+      const cache = new ExtractionCache(adapter, file);
+      await cache.load();
+      const label = JSON.stringify(entries).slice(0, 50);
+      expect(cache.get("a.pdf", 5), `trusted a corrupt entry: ${label}`).toBeUndefined();
+      // A discarded cache must also tell the caller to re-chunk, exactly as a
+      // version bump does — otherwise the index keeps chunks derived from text
+      // this load just refused.
+      expect(cache.consumeReset(), `no reset signalled for: ${label}`).toBe(true);
+    }
+  });
+
   it("reports no skipped attachments for a corpus that fits, and clears the count when disabled", async () => {
     const adapter = new InMemoryVaultAdapter("v", {});
     adapter.seedBinary("Data/small.txt", new TextEncoder().encode("kea field notes"));

@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wrong shapes. That loaded as if it were fine, and then every search failed
   with an internal error. The index is a rebuildable cache, so the answer is the
   same one a version mismatch already gets: discard it and rebuild.
+- **The same applies to the other two caches under `Index/`.** A damaged
+  `embeddings.json` could break every vector search, or score a corrupt vector
+  into an arbitrary position in your results rather than being discarded. A
+  damaged `extracted.json` could silently switch off the limit on how much
+  attachment text one scan may index, and its cached metadata feeds the
+  tag-exclusion check — so a malformed entry could have affected which
+  attachments were excluded. Both are now validated on load and recomputed when
+  they do not hold up.
 
 ## [0.10.2] — 2026-08-12
 

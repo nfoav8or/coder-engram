@@ -189,4 +189,48 @@ describe("EmbeddingStore.embedIndex", () => {
     expect(store.hasVectors()).toBe(false);
     expect(store.vectorsMap().size).toBe(0);
   });
+
+  /**
+   * embeddings.json lives in the vault, so a sync conflict can leave a file
+   * with the right envelope and wrong contents. Checking only that `vectors`
+   * was an object let two failures through: an entry missing `v` threw out of
+   * vectorsMap() and killed every vector search, and an array of the wrong
+   * element type scored NaN — which passes the retriever's `score <= 0` filter
+   * and sorts to an arbitrary rank. Recomputing is the documented answer for a
+   * cache that cannot be trusted.
+   */
+  it("recomputes rather than trusting malformed stored vectors", async () => {
+    const wrapped = (vectors: unknown) =>
+      JSON.stringify({ version: 1, model: "mock:m", dim: 3, vectors });
+
+    const adapter = new InMemoryVaultAdapter("v");
+    // The control: a well-formed file must still load, or every case below
+    // would pass against a load() that simply refused everything.
+    await adapter.write(FILE, wrapped({ c0: { h: "abc", v: [1, 2, 3] } }));
+    const healthy = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await healthy.load();
+    expect(healthy.hasVectors()).toBe(true);
+
+    const corruptions: unknown[] = [
+      { c0: null },
+      { c0: 7 },
+      { c0: { h: "abc" } },
+      { c0: { h: "abc", v: "123" } },
+      { c0: { h: "abc", v: ["1", "2", "3"] } },
+      { c0: { h: "abc", v: [null, null, null] } },
+      { c0: { h: "abc", v: [true, true, true] } },
+      { c0: { h: 5, v: [1, 2, 3] } },
+      [{ h: "abc", v: [1, 2, 3] }],
+      "nope",
+    ];
+
+    for (const vectors of corruptions) {
+      await adapter.write(FILE, wrapped(vectors));
+      const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+      await store.load();
+      const label = JSON.stringify(vectors).slice(0, 50);
+      expect(store.hasVectors(), `loaded corrupt vectors: ${label}`).toBe(false);
+      expect(store.vectorsMap().size, `loaded corrupt vectors: ${label}`).toBe(0);
+    }
+  });
 });
