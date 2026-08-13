@@ -1,6 +1,6 @@
 # Roadmap
 
-Coder Engram is built in milestones. Milestones 1 through 14 are complete (through 0.10.0); the patch releases from 0.9.1 to 0.10.3 are listed under "Patch releases since 0.9.0", the Obsidian review findings and what was done about each under "Plugin review findings", work not yet released under "In progress", and anything not scheduled under "Deferred / future".
+Coder Engram is built in milestones. Milestones 1 through 14 are complete (through 0.10.0); the patch releases from 0.9.1 to 0.10.4 are listed under "Patch releases since 0.9.0", the Obsidian review findings and what was done about each under "Plugin review findings", work not yet released under "In progress", and anything not scheduled under "Deferred / future".
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -162,6 +162,7 @@ described in full in [CHANGELOG.md](../CHANGELOG.md); the short version:
 | 0.10.1 | Housekeeping so Obsidian's automated plugin review reports nothing worth reading; no behaviour change. |
 | 0.10.2 | The declarative settings tab accepted a port or batch size outside its range — `min`/`max` are input hints, not a bound the app enforces. |
 | 0.10.3 | Four fixes: a tool error disclosed the vault's absolute path; each of the three caches under `Index/` trusted its contents; and a discarded memory could reappear. |
+| 0.10.4 | The plugin assumed text was ASCII: lexical search tokenized Russian, Greek, Japanese, Chinese and Hebrew notes into **nothing**, and an excluded inline tag like `#privé` was misread so the privacy filter failed open (`INDEX_VERSION` bumped to drop the affected notes). |
 
 Five themes run through them, and they are worth stating because they are where the next
 bug probably is: a filter that fails **open** is invisible (0.9.2, 0.9.7, 0.9.9); a tool that
@@ -169,7 +170,10 @@ looks cheap gets bounded last (0.9.3, 0.9.8); an optimization is not delivered u
 is verified on the state an *upgrading* user actually has on disk (0.9.6); a file in the vault
 is untrusted input even when this plugin wrote it, because sync did not (0.10.3); and a
 guarantee attached to an object the code replaces is not a guarantee (0.10.3, where the inbox
-lock lived on a writer that every settings change rebuilt).
+lock lived on a writer that every settings change rebuilt); and an ASCII-only character class is
+a bug in every language but one (0.10.4) — the same lesson as 0.9.9, which fixed it for
+frontmatter tags and left the inline path untouched, so **when a fix has two code paths, test the
+one the fix did not come from**.
 
 A sixth, about method rather than code: **a probe that cannot detect the bug proves nothing
 about its absence.** Three separate investigations in this run first returned a clean result
@@ -181,7 +185,7 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing yet — 0.10.3 has just been cut.
+- Nothing yet — 0.10.4 has just been cut.
 
 ## Open questions for the maintainer
 

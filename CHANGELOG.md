@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.4] — 2026-08-13
+
+Two fixes for the same blind spot: the plugin assumed text was ASCII. One of
+them is a privacy filter that was failing open, so this release forces a single
+index rebuild on first load.
+
 ### Security
 
 - **An excluded tag written in any script now actually excludes.** Inline
@@ -28,16 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so they could never be found by the offline search that is the default and the
   only mode needing no network. Words are now split on letters and numbers in
   any script. English results are unchanged — the relevance eval scores
-  identically before and after — and no reindex is required. Scripts written
-  without spaces (CJK) are indexed as one term per run rather than per word,
-  which finds an identical query but not a substring of one; that limit is now
-  stated in the README.
+  identically before and after. This change needed no reindex of its own
+  (search terms are computed per query, never stored), though the security fix
+  above triggers one anyway. Scripts written without spaces (CJK) are indexed as
+  one term per run rather than per word, which finds an identical query but not
+  a substring of one; that limit is now stated in the README.
 - **The same word matches whichever encoding it arrived in.** Accented text
   reaches the plugin composed when typed and decomposed when it came from a
   macOS path or filename. The two render identically but produced different
   search terms (`café` became `caf` or `cafe`), so a note could fail to match a
   query that was the same word.
-
 - **The review inbox no longer shows two cards that look identical.** Accented
   text reaches the plugin in two encodings that render the same: decomposed when
   it came from a path or filename read on macOS, composed when typed or pasted.
@@ -602,7 +608,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.10.3...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.10.4...HEAD
+[0.10.4]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.4
 [0.10.3]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.3
 [0.10.2]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.2
 [0.10.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.1
