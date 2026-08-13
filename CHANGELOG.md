@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3] — 2026-08-13
+
+Four fixes, no new surface and no behaviour change for a healthy vault. Three of them concern
+things this plugin writes into your vault and later reads back — index caches and the review
+inbox — where the file can be changed between the write and the read by sync, another tool, or
+simply by the plugin racing itself.
+
 ### Security
 
 - **A failed tool call no longer tells the client where your vault lives.** Tool
@@ -555,7 +562,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.10.2...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.10.3...HEAD
+[0.10.3]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.3
 [0.10.2]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.2
 [0.10.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.1
 [0.10.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.0

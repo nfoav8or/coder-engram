@@ -1,6 +1,6 @@
 # Roadmap
 
-Coder Engram is built in milestones. Milestones 1 through 14 are complete (through 0.10.0); the patch releases between 0.9.0 and 0.9.9 are listed under "Patch releases since v0.9.0", the Obsidian review findings and what was done about each under "Plugin review findings", work not yet released under "In progress", and anything not scheduled under "Deferred / future".
+Coder Engram is built in milestones. Milestones 1 through 14 are complete (through 0.10.0); the patch releases from 0.9.1 to 0.10.3 are listed under "Patch releases since 0.9.0", the Obsidian review findings and what was done about each under "Plugin review findings", work not yet released under "In progress", and anything not scheduled under "Deferred / future".
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -143,9 +143,9 @@ have verified attestations.
 | Unsafe `any` in the ZIP inflate loop (`zip.ts`) | Error (locally, under their rule set; never reported in an official review) | **Fixed in 0.10.0.** `pipeThrough` loses the element type, so the inflated chunks were `any` — and the size accounting there is what stands between a crafted archive and an unbounded allocation. The reader is now annotated. |
 | Build reproduced the release `main.js` byte-for-byte; attestations verified | Pass | No action. |
 
-## Patch releases since v0.9.0
+## Patch releases since 0.9.0
 
-No new surface — nine releases of fixes found by auditing what was already shipped. Each is
+No new surface — a run of releases fixing what auditing the shipped code turned up. Each is
 described in full in [CHANGELOG.md](../CHANGELOG.md); the short version:
 
 | Version | Fix |
@@ -159,15 +159,37 @@ described in full in [CHANGELOG.md](../CHANGELOG.md); the short version:
 | 0.9.7 | Toggling **Index text inside images** did nothing until an unrelated edit — including turning it *off*, which left extracted text searchable. |
 | 0.9.8 | `list_projects` was the only read tool with no output cap (1 000 projects returned 197 KB). |
 | 0.9.9 | An exclusion naming an accented folder, tag, or pattern silently matched nothing across macOS's decomposed filenames. |
+| 0.10.1 | Housekeeping so Obsidian's automated plugin review reports nothing worth reading; no behaviour change. |
+| 0.10.2 | The declarative settings tab accepted a port or batch size outside its range — `min`/`max` are input hints, not a bound the app enforces. |
+| 0.10.3 | Four fixes: a tool error disclosed the vault's absolute path; each of the three caches under `Index/` trusted its contents; and a discarded memory could reappear. |
 
-Three themes run through them, and they are worth stating because they are where the next
+Five themes run through them, and they are worth stating because they are where the next
 bug probably is: a filter that fails **open** is invisible (0.9.2, 0.9.7, 0.9.9); a tool that
-looks cheap gets bounded last (0.9.3, 0.9.8); and an optimization is not delivered until it
-is verified on the state an *upgrading* user actually has on disk (0.9.6).
+looks cheap gets bounded last (0.9.3, 0.9.8); an optimization is not delivered until it
+is verified on the state an *upgrading* user actually has on disk (0.9.6); a file in the vault
+is untrusted input even when this plugin wrote it, because sync did not (0.10.3); and a
+guarantee attached to an object the code replaces is not a guarantee (0.10.3, where the inbox
+lock lived on a writer that every settings change rebuilt).
+
+A sixth, about method rather than code: **a probe that cannot detect the bug proves nothing
+about its absence.** Three separate investigations in this run first returned a clean result
+from an instrument that was measuring nothing — a fixture built on the wrong `INDEX_VERSION`,
+a race probe aimed at the one inbox operation that appends rather than rewrites, and an e2e
+suite that skips with exit 0 when `DISPLAY` is unset. Each was caught by running the negative
+control: assert the *unbroken* case still passes, or force the failure and confirm the probe
+sees it.
 
 ## In progress (unreleased)
 
-- Nothing yet — 0.10.1 has just been cut.
+- Nothing yet — 0.10.3 has just been cut.
+
+## Open questions for the maintainer
+
+- **Enforce `additionalProperties: false` on MCP tool arguments?** All ten tools advertise it in
+  their `inputSchema`; no handler enforces it, so an extra key is currently ignored rather than
+  refused. This is not a vulnerability — unknown keys never reach a sink — but the schema
+  promises something the server does not do. Enforcing it is a breaking change for any client
+  that sends an extra key, so it is a product decision, not a fix.
 
 ## Deferred / future
 
