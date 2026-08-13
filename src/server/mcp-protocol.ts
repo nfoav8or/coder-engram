@@ -15,7 +15,7 @@
  */
 
 import { ToolRegistry, ToolContext } from "./mcp-tools";
-import { toMessage } from "../utils/errors";
+import { toClientMessage, toMessage } from "../utils/errors";
 import { isPlainObject } from "../utils/validation";
 import { Logger } from "../utils/logger";
 
@@ -155,7 +155,7 @@ export async function handleRpcMessage(
           // Tool-level failure: report in-band so the client sees the reason.
           deps.logger.warn("Tool call failed", { tool: toolName, error: toMessage(err) });
           return ok(id, {
-            content: [{ type: "text", text: `Error: ${toMessage(err)}` }],
+            content: [{ type: "text", text: `Error: ${toClientMessage(err)}` }],
             isError: true,
           });
         }

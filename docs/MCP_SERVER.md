@@ -53,7 +53,7 @@ Standard MCP over HTTP (JSON-RPC 2.0). Supported methods:
 | `notifications/initialized` | Handshake completion (notification; no response). |
 | `ping` | Liveness check. |
 | `tools/list` | Lists the tools below with JSON-Schema input schemas. |
-| `tools/call` | Invokes a tool. Tool failures are returned **in-band** as a result with `isError: true` — never as a transport error. |
+| `tools/call` | Invokes a tool. Tool failures are returned **in-band** as a result with `isError: true` — never as a transport error. The message names the failing note in vault-relative terms; absolute filesystem paths are stripped before it is sent (see [SECURITY.md](SECURITY.md)). |
 
 Every request is a `POST` with `Content-Type: application/json` and an
 `Authorization: Bearer <token>` header (when a token is configured).

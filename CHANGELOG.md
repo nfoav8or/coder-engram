@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **A failed tool call no longer tells the client where your vault lives.** Tool
+  failures are reported in-band so the agent can act on them, which makes the
+  message text an output channel. Errors this plugin raises are authored and
+  were always safe, but an error raised beneath it — Node's filesystem layer,
+  Obsidian's adapter — quotes the vault's absolute path, and with it your
+  account name and the vault's real folder name. `add_memory` and
+  `reindex_vault` could both surface one. Absolute paths are now stripped
+  before the message leaves; the vault-relative path survives, so the client
+  still learns which note failed, and the full message still reaches the log.
+
 ## [0.10.2] — 2026-08-12
 
 ### Fixed

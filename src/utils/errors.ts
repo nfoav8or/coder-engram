@@ -24,9 +24,48 @@ export class ConfigError extends EngramError {}
 /** A request payload (e.g. server tool call) failed validation. */
 export class ValidationError extends EngramError {}
 
-/** Wrap an unknown thrown value into a readable message without leaking internals. */
+/** Wrap an unknown thrown value into a readable message. Local use only — see
+ * `toClientMessage` for anything that crosses the server boundary. */
 export function toMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (typeof err === "string") return err;
   return "Unknown error";
+}
+
+/**
+ * An absolute filesystem path, in the two shapes host errors produce.
+ *
+ * Node quotes the path in its `errno` messages (`open '/home/u/vault/x.md'`),
+ * which matters because a vault folder may contain spaces — a whitespace-
+ * delimited match would stop at the first one and leak the rest. The bare form
+ * covers messages that don't quote. Neither matches a URL: a `//` there is
+ * preceded by `:`, which is not an accepted leading character.
+ */
+const QUOTED_ABSOLUTE_PATH = /(['"`])((?:[A-Za-z]:[\\/]|\\\\|\/)[^'"`\n]*)\1/g;
+const BARE_ABSOLUTE_PATH = /(^|[\s([<])((?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`)\]>\n]+)/g;
+
+/**
+ * Strip absolute filesystem paths out of a message.
+ *
+ * Vault-relative paths survive untouched — `resolveInVault` guarantees they
+ * never start with a separator or a drive letter — so the caller still learns
+ * which note failed, in the only namespace it is entitled to know about.
+ */
+export function redactAbsolutePaths(message: string): string {
+  return message
+    .replace(QUOTED_ABSOLUTE_PATH, "$1<path>$1")
+    .replace(BARE_ABSOLUTE_PATH, "$1<path>");
+}
+
+/**
+ * The message form safe to hand to an MCP client.
+ *
+ * Errors raised by this plugin are authored text and cross unchanged. Errors
+ * raised beneath it — Node's `fs`, Obsidian's adapter — carry the vault's
+ * absolute location, and with it the account name and the vault's real folder
+ * name, none of which any tool otherwise discloses. The unredacted message
+ * still reaches the local logger, so nothing is lost to whoever is debugging.
+ */
+export function toClientMessage(err: unknown): string {
+  return redactAbsolutePaths(toMessage(err));
 }

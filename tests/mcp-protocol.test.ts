@@ -11,6 +11,7 @@ import {
   DEFAULT_PROTOCOL_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,
 } from "../src/server/mcp-protocol";
+import { redactAbsolutePaths } from "../src/utils/errors";
 
 function makeDeps(seed: Record<string, string> = {}): ProtocolDeps {
   const adapter = new InMemoryVaultAdapter("v", seed);
@@ -162,5 +163,74 @@ describe("handleRpcMessage", () => {
   it("rejects a non-JSON-RPC-2.0 message", async () => {
     const res = await handleRpcMessage({ id: 7, method: "ping" }, makeDeps());
     expect(res?.error?.code).toBe(JsonRpcErrorCode.InvalidRequest);
+  });
+
+  /**
+   * A tool failure is reported in-band so the client can act on it, which makes
+   * the message text an output channel. Errors thrown beneath the plugin —
+   * Node's `fs`, Obsidian's adapter — name the vault's absolute location, and
+   * with it the account name and the vault's real folder name. No tool
+   * discloses those, so an error must not either.
+   */
+  it("keeps the vault's absolute location out of a tool failure", async () => {
+    const secret = "/home/realuser/Private Vault/Финансы/salary.md";
+    class ExplodingVault extends InMemoryVaultAdapter {
+      async write(): Promise<void> {
+        throw new Error(`EACCES: permission denied, open '${secret}'`);
+      }
+    }
+    const adapter = new ExplodingVault("v", {});
+    const settings = { ...DEFAULT_SETTINGS };
+    let t = 1_000;
+    const clock = () => t++;
+    const engine = new EngramEngine(adapter, settings, NULL_LOGGER, clock);
+    const deps: ProtocolDeps = {
+      registry: new ToolRegistry(),
+      toolContext: { engine, settings, logger: NULL_LOGGER, clock, rateLimiter: new RateLimiter(clock) },
+      serverInfo: { name: "coder-engram", version: "0.1.0" },
+      logger: NULL_LOGGER,
+    };
+
+    const res = await handleRpcMessage(
+      {
+        jsonrpc: "2.0",
+        id: 8,
+        method: "tools/call",
+        params: { name: "add_memory", arguments: { content: "a memory", project: "proj" } },
+      },
+      deps,
+    );
+    const result = res?.result as { isError: boolean; content: { text: string }[] };
+    expect(result.isError).toBe(true);
+    // The failure is still reported — only the host path is withheld.
+    expect(result.content[0].text).toContain("EACCES");
+    expect(result.content[0].text).not.toContain("realuser");
+    expect(result.content[0].text).not.toContain("Финансы");
+  });
+});
+
+describe("redactAbsolutePaths", () => {
+  it("removes a host path in every shape an error reports one", () => {
+    // The POSIX case is quoted and contains a space: a whitespace-delimited
+    // match would stop at "Private" and leak the rest of the path.
+    expect(redactAbsolutePaths("open '/home/u/Private Vault/x.md'")).toBe("open '<path>'");
+    expect(redactAbsolutePaths('open "C:\\Users\\Real Name\\v.md"')).toBe('open "<path>"');
+    expect(redactAbsolutePaths("scandir /Users/u/Vault")).toBe("scandir <path>");
+    expect(redactAbsolutePaths("failed on \\\\nas01\\share\\v.md")).toBe("failed on <path>");
+  });
+
+  it("leaves everything the client is entitled to read", () => {
+    // Vault-relative paths never begin with a separator, so they survive.
+    expect(redactAbsolutePaths('Note "Projects/Work.md" is not indexed')).toBe(
+      'Note "Projects/Work.md" is not indexed',
+    );
+    expect(redactAbsolutePaths("Ollama embed failed (HTTP 500)")).toBe(
+      "Ollama embed failed (HTTP 500)",
+    );
+    // A URL's "//" follows a colon, which is not an accepted leading character.
+    expect(redactAbsolutePaths("endpoint http://127.0.0.1:11434/api/embed refused")).toBe(
+      "endpoint http://127.0.0.1:11434/api/embed refused",
+    );
+    expect(redactAbsolutePaths("Use / to separate segments")).toBe("Use / to separate segments");
   });
 });
