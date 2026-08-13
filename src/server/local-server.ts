@@ -135,6 +135,11 @@ export class LocalServer {
       return this.address;
     }
 
+    // Stop BEFORE validating, not after: a settings change that would expose
+    // memory without auth must leave nothing serving. Validating first reads as
+    // the kinder order — don't kill a working server over a bad config — but it
+    // leaves the old listener up while the user believes their edit was either
+    // applied or rejected outright.
     // Serialized via enqueue(), so calling doStop() directly here is safe.
     if (this.server) await this.doStop();
 

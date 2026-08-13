@@ -340,3 +340,35 @@ describe("rate limiting across requests", () => {
     expect(secondResult.content[0].text).toMatch(/Rate limited/);
   });
 });
+
+describe("a refused reconfiguration", () => {
+  /**
+   * `doStart` stops the running listener BEFORE validating the new config, so a
+   * settings change that would expose memory without auth leaves nothing
+   * serving. The opposite order is a tempting refactor — validate first, don't
+   * kill a working server for a bad config — and it quietly changes the
+   * outcome: the old listener keeps running while the user believes their edit
+   * either applied or was rejected outright.
+   *
+   * The reconfiguration is refused before any socket is opened, so this never
+   * binds a non-localhost address.
+   */
+  it("leaves no listener running", async () => {
+    const { server } = await startServer({ token: "s3cret" });
+    expect(server.isRunning()).toBe(true);
+
+    const exposedWithoutAuth: EngramSettings = {
+      ...DEFAULT_SETTINGS,
+      server: {
+        ...DEFAULT_SETTINGS.server,
+        enabled: true,
+        host: "0.0.0.0",
+        port: 0,
+        allowNonLocalhost: true,
+        token: "",
+      },
+    };
+    await expect(server.start(exposedWithoutAuth)).rejects.toThrow(/token is required/i);
+    expect(server.isRunning(), "a refused config left a listener up").toBe(false);
+  });
+});
