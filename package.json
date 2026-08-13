@@ -1,6 +1,6 @@
 {
   "name": "coder-engram",
-  "version": "0.10.3",
+  "version": "0.10.4",
   "description": "Give Claude Code safe, reviewable memory: agent-proposed entries you review before they land, stored as local Markdown.",
   "author": "Matt Smith",
   "license": "MIT",
