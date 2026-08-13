@@ -75,6 +75,43 @@ describe("IndexManager build + persist + load", () => {
     const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
     expect(await mgr.load()).toBeNull();
   });
+
+  /**
+   * A chunks.json that parses as an array but holds the wrong shapes used to
+   * load clean and then throw a TypeError out of the retriever on every query,
+   * leaving a plugin that reports an index and cannot search. Rebuilding is the
+   * same answer the version check already gives, and for the same reason: the
+   * file is a cache, so the recovery is to rebuild it rather than serve it.
+   */
+  it("refuses an index whose chunks are the wrong shape", async () => {
+    const adapter = new InMemoryVaultAdapter("v", { "Notes/a.md": "# Alpha\ncontent" });
+    const notes = await new VaultScanner(adapter).scan(scanConfig());
+    const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
+    mgr.build(notes);
+    await mgr.persist();
+    const good = JSON.parse(await adapter.read(PATHS.chunksFile)) as Record<string, unknown>[];
+
+    // The control: untouched, it still loads. Without this the cases below
+    // would pass just as well against a load() that refused everything.
+    expect(await new IndexManager(adapter, PATHS, { clock: nextClock }).load()).not.toBeNull();
+
+    const corruptions: Record<string, unknown>[] = [
+      [null],
+      [1, 2, 3],
+      [{ ...good[0], text: undefined }],
+      [{ ...good[0], text: 42 }],
+      [{ ...good[0], tags: "work" }],
+      [{ ...good[0], links: 7 }],
+      [{ ...good[0], startLine: "1" }],
+      [...good, null],
+    ] as unknown as Record<string, unknown>[];
+
+    for (const corrupt of corruptions) {
+      await adapter.write(PATHS.chunksFile, JSON.stringify(corrupt));
+      const loaded = await new IndexManager(adapter, PATHS, { clock: nextClock }).load();
+      expect(loaded, `loaded a corrupt index: ${JSON.stringify(corrupt).slice(0, 60)}`).toBeNull();
+    }
+  });
 });
 
 describe("IndexManager incremental refresh", () => {

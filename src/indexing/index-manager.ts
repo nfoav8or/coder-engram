@@ -36,6 +36,42 @@ export interface IndexedChunk {
   mtime: number;
 }
 
+function isStringArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+/**
+ * Every field the retrieval path dereferences, checked against the type that
+ * path assumes.
+ *
+ * `load` already refuses a file that is not JSON, is not an array, or was
+ * written under a different `INDEX_VERSION`, and it already validates the two
+ * optional metadata maps entry by entry rather than trusting them for their
+ * type. The chunks themselves were the gap: any array loaded clean, so an index
+ * holding `[null]` or objects missing `text` reported success and then threw a
+ * TypeError out of the retriever on every later query — a plugin that says it
+ * has an index and fails every search until someone reindexes by hand. Every
+ * field has been written since the first release, so requiring all of them
+ * cannot invalidate an index that real code produced.
+ */
+function isIndexedChunk(value: unknown): value is IndexedChunk {
+  if (typeof value !== "object" || value === null) return false;
+  const chunk = value as Record<string, unknown>;
+  return (
+    typeof chunk.id === "string" &&
+    typeof chunk.notePath === "string" &&
+    typeof chunk.heading === "string" &&
+    typeof chunk.text === "string" &&
+    typeof chunk.startLine === "number" &&
+    typeof chunk.endLine === "number" &&
+    typeof chunk.mtime === "number" &&
+    isStringArray(chunk.headingPath) &&
+    isStringArray(chunk.tags) &&
+    isStringArray(chunk.aliases) &&
+    isStringArray(chunk.links)
+  );
+}
+
 export interface IndexMetadata {
   version: number;
   builtAt: number;
@@ -330,6 +366,10 @@ export class IndexManager {
       const chunks = JSON.parse(chunksRaw) as IndexedChunk[];
       if (metadata.version !== INDEX_VERSION || !Array.isArray(chunks)) {
         this.logger.warn("Index version mismatch or corrupt; rebuild required");
+        return null;
+      }
+      if (!chunks.every(isIndexedChunk)) {
+        this.logger.warn("Index holds malformed chunks; rebuild required");
         return null;
       }
       this.index = { metadata, chunks };

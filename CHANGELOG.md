@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before the message leaves; the vault-relative path survives, so the client
   still learns which note failed, and the full message still reaches the log.
 
+### Fixed
+
+- **A corrupt index file no longer leaves search broken until you reindex by
+  hand.** `Index/chunks.json` lives in your vault, so a sync conflict or another
+  tool can leave behind a file that still parses as a JSON array but holds the
+  wrong shapes. That loaded as if it were fine, and then every search failed
+  with an internal error. The index is a rebuildable cache, so the answer is the
+  same one a version mismatch already gets: discard it and rebuild.
+
 ## [0.10.2] — 2026-08-12
 
 ### Fixed
