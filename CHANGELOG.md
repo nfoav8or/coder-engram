@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.5] — 2026-08-16
+
 ### Fixed
 
 - **`summarize_note`'s lexical ranking now works in any script.** The
@@ -638,7 +640,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.10.4...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.10.5...HEAD
+[0.10.5]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.5
 [0.10.4]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.4
 [0.10.3]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.3
 [0.10.2]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.2
