@@ -32,22 +32,29 @@ export interface RelatedNotes {
   linkedFrom: string[];
 }
 
-/**
- * Resolve the link graph over `chunks` and return the notes related to
- * `notePath`. `notePath` must be an indexed note's exact path; the caller is
- * responsible for the indexed-only gate. Results are sorted and never include
- * `notePath` itself.
- */
-export function relatedNotes(notePath: string, chunks: IndexedChunk[]): RelatedNotes {
-  const targetKey = linkKey(notePath);
+interface LinkGraph {
+  /** basename key -> indexed note paths carrying that basename (collisions kept). */
+  byKey: Map<string, Set<string>>;
+  /** notePath -> distinct resolved keys of its outbound links. */
+  outKeysByNote: Map<string, Set<string>>;
+  /** basename key -> notes with an outbound link resolving to that key. */
+  linkersByKey: Map<string, Set<string>>;
+}
 
+/** Graph per chunks-array identity. `IndexManager.refresh` keeps the previous
+ * array on an all-unchanged refresh and swaps a new one otherwise — the same
+ * identity contract `LexicalRetriever` keys its corpus-stats memo on — so a
+ * WeakMap entry is exactly as fresh as the index it was built from, and a full
+ * per-call rebuild (a whole-corpus pass per request) is paid once per reindex. */
+const graphCache = new WeakMap<IndexedChunk[], LinkGraph>();
+
+function buildGraph(chunks: IndexedChunk[]): LinkGraph {
   // notePath -> its distinct outbound link targets (raw), collected across
   // chunks. The de-duplication is load-bearing, not tidiness: `links` is
   // note-level metadata copied onto EVERY chunk of the note, so a note that
   // chunks into three carries its whole link list three times, and keying them
   // straight from the chunks would re-key each one per chunk.
   const outByNote = new Map<string, Set<string>>();
-  // basename key -> indexed note paths carrying that basename (collisions kept).
   const byKey = new Map<string, Set<string>>();
 
   for (const c of chunks) {
@@ -61,16 +68,44 @@ export function relatedNotes(notePath: string, chunks: IndexedChunk[]): RelatedN
     for (const l of c.links) outs.add(l);
   }
 
-  const linksTo = new Set<string>();
-  const linkedFrom = new Set<string>();
+  const outKeysByNote = new Map<string, Set<string>>();
+  const linkersByKey = new Map<string, Set<string>>();
   for (const [note, outs] of outByNote) {
+    const keys = new Set<string>();
     for (const t of outs) {
       const k = linkKey(t);
-      if (note === notePath) {
-        for (const p of byKey.get(k) ?? []) if (p !== notePath) linksTo.add(p);
-      }
-      if (k === targetKey && note !== notePath) linkedFrom.add(note);
+      keys.add(k);
+      let linkers = linkersByKey.get(k);
+      if (!linkers) linkersByKey.set(k, (linkers = new Set()));
+      linkers.add(note);
     }
+    outKeysByNote.set(note, keys);
+  }
+
+  return { byKey, outKeysByNote, linkersByKey };
+}
+
+/**
+ * Resolve the link graph over `chunks` and return the notes related to
+ * `notePath`. `notePath` must be an indexed note's exact path; the caller is
+ * responsible for the indexed-only gate. Results are sorted and never include
+ * `notePath` itself.
+ */
+export function relatedNotes(notePath: string, chunks: IndexedChunk[]): RelatedNotes {
+  let graph = graphCache.get(chunks);
+  if (!graph) {
+    graph = buildGraph(chunks);
+    graphCache.set(chunks, graph);
+  }
+
+  const linksTo = new Set<string>();
+  for (const k of graph.outKeysByNote.get(notePath) ?? []) {
+    for (const p of graph.byKey.get(k) ?? []) if (p !== notePath) linksTo.add(p);
+  }
+
+  const linkedFrom = new Set<string>();
+  for (const note of graph.linkersByKey.get(linkKey(notePath)) ?? []) {
+    if (note !== notePath) linkedFrom.add(note);
   }
 
   return {

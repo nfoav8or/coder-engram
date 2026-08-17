@@ -123,6 +123,54 @@ describe("EngramEngine M3 embeddings integration", () => {
   });
 });
 
+describe("no-op refresh embedding economy", () => {
+  it("skips the embedding pass on an all-unchanged refresh, and re-runs it on a real change", async () => {
+    // The pass re-hashes every chunk to find work even when there is none, so
+    // an all-unchanged refresh under an unchanged backend identity must not
+    // start it at all — observable as zero provider traffic, liveness probe
+    // included.
+    const adapter = new InMemoryVaultAdapter("v", { ...SEED });
+    const http = new FakeHttpClient().on(
+      () => true,
+      (r) => {
+        if (!r.url.includes("/embeddings")) return { status: 200, body: "{}" };
+        const inputs = (JSON.parse(r.body ?? "{}") as { input: string[] }).input ?? [];
+        return {
+          status: 200,
+          body: JSON.stringify({ data: inputs.map((_, i) => ({ index: i, embedding: [0.1, 0.2, 0.3] })) }),
+        };
+      },
+    );
+    let t = 10_000;
+    const engine = new EngramEngine(
+      adapter,
+      {
+        ...DEFAULT_SETTINGS,
+        embeddingProvider: "openai-compatible",
+        embeddingModel: "text-embedding-3-small",
+        embeddingEndpoint: "https://api.example.test/v1",
+        embeddingApiKey: "sk-test",
+        retrievalMode: "hybrid",
+      },
+      NULL_LOGGER,
+      () => t++,
+      { http },
+    );
+    await engine.reindex();
+    expect(http.calls.length).toBeGreaterThan(0);
+
+    const baseline = http.calls.length;
+    await engine.refresh();
+    expect(http.calls.length).toBe(baseline);
+
+    adapter.touch("Notes/new.md", "# New\nfresh content that needs a vector.");
+    await engine.refresh();
+    expect(http.calls.length).toBeGreaterThan(baseline);
+    const sent = http.calls.map((c) => c.body ?? "").join("\n");
+    expect(sent).toContain("fresh content that needs a vector");
+  });
+});
+
 describe("excluded notes and the network", () => {
   it("never sends an excluded note's text to the embedding provider", async () => {
     // The strongest privacy claim in SECURITY.md — "excluded/sensitive notes

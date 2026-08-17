@@ -151,6 +151,12 @@ export class EngramEngine {
   /** Serializes embedding passes so overlapping reindex/refresh/sync can't
    * interleave (last-writer-wins persist / mid-pass index mutation). */
   private embedChain: Promise<void> = Promise.resolve();
+  /** Vector identity of the last COMPLETED embedding pass; null when the last
+   * pass failed, was skipped (provider unavailable), or none has run. Lets a
+   * no-op refresh skip the pass entirely — the pass re-hashes every chunk in
+   * the corpus even when nothing needs embedding, which is O(vault) synchronous
+   * work on the majority of debounced refreshes. Null forces a retry. */
+  private lastEmbeddedIdentity: string | null = null;
   /** Outlives the writers it is handed to: updateSettings rebuilds the writer,
    * and the inbox file needs one serializer across all of them. */
   private readonly inboxLock = new InboxLock();
@@ -252,8 +258,9 @@ export class EngramEngine {
     this.extractionCacheCleared = false;
     const extensions = this.extractors.flatMap((x) => x.extensions);
     const files = await this.adapter.listFilesByExtension(extensions);
+    const eligibleByPath = this.scanner.pathEligibility(scanConfig);
     const eligible = files.filter(
-      (f) => f.size <= ATTACHMENT_MAX_BYTES && this.scanner.isPathEligible(f.path, scanConfig),
+      (f) => f.size <= ATTACHMENT_MAX_BYTES && eligibleByPath(f.path),
     );
     await this.extractionCache.load();
 
@@ -524,7 +531,15 @@ export class EngramEngine {
     if (result.added + result.updated + result.removed > 0 || this.index.needsMetadataPersist()) {
       await this.index.persist();
     }
-    await this.embedIndex();
+    // Same economy for the embedding pass: it hashes every chunk to find work,
+    // so an all-unchanged refresh under an unchanged backend identity has
+    // nothing to embed by construction and skips the sweep.
+    if (
+      result.added + result.updated + result.removed > 0 ||
+      this.lastEmbeddedIdentity !== this.vectorIdentity()
+    ) {
+      await this.embedIndex();
+    }
     return result;
   }
 
@@ -598,6 +613,9 @@ export class EngramEngine {
   private async doEmbedIndex(): Promise<void> {
     if (!this.embeddingProvider) return;
     const provider = this.embeddingProvider;
+    // Pessimistic until the pass completes: an early return or throw below
+    // leaves vectors possibly missing, and null makes the next refresh retry.
+    this.lastEmbeddedIdentity = null;
     try {
       if (!(await provider.isAvailable())) {
         this.logger.warn("Embedding provider unavailable; retrieval stays lexical", {
@@ -607,10 +625,12 @@ export class EngramEngine {
       }
       // Snapshot chunks now so a concurrent index mutation can't shift them mid-pass.
       const chunks = this.index.getChunks().map((c) => ({ id: c.id, text: c.text }));
+      const identity = this.vectorIdentity();
       const pass = await this.embeddingStore.embedIndex(chunks, provider, {
         batchSize: this.settings.embeddingBatchSize,
-        identity: this.vectorIdentity(),
+        identity,
       });
+      this.lastEmbeddedIdentity = identity;
       // Rebuild only when the pass changed vectors: the retriever snapshots the
       // vector map at build time, so an unchanged map needs no rebuild — and a
       // rebuild discards the lexical corpus-stats memo. (Vectors loaded from

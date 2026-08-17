@@ -91,14 +91,14 @@ function foldForCompare(value: string): string {
 }
 
 /**
- * True if `path` is inside `folder` (or equals it). Segment-boundary aware, and
- * folded (case + Unicode form) like the tag and pattern filters beside it.
+ * True if `foldedPath` is inside `foldedFolder` (or equals it). Segment-boundary
+ * aware. Both arguments must already be folded (case + Unicode form) — folding
+ * is hoisted to the caller so a scan folds each invariant once, not once per
+ * file-times-folder.
  */
-function isUnderFolder(path: string, folder: string): boolean {
-  const f = foldForCompare(normalizeFolder(folder));
-  if (f === "") return true;
-  const p = foldForCompare(path);
-  return p === f || p.startsWith(f + "/");
+function isUnderFolderFolded(foldedPath: string, foldedFolder: string): boolean {
+  if (foldedFolder === "") return true;
+  return foldedPath === foldedFolder || foldedPath.startsWith(foldedFolder + "/");
 }
 
 /** Convert a glob pattern to a RegExp. `**` matches across slashes, `*` within a segment. */
@@ -117,20 +117,28 @@ function globToRegExp(pattern: string): RegExp {
 const MAX_PATTERN_LENGTH = 256;
 const MAX_WILDCARDS = 12;
 
-export function matchesPathPattern(path: string, pattern: string): boolean {
+/** Compile one exclusion pattern into a matcher over an already-folded path,
+ * so per-pattern folding and glob→RegExp compilation happen once per scan
+ * rather than once per file. */
+function compilePathPattern(pattern: string): (foldedPath: string) => boolean {
   const p = foldForCompare(pattern.trim());
-  if (p === "") return false;
-  const target = foldForCompare(path);
+  if (p === "") return () => false;
   if (p.includes("*")) {
     // Guard against pathological patterns (many wildcards → catastrophic
     // regex backtracking). Overly complex patterns degrade to a literal test.
     const wildcards = (p.match(/\*/g) ?? []).length;
     if (p.length > MAX_PATTERN_LENGTH || wildcards > MAX_WILDCARDS) {
-      return target.includes(p.replace(/\*/g, ""));
+      const literal = p.replace(/\*/g, "");
+      return (foldedPath) => foldedPath.includes(literal);
     }
-    return globToRegExp(p).test(target);
+    const re = globToRegExp(p);
+    return (foldedPath) => re.test(foldedPath);
   }
-  return target.includes(p);
+  return (foldedPath) => foldedPath.includes(p);
+}
+
+export function matchesPathPattern(path: string, pattern: string): boolean {
+  return compilePathPattern(pattern)(foldForCompare(path));
 }
 
 export class VaultScanner {
@@ -139,19 +147,32 @@ export class VaultScanner {
     private readonly logger: Logger = NULL_LOGGER,
   ) {}
 
-  /** Fast path/folder-only eligibility (no file read). */
+  /** Fast path/folder-only eligibility (no file read). One compile per call —
+   * per-file loops should compile once via {@link pathEligibility}. */
   isPathEligible(path: string, config: ScanConfig): boolean {
-    const included = config.includedFolders.map(normalizeFolder).filter(Boolean);
-    if (included.length > 0 && !included.some((f) => isUnderFolder(path, f))) {
-      return false;
-    }
-    if (config.excludedFolders.some((f) => isUnderFolder(path, normalizeFolder(f)))) {
-      return false;
-    }
-    if (config.excludedPathPatterns.some((pat) => matchesPathPattern(path, pat))) {
-      return false;
-    }
-    return true;
+    return this.pathEligibility(config)(path);
+  }
+
+  /** Compile `config` into a per-path eligibility test. Folder normalization,
+   * case/Unicode folding, and glob compilation are invariant across a scan, so
+   * they happen here once instead of once per file (10^5 redundant NFC
+   * normalizations per scan at 10k notes, on every debounced refresh). */
+  pathEligibility(config: ScanConfig): (path: string) => boolean {
+    const included = config.includedFolders
+      .map(normalizeFolder)
+      .filter(Boolean)
+      .map(foldForCompare);
+    const excluded = config.excludedFolders.map((f) => foldForCompare(normalizeFolder(f)));
+    const patterns = config.excludedPathPatterns.map(compilePathPattern);
+    return (path) => {
+      const p = foldForCompare(path);
+      if (included.length > 0 && !included.some((f) => isUnderFolderFolded(p, f))) {
+        return false;
+      }
+      if (excluded.some((f) => isUnderFolderFolded(p, f))) return false;
+      if (patterns.some((matches) => matches(p))) return false;
+      return true;
+    };
   }
 
   private hasExcludedTag(metadata: NoteMetadata, excludedTags: string[]): boolean {
@@ -182,7 +203,8 @@ export class VaultScanner {
   async scan(config: ScanConfig, knownMtimes: Map<string, number>): Promise<ScanResult[]>;
   async scan(config: ScanConfig, knownMtimes?: Map<string, number>): Promise<ScanResult[]> {
     const files = await this.adapter.listMarkdownFiles();
-    const eligible = files.filter((f) => this.isPathEligible(f.path, config));
+    const eligibleByPath = this.pathEligibility(config);
+    const eligible = files.filter((f) => eligibleByPath(f.path));
     const out: ScanResult[] = [];
 
     for (const file of eligible) {

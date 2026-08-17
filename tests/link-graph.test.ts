@@ -44,6 +44,17 @@ describe("relatedNotes", () => {
     expect(relatedNotes("Notes/a.md", corpus).linksTo).toEqual(["Notes/b.md"]);
   });
 
+  it("serves fresh results for a new chunks array (graph cache keys on array identity)", () => {
+    const first = [chunk("Notes/a.md", ["B"]), chunk("Notes/b.md", [])];
+    expect(relatedNotes("Notes/a.md", first).linksTo).toEqual(["Notes/b.md"]);
+    // Same array again → served from the cached graph, same answer.
+    expect(relatedNotes("Notes/a.md", first).linksTo).toEqual(["Notes/b.md"]);
+    // A refresh that changes anything swaps in a NEW array; results must
+    // reflect it rather than the cached graph of the old array.
+    const second = [chunk("Notes/a.md", ["C"]), chunk("Notes/b.md", []), chunk("Notes/c.md", [])];
+    expect(relatedNotes("Notes/a.md", second).linksTo).toEqual(["Notes/c.md"]);
+  });
+
   it("resolves backlinks (linkedFrom) from every note that links to it", () => {
     expect(relatedNotes("Notes/a.md", corpus).linkedFrom).toEqual(["Notes/b.md", "Notes/c.md"]);
   });
