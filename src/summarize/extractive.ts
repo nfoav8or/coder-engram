@@ -70,8 +70,16 @@ export function splitIntoSentences(text: string): string[] {
   return units;
 }
 
+/** A word: letters/numbers in any script, with apostrophes and hyphens kept
+ * inside a token (this tokenizer's deliberate difference from retrieval's —
+ * see ARCHITECTURE.md). The previous ASCII-only class produced zero tokens for
+ * a non-Latin-script note, so every unit scored 0 and the "most representative
+ * sentences" silently degraded to the first N in document order. NFC first so
+ * composed and decomposed spellings of one word count as one word. */
+const WORD = /[\p{L}\p{N}][\p{L}\p{N}'-]*/gu;
+
 function tokenize(unit: string): string[] {
-  const tokens = unit.toLowerCase().match(/[a-z0-9][a-z0-9'-]*/g) ?? [];
+  const tokens = unit.normalize("NFC").toLowerCase().match(WORD) ?? [];
   return tokens.filter((t) => t.length >= 2 && !STOP_WORDS.has(t));
 }
 

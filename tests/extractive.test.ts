@@ -36,6 +36,28 @@ describe("scoreLexical", () => {
     expect(scores[0]).toBeGreaterThan(scores[1]);
     expect(scores[0]).toBeGreaterThan(scores[2]);
   });
+
+  it("scores non-Latin-script sentences (regression: ASCII-only tokenizer zeroed them)", () => {
+    const units = ["система система система", "другие слова здесь", "система хранит данные"];
+    const scores = scoreLexical(units);
+    expect(argmax(scores)).toBe(0);
+    // Every unit has content words, so none may flatten to the 0 that turned
+    // "most representative" into "first N in document order".
+    for (const s of scores) expect(s).toBeGreaterThan(0);
+  });
+
+  it("treats composed and decomposed spellings as the same word", () => {
+    const units = [
+      "café café café", // NFC: single precomposed é
+      "café story", // NFD: e + combining acute
+      "unrelated words entirely",
+    ];
+    const scores = scoreLexical(units);
+    expect(argmax(scores)).toBe(0);
+    // The NFD unit shares its word with the NFC unit, so it must outscore the
+    // unit with no shared vocabulary.
+    expect(scores[1]).toBeGreaterThan(scores[2]);
+  });
 });
 
 describe("scoreByCentroid", () => {
