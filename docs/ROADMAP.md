@@ -185,7 +185,14 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing yet — 0.10.4 has just been cut.
+Slated for 0.10.5:
+
+- Fix: `summarize_note`'s lexical ranking tokenizes any script (the summarizer
+  kept its own ASCII-only word pattern after 0.10.4 fixed retrieval's).
+- Performance: an all-unchanged refresh skips the embedding pass's whole-corpus
+  hash sweep; vault scans compile include/exclude rules once per scan instead
+  of once per file; `find_related_notes` caches the link graph by chunks-array
+  identity.
 
 ## Open questions for the maintainer
 

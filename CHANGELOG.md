@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`summarize_note`'s lexical ranking now works in any script.** The
+  extractive summarizer kept its own copy of the ASCII-only word pattern that
+  0.10.4 cured retrieval of, so a note in Russian, Greek, Hebrew or CJK
+  produced zero tokens, every sentence scored 0, and "most representative
+  sentences" silently degraded to the first N in document order. Letters and
+  numbers in any script now tokenize (apostrophes and hyphens still stay inside
+  a token, as before), and composed vs decomposed spellings of the same word
+  now count as one word.
+
+### Performance
+
+- **An all-unchanged refresh skips the embedding pass.** The pass re-hashes
+  every chunk in the corpus to find work, even when the refresh already proved
+  there is none — O(vault) synchronous work on the majority of debounced
+  refreshes when a provider is configured. It now runs only when the refresh
+  changed something or the embedding backend identity changed since the last
+  completed pass.
+- **Vault scans fold each include/exclude rule once, not once per file.**
+  Folder normalization, case/Unicode folding, and glob compilation were
+  recomputed for every file × every rule on every scan (~10^5 redundant NFC
+  normalizations per debounced refresh at 10k notes). Eligibility is now
+  compiled once per scan and each path folded once.
+- **`find_related_notes` reuses the link graph across calls.** The graph was
+  rebuilt from every chunk on every request; it is now cached keyed on
+  chunks-array identity — the same invalidation contract the lexical
+  corpus-stats memo uses — so a rebuild is paid once per index change, and each
+  request resolves from the note's own links.
+
 ## [0.10.4] — 2026-08-13
 
 Two fixes for the same blind spot: the plugin assumed text was ASCII. One of
