@@ -29,6 +29,18 @@ describe("EngramEngine.getNoteChunks", () => {
     expect(engine.getNoteChunks("Notes/a.md").length).toBeGreaterThan(0);
     expect(engine.getNoteChunks("Notes/missing.md")).toEqual([]);
   });
+
+  it("serves fresh chunks after an edit and refresh (per-note memo invalidates)", async () => {
+    const { adapter, engine } = makeEngine({ "Notes/a.md": NOTE });
+    await engine.reindex();
+    // Prime the memoized per-note lookup, then change the note underneath it.
+    expect(engine.getNoteChunks("Notes/a.md")[0].text).toContain("indexing pipeline");
+    await adapter.write("Notes/a.md", "# Alpha Note\nA completely new body about caching.");
+    await engine.refresh();
+    const after = engine.getNoteChunks("Notes/a.md");
+    expect(after.some((c) => c.text.includes("completely new body"))).toBe(true);
+    expect(after.some((c) => c.text.includes("indexing pipeline"))).toBe(false);
+  });
 });
 
 describe("EngramEngine.summarizeNote", () => {

@@ -113,6 +113,29 @@ const EXTRACTED_TEXT_MAX_CHARS = 1024 * 1024;
 export const ATTACHMENT_TEXT_BUDGET_CHARS = 32 * 1024 * 1024;
 
 /**
+ * Per-note chunk lookup, memoized by chunks-array identity (the same
+ * invalidation contract as the link-graph and corpus-stats caches: refresh
+ * keeps the array on a no-op and swaps it on any change). getNoteChunks backs
+ * three rate-limited MCP handlers, so without this each request re-scanned the
+ * whole corpus to pull one note's chunks.
+ */
+const noteChunksCache = new WeakMap<IndexedChunk[], Map<string, IndexedChunk[]>>();
+
+function chunksByNote(chunks: IndexedChunk[]): Map<string, IndexedChunk[]> {
+  let byNote = noteChunksCache.get(chunks);
+  if (byNote === undefined) {
+    byNote = new Map();
+    for (const chunk of chunks) {
+      const list = byNote.get(chunk.notePath);
+      if (list) list.push(chunk);
+      else byNote.set(chunk.notePath, [chunk]);
+    }
+    noteChunksCache.set(chunks, byNote);
+  }
+  return byNote;
+}
+
+/**
  * Clip extracted text to the ceiling, saying so in the text itself. Null stays
  * null: "no text found" must not become "a notice and nothing else", or an
  * image-only PDF would index as a document whose entire content is the notice.
@@ -623,8 +646,10 @@ export class EngramEngine {
         });
         return;
       }
-      // Snapshot chunks now so a concurrent index mutation can't shift them mid-pass.
-      const chunks = this.index.getChunks().map((c) => ({ id: c.id, text: c.text }));
+      // Snapshot the ARRAY so a concurrent index swap can't shift it mid-pass,
+      // but keep the chunk objects themselves: the store memoizes content
+      // hashes by chunk identity, and a fresh wrapper per call would defeat it.
+      const chunks = this.index.getChunks().slice();
       const identity = this.vectorIdentity();
       const pass = await this.embeddingStore.embedIndex(chunks, provider, {
         batchSize: this.settings.embeddingBatchSize,
@@ -676,7 +701,7 @@ export class EngramEngine {
   /** The indexed chunks for a single note, in index order (empty if not indexed). */
   getNoteChunks(notePath: string): IndexedChunk[] {
     const normalized = normalizeVaultRelativePath(notePath);
-    return this.index.getChunks().filter((c) => c.notePath === normalized);
+    return chunksByNote(this.index.getChunks()).get(normalized) ?? [];
   }
 
   /**

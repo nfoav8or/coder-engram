@@ -87,6 +87,24 @@ export interface EmbedIndexOptions {
   identity?: string;
 }
 
+/**
+ * Content hashes memoized by chunk object identity. IndexManager.refresh keeps
+ * the same chunk objects for unchanged notes, so across refreshes only chunks
+ * from actually-edited notes miss here — without this, every pass re-hashed the
+ * full corpus text to decide that almost all of it was reusable. Callers that
+ * build fresh chunk objects (tests) just miss the cache and pay the hash once.
+ */
+const hashCache = new WeakMap<EmbedChunk, string>();
+
+function chunkContentHash(chunk: EmbedChunk): string {
+  let h = hashCache.get(chunk);
+  if (h === undefined) {
+    h = contentHash(chunk.text);
+    hashCache.set(chunk, h);
+  }
+  return h;
+}
+
 /** FNV-1a 32-bit hash of a string, hex-encoded. Deterministic, dependency-free. */
 export function contentHash(text: string): string {
   let h = 2166136261;
@@ -206,7 +224,7 @@ export class EmbeddingStore {
     let reused = 0;
 
     for (const chunk of chunks) {
-      const h = contentHash(chunk.text);
+      const h = chunkContentHash(chunk);
       const existing = prior[chunk.id];
       if (existing && existing.h === h) {
         nextVectors[chunk.id] = existing;

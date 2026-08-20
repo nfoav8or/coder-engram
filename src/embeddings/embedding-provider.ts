@@ -18,6 +18,18 @@ export interface EmbeddingProvider {
   isAvailable(): Promise<boolean>;
 }
 
+/**
+ * Euclidean norm. Hoisted out of cosineSimilarity for callers that score one
+ * query against many stored vectors: both norms are loop-invariant there (the
+ * query's within one call, each stored vector's across calls), so caching them
+ * cuts the per-candidate work to the dot product alone.
+ */
+export function vectorNorm(v: number[]): number {
+  let sum = 0;
+  for (let i = 0; i < v.length; i++) sum += v[i] * v[i];
+  return Math.sqrt(sum);
+}
+
 /** Cosine similarity between two equal-length vectors. */
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length || a.length === 0) return 0;

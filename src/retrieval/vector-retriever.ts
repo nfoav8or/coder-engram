@@ -10,7 +10,7 @@
  */
 
 import { IndexedChunk } from "../indexing/index-manager";
-import { cosineSimilarity } from "../embeddings/embedding-provider";
+import { vectorNorm } from "../embeddings/embedding-provider";
 import {
   Retriever,
   RetrievalQuery,
@@ -18,6 +18,23 @@ import {
   DEFAULT_LIMIT,
 } from "./retriever";
 import { tokenize, tokenizeChunk, applyFilters, buildSnippet, diversifyByNote } from "./ranking";
+
+/**
+ * Stored-vector norms, keyed by vector array identity. A chunk's vector array
+ * is a stable reference for as long as the embedding store holds it (rebuilt
+ * only on re-embeds/settings changes), so its norm is computed once across all
+ * queries instead of once per candidate per query.
+ */
+const normCache = new WeakMap<number[], number>();
+
+function cachedNorm(vec: number[]): number {
+  let n = normCache.get(vec);
+  if (n === undefined) {
+    n = vectorNorm(vec);
+    normCache.set(vec, n);
+  }
+  return n;
+}
 
 export interface VectorRetrieverOptions {
   vectors: Map<string, number[]>;
@@ -38,11 +55,19 @@ export class VectorRetriever implements Retriever {
     if (filtered.length === 0) return [];
 
     const queryTerms = Array.from(new Set(tokenize(query.query)));
+    // Same math as cosineSimilarity, with both norms hoisted: the query's once
+    // per call, each stored vector's once per lifetime (see normCache above).
+    const qNorm = vectorNorm(qv);
+    if (qNorm === 0) return [];
     const scored: Array<{ chunk: IndexedChunk; score: number }> = [];
     for (const chunk of filtered) {
       const vec = this.options.vectors.get(chunk.id);
-      if (!vec) continue;
-      const score = cosineSimilarity(qv, vec);
+      if (!vec || vec.length !== qv.length) continue;
+      const vNorm = cachedNorm(vec);
+      if (vNorm === 0) continue;
+      let dot = 0;
+      for (let i = 0; i < qv.length; i++) dot += qv[i] * vec[i];
+      const score = dot / (qNorm * vNorm);
       if (score <= 0) continue;
       scored.push({ chunk, score });
     }
