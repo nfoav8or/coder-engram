@@ -1,6 +1,18 @@
 import { describe, it, expect } from "vitest";
-import { LexicalRetriever, lexicalSearch } from "../src/retrieval/lexical-retriever";
+import { LexicalRetriever } from "../src/retrieval/lexical-retriever";
 import { IndexedChunk } from "../src/indexing/index-manager";
+import { RetrievalFilters } from "../src/retrieval/retriever";
+
+/** Local stand-in for the retired `lexicalSearch` convenience export: build a
+ * one-off retriever and call the real API directly. */
+function search(
+  queryText: string,
+  chunks: IndexedChunk[],
+  opts: { limit?: number; filters?: RetrievalFilters; projectRootResolver?: (p: string) => string } = {},
+) {
+  const retriever = new LexicalRetriever({ projectRootResolver: opts.projectRootResolver });
+  return retriever.retrieve({ query: queryText, limit: opts.limit, filters: opts.filters }, chunks);
+}
 
 function chunk(partial: Partial<IndexedChunk> & { id: string; text: string }): IndexedChunk {
   return {
@@ -31,38 +43,38 @@ describe("LexicalRetriever", () => {
   });
 
   it("returns matched terms and a snippet", () => {
-    const results = lexicalSearch("Ollama embedding", corpus);
+    const results = search("Ollama embedding", corpus);
     expect(results[0].chunk.notePath).toBe("Notes/b.md");
     expect(results[0].matchedTerms).toEqual(expect.arrayContaining(["ollama"]));
     expect(results[0].snippet.toLowerCase()).toContain("ollama");
   });
 
   it("returns nothing for an empty query", () => {
-    expect(lexicalSearch("", corpus)).toEqual([]);
+    expect(search("", corpus)).toEqual([]);
   });
 
   it("returns nothing when no term matches", () => {
-    expect(lexicalSearch("xyzzy nonexistent", corpus)).toEqual([]);
+    expect(search("xyzzy nonexistent", corpus)).toEqual([]);
   });
 
   it("respects a folder filter", () => {
-    const results = lexicalSearch("indexing", corpus, { filters: { folder: "Projects" } });
+    const results = search("indexing", corpus, { filters: { folder: "Projects" } });
     expect(results.every((r) => r.chunk.notePath.startsWith("Projects/"))).toBe(true);
   });
 
   it("respects a tag filter", () => {
-    const results = lexicalSearch("indexing", corpus, { filters: { tag: "decision" } });
+    const results = search("indexing", corpus, { filters: { tag: "decision" } });
     expect(results.length).toBe(1);
     expect(results[0].chunk.notePath).toBe("Projects/x/decisions.md");
   });
 
   it("respects a recency filter", () => {
-    const results = lexicalSearch("indexing", corpus, { filters: { sinceMtime: 4000 } });
+    const results = search("indexing", corpus, { filters: { sinceMtime: 4000 } });
     expect(results.every((r) => r.chunk.mtime >= 4000)).toBe(true);
   });
 
   it("honors the limit", () => {
-    const results = lexicalSearch("indexing", corpus, { limit: 1 });
+    const results = search("indexing", corpus, { limit: 1 });
     expect(results.length).toBe(1);
   });
 
@@ -104,7 +116,7 @@ describe("LexicalRetriever", () => {
       chunk({ id: "f", notePath: "Ref/Quartzine Protocol.md", text: "generic body words only here" }),
       chunk({ id: "o", notePath: "Notes/other.md", text: "more generic body words here" }),
     ];
-    const results = lexicalSearch("quartzine protocol", c);
+    const results = search("quartzine protocol", c);
     expect(results.map((r) => r.chunk.id)).toEqual(["f"]);
     expect(results[0].matchedTerms).toEqual(["quartzine", "protocol"]);
   });
@@ -114,7 +126,7 @@ describe("LexicalRetriever", () => {
       chunk({ id: "a1", notePath: "Areas/area.md", aliases: ["bramblewood"], text: "generic body words only" }),
       chunk({ id: "o1", notePath: "Notes/other.md", text: "more generic body words" }),
     ];
-    const results = lexicalSearch("bramblewood", c);
+    const results = search("bramblewood", c);
     expect(results.map((r) => r.chunk.id)).toEqual(["a1"]);
   });
 
@@ -126,10 +138,10 @@ describe("LexicalRetriever", () => {
       chunk({ id: "att", notePath: "Papers/report.pdf", text: "generic body words only here" }),
       chunk({ id: "body", notePath: "Notes/n.md", text: "exporting a pdf invoice summary" }),
     ];
-    const results = lexicalSearch("pdf invoice", c);
+    const results = search("pdf invoice", c);
     expect(results.map((r) => r.chunk.id)).toEqual(["body"]);
     // The extension-less basename still field-matches.
-    expect(lexicalSearch("report", c).map((r) => r.chunk.id)).toEqual(["att"]);
+    expect(search("report", c).map((r) => r.chunk.id)).toEqual(["att"]);
   });
 
   it("a strong body match outranks a field-only match; both still surface", () => {
@@ -140,7 +152,7 @@ describe("LexicalRetriever", () => {
       chunk({ id: "body", notePath: "Notes/a.md", text: "the quartzine threshold is nine and quartzine applies" }),
       chunk({ id: "name", notePath: "Ref/Quartzine.md", text: "generic body words only here" }),
     ];
-    const results = lexicalSearch("quartzine", c);
+    const results = search("quartzine", c);
     expect(results[0].chunk.id).toBe("body");
     expect(results.map((r) => r.chunk.id)).toContain("name");
   });
@@ -154,7 +166,7 @@ describe("LexicalRetriever", () => {
       chunk({ id: "a5", notePath: "Notes/long.md", text: "indexing pipeline detail five" }),
       chunk({ id: "b1", notePath: "Notes/other.md", text: "indexing is also discussed here" }),
     ];
-    const results = lexicalSearch("indexing", flooded, { limit: 4 });
+    const results = search("indexing", flooded, { limit: 4 });
     const notes = results.map((r) => r.chunk.notePath);
     // The other note must surface rather than being buried under long.md's chunks,
     // and long.md must not occupy every slot.

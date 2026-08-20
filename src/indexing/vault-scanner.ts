@@ -137,10 +137,6 @@ function compilePathPattern(pattern: string): (foldedPath: string) => boolean {
   return (foldedPath) => foldedPath.includes(p);
 }
 
-export function matchesPathPattern(path: string, pattern: string): boolean {
-  return compilePathPattern(pattern)(foldForCompare(path));
-}
-
 export class VaultScanner {
   constructor(
     private readonly adapter: VaultAdapter,

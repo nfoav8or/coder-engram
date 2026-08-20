@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { VaultScanner, matchesPathPattern } from "../src/indexing/vault-scanner";
+import { VaultScanner } from "../src/indexing/vault-scanner";
 import { InMemoryVaultAdapter } from "../src/core/vault-adapter";
 
 function config(overrides = {}) {
@@ -12,14 +12,19 @@ function config(overrides = {}) {
   };
 }
 
-describe("matchesPathPattern", () => {
+// No production caller needs `matchesPathPattern` as its own entry point, so it
+// is exercised here through the public `isPathEligible` surface instead — a
+// path matching an excludedPathPatterns entry is exactly a path ruled ineligible.
+describe("excludedPathPatterns matching (via isPathEligible)", () => {
+  const scanner = new VaultScanner(new InMemoryVaultAdapter("v", {}));
   it("matches substrings case-insensitively", () => {
-    expect(matchesPathPattern("Private/Secret.md", "secret")).toBe(true);
+    expect(scanner.isPathEligible("Private/Secret.md", config({ excludedPathPatterns: ["secret"] }))).toBe(false);
   });
   it("matches globs", () => {
-    expect(matchesPathPattern("a/b/secret.md", "**/secret.md")).toBe(true);
-    expect(matchesPathPattern("a/notes.md", "*.md")).toBe(false); // * does not cross '/'
-    expect(matchesPathPattern("notes.md", "*.md")).toBe(true);
+    expect(scanner.isPathEligible("a/b/secret.md", config({ excludedPathPatterns: ["**/secret.md"] }))).toBe(false);
+    // * does not cross '/'
+    expect(scanner.isPathEligible("a/notes.md", config({ excludedPathPatterns: ["*.md"] }))).toBe(true);
+    expect(scanner.isPathEligible("notes.md", config({ excludedPathPatterns: ["*.md"] }))).toBe(false);
   });
 });
 

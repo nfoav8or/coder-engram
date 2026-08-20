@@ -12,7 +12,6 @@ import {
   Retriever,
   RetrievalQuery,
   RetrievalResult,
-  RetrievalFilters,
   DEFAULT_LIMIT,
 } from "./retriever";
 import { tokenize, tokenizeChunk, applyFilters, buildSnippet, diversifyByNote } from "./ranking";
@@ -218,14 +217,4 @@ export class LexicalRetriever implements Retriever {
       matchedTerms: uniqueQueryTerms.filter((t) => stats.tf[s.i].has(t) || stats.fieldTerms[s.i].has(t)),
     }));
   }
-}
-
-/** Convenience helper for callers that just want ranked results from an index. */
-export function lexicalSearch(
-  queryText: string,
-  chunks: IndexedChunk[],
-  opts: { limit?: number; filters?: RetrievalFilters; projectRootResolver?: (p: string) => string } = {},
-): RetrievalResult[] {
-  const retriever = new LexicalRetriever({ projectRootResolver: opts.projectRootResolver });
-  return retriever.retrieve({ query: queryText, limit: opts.limit, filters: opts.filters }, chunks);
 }
