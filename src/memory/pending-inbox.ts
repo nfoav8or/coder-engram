@@ -29,6 +29,7 @@ export const BASE_TAG = "coder-engram";
 const LEGACY_BASE_TAG = "claude-code-engram";
 
 const HEADING_PREFIX = "## Pending Memory: ";
+const RELATED_HEADER = "Related files:";
 
 /** Normalize + dedupe tags, always leading with the base tag, each `#`-prefixed. */
 export function formatTags(tags: string[]): string {
@@ -87,6 +88,23 @@ function neutralizeHeadings(content: string): string {
 }
 
 /**
+ * Neutralize a content TAIL that is byte-identical to a real "Related files:"
+ * section (a bare `Related files:` line, a blank, then only bullets to the end
+ * of the content). When no real section follows, the parser cannot tell that
+ * shape apart from structure — it would silently move the tail out of
+ * `content` and into `relatedPaths`. One leading space on that one line keeps
+ * it content forever; every other placement of the phrase is left verbatim
+ * because the parser's shape check (`isRelatedSection`) already resolves it.
+ */
+function neutralizeRelatedTail(content: string): string {
+  const lines = content.split("\n");
+  const idx = lastIndexOf(lines, (l) => l === RELATED_HEADER);
+  if (idx < 0 || !isRelatedSection(lines, idx + 1, lines.length)) return content;
+  lines[idx] = ` ${lines[idx]}`;
+  return lines.join("\n");
+}
+
+/**
  * Render a pending-memory block. This is the ONE format producer for the inbox;
  * `formatMemoryEntry` delegates here so the on-disk format never drifts.
  *
@@ -107,10 +125,11 @@ export function renderPendingBlock(f: PendingBlockFields): string {
   lines.push("");
   lines.push("Content:");
   lines.push("");
-  lines.push(neutralizeHeadings(f.content.trim()));
+  const content = neutralizeHeadings(f.content.trim());
+  lines.push(f.relatedPaths.length > 0 ? content : neutralizeRelatedTail(content));
   if (f.relatedPaths.length > 0) {
     lines.push("");
-    lines.push("Related files:");
+    lines.push(RELATED_HEADER);
     lines.push("");
     for (const p of f.relatedPaths) lines.push(`* ${oneLine(p)}`);
   }

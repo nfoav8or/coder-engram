@@ -227,6 +227,45 @@ describe("renderPendingBlock", () => {
   });
 });
 
+describe("content ending in a Related-files-shaped list", () => {
+  const fields = (content: string, relatedPaths: string[]) => ({
+    timestampLabel: "L",
+    type: "note",
+    source: "Claude Code",
+    tags: [],
+    content,
+    relatedPaths,
+    status: "pending",
+  });
+
+  it("keeps such content intact instead of moving its tail into relatedPaths", () => {
+    // Without render-side neutralization this block was textually identical to
+    // one with a real Related-files section: parse dropped the content's tail
+    // and fabricated relatedPaths from it.
+    const content = "Some note about the outage.\n\nRelated files:\n\n* x.md";
+    const block = renderPendingBlock(fields(content, []));
+    const entry = parsePendingInbox(INBOX_HEADER + block).entries[0];
+    expect(entry.relatedPaths).toEqual([]);
+    expect(entry.content).toContain("Some note about the outage.");
+    expect(entry.content).toContain("Related files:");
+    expect(entry.content).toContain("* x.md");
+  });
+
+  it("still parses a real Related-files section alongside the look-alike in content", () => {
+    const content = "Body text.\n\nRelated files:\n\n* fake.md";
+    const block = renderPendingBlock(fields(content, ["real.md"]));
+    const entry = parsePendingInbox(INBOX_HEADER + block).entries[0];
+    expect(entry.relatedPaths).toEqual(["real.md"]);
+    expect(entry.content).toContain("* fake.md");
+  });
+
+  it("neutralized related-header content survives a second render without drifting", () => {
+    const block = renderPendingBlock(fields("x\n\nRelated files:\n\n* x.md", []));
+    const parsed = parsePendingInbox(INBOX_HEADER + block).entries[0];
+    expect(renderPendingBlock(parsed)).toBe(parsed.raw);
+  });
+});
+
 describe("format injection through agent-supplied fields", () => {
   // `add_memory` is reachable over the local server, so every field below is
   // attacker-supplied text landing in a line-oriented Markdown format. Before
