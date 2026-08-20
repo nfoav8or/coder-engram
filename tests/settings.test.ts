@@ -72,6 +72,15 @@ describe("migrateSettings", () => {
     expect(() => migrateSettings(42)).not.toThrow();
     expect(() => migrateSettings("nope")).not.toThrow();
   });
+
+  it("coerces a non-string server token to the safe empty default", () => {
+    // A number/null token from a corrupt blob previously flowed through
+    // untouched and threw at startup where validateConfig/checkAuth .trim() it.
+    // Empty is the safe direction: the server refuses to start without a token.
+    expect(migrateSettings({ server: { token: 12345 } }).server.token).toBe("");
+    expect(migrateSettings({ server: { token: null } }).server.token).toBe("");
+    expect(migrateSettings({ server: { token: "keep-me" } }).server.token).toBe("keep-me");
+  });
 });
 
 describe("parseList", () => {

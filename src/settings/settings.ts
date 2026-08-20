@@ -10,6 +10,7 @@
  */
 
 import { DEFAULT_LAYOUT, MemoryLayoutConfig } from "../memory/memory-types";
+import { EmbeddingConfig } from "../embeddings/provider-factory";
 import { ScanConfig } from "../indexing/vault-scanner";
 import { clamp } from "../utils/validation";
 import { normalizeVaultRelativePath } from "../utils/paths";
@@ -201,6 +202,12 @@ export function migrateSettings(raw: unknown): EngramSettings {
   if (typeof merged.server.host !== "string" || merged.server.host.trim() === "") {
     merged.server.host = DEFAULT_SETTINGS.server.host;
   }
+  // A non-string token (corrupt blob, manual data.json edit) would throw at
+  // startup where validateConfig/checkAuth call .trim() on it. An empty token
+  // is the safe fallback: the server refuses to start without one.
+  if (typeof merged.server.token !== "string") {
+    merged.server.token = DEFAULT_SETTINGS.server.token;
+  }
 
   // Coerce the safety-critical booleans explicitly. The spread above would copy
   // a hostile/corrupt blob's values verbatim (e.g. a string "yes"), so we
@@ -282,12 +289,7 @@ export function toScanConfig(settings: EngramSettings): ScanConfig {
   };
 }
 
-export function toEmbeddingConfig(settings: EngramSettings): {
-  provider: EmbeddingProviderId;
-  model: string;
-  endpoint: string;
-  apiKey: string;
-} {
+export function toEmbeddingConfig(settings: EngramSettings): EmbeddingConfig {
   return {
     provider: settings.embeddingProvider,
     model: settings.embeddingModel,
