@@ -187,7 +187,13 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing yet — 0.10.5 has just been cut.
+- 0.10.6-track (on `develop`, unreleased): two fixes from the post-0.10.5
+  review loop (non-string `server.token` no longer crashes server startup;
+  a content tail shaped like a `Related files:` section is no longer split
+  into metadata at parse time), three retrieval/indexing economies (cached
+  vector norms, per-chunk content-hash memoization, O(1) per-note chunk
+  lookup), supply-chain hardening (workflow actions pinned to commit SHAs),
+  and small API-surface simplifications.
 
 ## Open questions for the maintainer
 

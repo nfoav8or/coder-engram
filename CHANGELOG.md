@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `migrateSettings` now coerces a non-string `server.token` (from a corrupt or
+  hand-edited settings blob) to the safe empty default instead of letting it
+  flow through and throw at server startup — restoring the documented
+  "corrupt blob degrades without throwing" invariant.
+- A pending-memory `content` whose last paragraph is byte-identical to a real
+  `Related files:` section (when the entry has no real one) is no longer
+  silently split at parse time — the tail stayed in `content` instead of being
+  presented as related-path metadata. `renderPendingBlock` now neutralizes
+  exactly that ambiguous tail (one leading space, the same mechanism as
+  heading neutralization); every other placement of the phrase is preserved
+  verbatim, and round-trips stay byte-stable.
+
+### Performance
+
+- Vector/hybrid queries no longer recompute both vector norms per candidate:
+  the query's norm is computed once per query and each stored vector's norm is
+  memoized for the vector's lifetime, leaving only the dot product per
+  candidate (~3× fewer FLOPs on the scoring loop).
+- An embedding pass triggered by an edit re-hashes only the changed notes'
+  chunks: content hashes are memoized by chunk object identity, and the engine
+  now hands the store the real chunk objects instead of per-call wrappers
+  (previously every pass re-hashed the full corpus text).
+- `getNoteChunks` — behind `summarize_note`, `get_note_context`, and
+  `find_related_notes` — is an O(1) memoized per-note lookup instead of an
+  O(corpus) scan per request, using the same chunks-array-identity contract as
+  the link-graph and corpus-stats caches.
+
+### Security
+
+- CI and release workflows pin all third-party GitHub Actions to full commit
+  SHAs (with version comments) instead of mutable major-version tags, closing
+  the moved-tag supply-chain vector against a workflow that holds release,
+  OIDC, and attestation permissions.
+
+### Changed
+
+- Removed two test-only convenience exports (`lexicalSearch`,
+  `matchesPathPattern`); their tests now exercise the public API directly.
+  `toEmbeddingConfig` reuses the `EmbeddingConfig` interface instead of
+  duplicating its shape inline.
+
 ## [0.10.5] — 2026-08-16
 
 ### Fixed
