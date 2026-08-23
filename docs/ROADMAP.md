@@ -189,7 +189,7 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing yet — 0.10.7 has just been cut. Next up: the large-vault P2/P3 assessment for the first 0.11.x release (sharded index persistence, lazy chunk text, worker-offloaded parsing, approximate-nearest-neighbour search).
+- Nothing yet — 0.10.7 has just been cut. The large-vault P2/P3 assessment for the 0.11.x series is written up in [LARGE_VAULTS.md](LARGE_VAULTS.md): sharded index persistence, lazy chunk text, worker-offloaded parsing, and a measured pure-TS IVF approximate-nearest-neighbour prototype (43–57× query speedup at ≥99.7% recall in the spike).
 
 ## Open questions for the maintainer
 
