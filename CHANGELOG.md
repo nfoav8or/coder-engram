@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- `embeddings.json` moves to a version-2 format: vectors are stored as base64
+  Float32Array bytes with a precomputed norm, ~40% smaller on disk, far cheaper
+  to parse at load, and half the heap per component. A version-1 file is
+  migrated in place at load — upgrading never re-embeds.
+- Lexical retrieval gains an inverted index: per-term posting lists (body +
+  field terms) bound each query by its matching chunks instead of a full-corpus
+  scan. At 10k synthetic notes, filtered lexical p50 dropped ~27%.
+- Vector scoring reads each stored vector's norm from the store instead of
+  recomputing or session-caching it.
+
+### Added
+
+- The embedding pass checkpoints every ~1,024 newly embedded chunks, so a long
+  first pass interrupted by an Obsidian quit resumes from the checkpoint
+  instead of restarting from zero.
+- New **Concurrent batches** setting (`embeddingConcurrency`, default 1,
+  clamped 1–8): embedding batches in flight at once. The default stays
+  strictly sequential so rate-limited hosted APIs are never flooded; 2–4
+  roughly doubles first-pass throughput against a local Ollama.
+
 ## [0.10.6] — 2026-08-19
 
 ### Fixed

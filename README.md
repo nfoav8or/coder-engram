@@ -226,6 +226,7 @@ Settings live under **Settings → Coder Engram**. Key settings and their safe d
 | Embedding endpoint | *(empty)* | Base URL for the provider. Ollama defaults to `http://127.0.0.1:11434`; OpenAI-compatible needs the full base URL including any version prefix. |
 | Embedding API key | *(empty)* | Secret bearer key for OpenAI-compatible endpoints. Stored locally, sent only in the `Authorization` header, and never logged. |
 | Embedding batch size | `16` | Chunks embedded per request at index time; clamped to 1–512. |
+| Concurrent batches | `1` | Embedding batches in flight at once; clamped to 1–8. Keep at 1 for hosted APIs; 2–4 speeds up the first pass against a local Ollama. |
 | Enable local server | `false` | Disabled by default. Localhost MCP/HTTP bridge for Claude Code. |
 | Server host | `127.0.0.1` | Localhost only unless "Allow non-localhost binding" is on. |
 | Server port | `3999` | |
