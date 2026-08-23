@@ -166,7 +166,7 @@ describe(`scale benchmark (${NOTES} notes, dim ${DIM}, ${QUERIES} queries)`, () 
 
       // --- scan + full build ---
       const [scanned, scanMs] = await timedAsync(() => scanner.scan(SCAN_CONFIG));
-      const [index, buildMs] = timed(() => im.build(scanned));
+      const [index, buildMs] = await timedAsync(() => im.build(scanned));
       const chunkCount = index.chunks.length;
 
       // --- footprint (E2): deterministic on-disk / in-memory sizes ---
@@ -182,7 +182,7 @@ describe(`scale benchmark (${NOTES} notes, dim ${DIM}, ${QUERIES} queries)`, () 
       // unchanged notes are skipped without a read, so this measures the real
       // debounced-refresh path (O(changed) in file I/O), not a full re-read.
       const [rescanned, rescanMs] = await timedAsync(() => scanner.scan(SCAN_CONFIG, im.getNoteMtimes()));
-      const [refreshResult, refreshMs] = timed(() => im.refresh(rescanned));
+      const [refreshResult, refreshMs] = await timedAsync(() => im.refresh(rescanned));
 
       // --- build query set drawn from the same vocab (so results are non-empty) ---
       const qrng = makeRng(1234);

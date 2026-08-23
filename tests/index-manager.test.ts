@@ -31,7 +31,7 @@ describe("IndexManager build + persist + load", () => {
     const scanner = new VaultScanner(adapter);
     const notes = await scanner.scan(scanConfig());
     const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
-    const index = mgr.build(notes);
+    const index = await mgr.build(notes);
     expect(index.metadata.noteCount).toBe(2);
     expect(index.chunks.length).toBeGreaterThanOrEqual(2);
     expect(index.chunks[0].notePath).toBeTruthy();
@@ -43,7 +43,7 @@ describe("IndexManager build + persist + load", () => {
     });
     const notes = await new VaultScanner(adapter).scan(scanConfig());
     const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
-    mgr.build(notes);
+    await mgr.build(notes);
     await mgr.persist();
 
     const reloaded = new IndexManager(adapter, PATHS, { clock: nextClock });
@@ -60,7 +60,7 @@ describe("IndexManager build + persist + load", () => {
     const adapter = new InMemoryVaultAdapter("v", { "Notes/a.md": "# Alpha\ncontent" });
     const notes = await new VaultScanner(adapter).scan(scanConfig());
     const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
-    mgr.build(notes);
+    await mgr.build(notes);
     await mgr.persist();
 
     const meta = JSON.parse(await adapter.read(PATHS.metadataFile)) as { version: number };
@@ -87,7 +87,7 @@ describe("IndexManager build + persist + load", () => {
     const adapter = new InMemoryVaultAdapter("v", { "Notes/a.md": "# Alpha\ncontent" });
     const notes = await new VaultScanner(adapter).scan(scanConfig());
     const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
-    mgr.build(notes);
+    await mgr.build(notes);
     await mgr.persist();
     const good = JSON.parse(await adapter.read(PATHS.chunksFile)) as Record<string, unknown>[];
 
@@ -122,7 +122,7 @@ describe("IndexManager incremental refresh", () => {
     });
     const scanner = new VaultScanner(adapter);
     const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
-    mgr.build(await scanner.scan(scanConfig()));
+    await mgr.build(await scanner.scan(scanConfig()));
 
     // Modify a.md (bumps mtime), delete b.md, add c.md.
     adapter.touch("Notes/a.md", "# Alpha\nCHANGED content");
@@ -132,9 +132,9 @@ describe("IndexManager incremental refresh", () => {
       "Notes/c.md": "# Gamma\nnew note",
     });
     const mgr2 = new IndexManager(adapter2, PATHS, { clock: nextClock });
-    mgr2.build(await scanner.scan(scanConfig())); // seed with a+b (old adapter)
+    await mgr2.build(await scanner.scan(scanConfig())); // seed with a+b (old adapter)
 
-    const result = mgr2.refresh(await new VaultScanner(adapter2).scan(scanConfig()));
+    const result = await mgr2.refresh(await new VaultScanner(adapter2).scan(scanConfig()));
     // Whatever the exact prior state, c is added and b removed relative to seed.
     expect(result.added + result.updated + result.unchanged).toBeGreaterThan(0);
     const paths = mgr2.getChunks().map((c) => c.notePath);
@@ -149,8 +149,8 @@ describe("IndexManager incremental refresh", () => {
     const scanner = new VaultScanner(adapter);
     const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
     const notes = await scanner.scan(scanConfig());
-    mgr.build(notes);
-    const result = mgr.refresh(notes); // same notes, same mtime
+    await mgr.build(notes);
+    const result = await mgr.refresh(notes); // same notes, same mtime
     expect(result.unchanged).toBe(1);
     expect(result.updated).toBe(0);
     expect(result.added).toBe(0);
@@ -164,16 +164,16 @@ describe("IndexManager incremental refresh", () => {
     const scanner = new VaultScanner(adapter);
     const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
     const notes = await scanner.scan(scanConfig());
-    mgr.build(notes);
+    await mgr.build(notes);
     const before = mgr.getChunks();
-    mgr.refresh(notes);
+    await mgr.refresh(notes);
     // Same ARRAY OBJECT, not just equal contents: retrieval memoizes corpus
     // stats by chunks-array identity, so swapping in an equal-content array
     // would silently re-pay the full stats build on the next query.
     expect(mgr.getChunks()).toBe(before);
 
     adapter.touch("Notes/a.md", "# Alpha\nCHANGED");
-    mgr.refresh(await scanner.scan(scanConfig()));
+    await mgr.refresh(await scanner.scan(scanConfig()));
     expect(mgr.getChunks()).not.toBe(before);
   });
 
@@ -187,16 +187,16 @@ describe("IndexManager incremental refresh", () => {
     });
     const scanner = new VaultScanner(adapter);
     const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
-    mgr.build(await scanner.scan(scanConfig()));
+    await mgr.build(await scanner.scan(scanConfig()));
     const before = mgr.getChunks();
 
-    const result = mgr.refresh(await scanner.scan(scanConfig()));
+    const result = await mgr.refresh(await scanner.scan(scanConfig()));
     expect(result).toEqual({ added: 0, updated: 0, removed: 0, unchanged: 2 });
     expect(mgr.getChunks()).toBe(before);
 
     // An empty note gaining content is an update and becomes indexed.
     adapter.touch("Notes/empty.md", "# Filled\nnow has content");
-    const result2 = mgr.refresh(await scanner.scan(scanConfig()));
+    const result2 = await mgr.refresh(await scanner.scan(scanConfig()));
     expect(result2.updated).toBe(1);
     expect(result2.added).toBe(0);
     expect(mgr.getChunks().map((c) => c.notePath)).toContain("Notes/empty.md");
@@ -216,13 +216,13 @@ describe("IndexManager incremental refresh", () => {
     });
     const scanner = new VaultScanner(adapter);
     const first = new IndexManager(adapter, PATHS, { clock: nextClock });
-    first.build(await scanner.scan(scanConfig()));
+    await first.build(await scanner.scan(scanConfig()));
     await first.persist();
 
     for (let session = 0; session < 2; session++) {
       const reloaded = new IndexManager(adapter, PATHS, { clock: nextClock });
       expect(await reloaded.load()).not.toBeNull();
-      const result = reloaded.refresh(await scanner.scan(scanConfig(), reloaded.getNoteMtimes()));
+      const result = await reloaded.refresh(await scanner.scan(scanConfig(), reloaded.getNoteMtimes()));
       expect(result).toEqual({ added: 0, updated: 0, removed: 0, unchanged: 3 });
       await reloaded.persist();
     }
@@ -234,7 +234,7 @@ describe("IndexManager incremental refresh", () => {
     const adapter = new InMemoryVaultAdapter("v", { "Notes/a.md": "# Alpha\nstable" });
     const scanner = new VaultScanner(adapter);
     const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
-    mgr.build(await scanner.scan(scanConfig()));
+    await mgr.build(await scanner.scan(scanConfig()));
     await mgr.persist();
 
     const meta = JSON.parse(await adapter.read(PATHS.metadataFile)) as Record<string, unknown>;
@@ -245,7 +245,7 @@ describe("IndexManager incremental refresh", () => {
     const reloaded = new IndexManager(adapter, PATHS, { clock: nextClock });
     expect(await reloaded.load()).not.toBeNull();
     expect(reloaded.getNoteMtimes().get("Notes/a.md")).toBeDefined();
-    const result = reloaded.refresh(await scanner.scan(scanConfig(), reloaded.getNoteMtimes()));
+    const result = await reloaded.refresh(await scanner.scan(scanConfig(), reloaded.getNoteMtimes()));
     expect(result.removed).toBe(0);
     // And it writes the map going forward, so the next session is clean.
     await reloaded.persist();
@@ -265,7 +265,7 @@ describe("frontmatter-only notes (alias hubs)", () => {
     const scanner = new VaultScanner(adapter);
     const notes = await scanner.scan(scanConfig());
     const mgr = new IndexManager(adapter, PATHS, { clock: nextClock });
-    const index = mgr.build(notes);
+    const index = await mgr.build(notes);
 
     const hub = index.chunks.filter((c) => c.notePath === "Hubs/Quartzine Protocol.md");
     expect(hub.length).toBe(1);

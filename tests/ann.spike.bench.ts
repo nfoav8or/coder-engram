@@ -94,7 +94,7 @@ class IvfIndex {
         this.centroids.push(Float32Array.from(corpus[i]));
       }
     }
-    let assignment = new Array<number>(corpus.length).fill(0);
+    const assignment = new Array<number>(corpus.length).fill(0);
     for (let iter = 0; iter < iterations; iter++) {
       this.centroidNorms = this.centroids.map(norm);
       // Assign.

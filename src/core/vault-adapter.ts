@@ -200,6 +200,13 @@ export class InMemoryVaultAdapter implements VaultAdapter {
     this.registerFolders(path);
   }
 
+  /** Remove a file (simulates the user deleting a note). Test helper only —
+   * the production VaultAdapter interface deliberately has no delete. */
+  removeFile(path: string): void {
+    this.files.delete(path);
+    this.binaryFiles.delete(path);
+  }
+
   /** Raw snapshot for assertions. */
   snapshot(): Record<string, string> {
     const out: Record<string, string> = {};

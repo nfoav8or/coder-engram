@@ -23,6 +23,7 @@
 
 import { VaultAdapter } from "../core/vault-adapter";
 import { toMessage } from "../utils/errors";
+import { fnv1a32 } from "../utils/hash";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 import { EmbeddingProvider, VectorEntry, vectorNorm } from "./embedding-provider";
 
@@ -58,6 +59,32 @@ interface StoredEmbeddings {
   model: string;
   dim: number;
   vectors: Record<string, StoredVector>;
+}
+
+/**
+ * Size-adaptive persistence, mirroring the chunk index: past
+ * SINGLE_FILE_MAX_VECTORS the store persists as a vector-less manifest (the
+ * embeddings file itself) plus 256 shard files (`embeddings-00.json` …,
+ * routed by FNV-1a of the chunk id), so a checkpoint or an edit rewrites only
+ * the shards it touched instead of one monolithic file. Below
+ * SHARD_DOWN_FACTOR × threshold it switches back (hysteresis). Small vaults
+ * never leave the single-file layout.
+ */
+const SINGLE_FILE_MAX_VECTORS = 20_000;
+const SHARD_DOWN_FACTOR = 0.8;
+const SHARD_COUNT = 256;
+
+function shardOfId(chunkId: string): number {
+  return fnv1a32(chunkId) % SHARD_COUNT;
+}
+
+/** The manifest written in place of the single file when sharded. */
+interface ShardedManifest {
+  version: number;
+  model: string;
+  dim: number;
+  layout: "sharded";
+  shardCount: number;
 }
 
 function encodeVector(vec: ArrayLike<number>): string {
@@ -171,12 +198,7 @@ function chunkContentHash(chunk: EmbedChunk): string {
 
 /** FNV-1a 32-bit hash of a string, hex-encoded. Deterministic, dependency-free. */
 export function contentHash(text: string): string {
-  let h = 2166136261;
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return (h >>> 0).toString(16);
+  return fnv1a32(text).toString(16);
 }
 
 function providerIdentity(provider: EmbeddingProvider): string {
@@ -187,12 +209,36 @@ export class EmbeddingStore {
   private state: StoredEmbeddings | null = null;
   /** Decoded entries for the CURRENT state object; rebuilt when state swaps. */
   private decoded: { state: StoredEmbeddings; map: Map<string, VectorEntry> } | null = null;
+  /** Layout of the current on-disk files; recorded, never re-derived (see
+   * IndexManager for the same pattern and rationale). */
+  private layout: "single" | "sharded" = "single";
+  private dirtyShards = new Set<number>();
+  private allShardsDirty = true;
+  /** Serializes persists so a checkpoint landing while another persist is
+   * mid-write cannot interleave shard files. */
+  private persistChain: Promise<void> = Promise.resolve();
+  private readonly singleFileMaxVectors: number;
 
   constructor(
     private readonly adapter: VaultAdapter,
     private readonly embeddingsFile: string,
     private readonly logger: Logger = NULL_LOGGER,
-  ) {}
+    options: { singleFileMaxVectors?: number } = {},
+  ) {
+    this.singleFileMaxVectors = options.singleFileMaxVectors ?? SINGLE_FILE_MAX_VECTORS;
+  }
+
+  private shardFile(i: number): string {
+    const hex = i.toString(16).padStart(2, "0");
+    return this.embeddingsFile.replace(/\.json$/, `-${hex}.json`);
+  }
+
+  private nextLayout(vectorCount: number): "single" | "sharded" {
+    if (this.layout === "sharded") {
+      return vectorCount < this.singleFileMaxVectors * SHARD_DOWN_FACTOR ? "single" : "sharded";
+    }
+    return vectorCount > this.singleFileMaxVectors ? "sharded" : "single";
+  }
 
   /** Load persisted vectors; tolerant of a missing/corrupt/legacy file. */
   async load(): Promise<void> {
@@ -202,7 +248,51 @@ export class EmbeddingStore {
         return;
       }
       const raw = await this.adapter.read(this.embeddingsFile);
-      const parsed = JSON.parse(raw) as Partial<StoredEmbeddings>;
+      const parsed = JSON.parse(raw) as Partial<StoredEmbeddings> & Partial<ShardedManifest>;
+      if (
+        parsed.layout === "sharded" &&
+        parsed.version === EMBED_STORE_VERSION &&
+        typeof parsed.model === "string" &&
+        typeof parsed.dim === "number" &&
+        parsed.shardCount === SHARD_COUNT
+      ) {
+        // Sharded layout: the file above is a vector-less manifest; vectors
+        // live in the shard files. A corrupt shard drops only ITS vectors
+        // (re-embedded on the next pass) — unlike the chunk index, a full
+        // rebuild here costs real provider work, so damage stays local.
+        const vectors: Record<string, StoredVector> = {};
+        let droppedShards = 0;
+        for (let i = 0; i < SHARD_COUNT; i++) {
+          const file = this.shardFile(i);
+          // eslint-disable-next-line no-await-in-loop -- shards are read sequentially through the adapter
+          if (!(await this.adapter.exists(file))) continue;
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            const shard = JSON.parse(await this.adapter.read(file)) as unknown;
+            if (!isVectorMap(shard)) throw new Error("malformed shard");
+            Object.assign(vectors, shard);
+          } catch (err) {
+            droppedShards++;
+            this.logger.warn("Dropped corrupt embedding shard; its vectors will re-embed", {
+              shard: i,
+              error: toMessage(err),
+            });
+          }
+        }
+        if (droppedShards > 0) {
+          this.logger.warn("Embedding shards dropped at load", { droppedShards, of: SHARD_COUNT });
+        }
+        this.state = {
+          version: EMBED_STORE_VERSION,
+          model: parsed.model,
+          dim: parsed.dim,
+          vectors,
+        };
+        this.layout = "sharded";
+        this.dirtyShards.clear();
+        this.allShardsDirty = false;
+        return;
+      }
       if (
         parsed.version === EMBED_STORE_VERSION &&
         typeof parsed.model === "string" &&
@@ -215,6 +305,9 @@ export class EmbeddingStore {
           dim: parsed.dim,
           vectors: parsed.vectors,
         };
+        this.layout = "single";
+        this.dirtyShards.clear();
+        this.allShardsDirty = false;
         return;
       }
       // Version-1 file (JSON number-array vectors): migrate in place so an
@@ -303,6 +396,15 @@ export class EmbeddingStore {
   async clear(): Promise<void> {
     this.state = null;
     this.decoded = null;
+    if (this.layout === "sharded") {
+      for (let i = 0; i < SHARD_COUNT; i++) {
+        // eslint-disable-next-line no-await-in-loop -- rare user action; sequential adapter writes
+        await this.adapter.write(this.shardFile(i), "{}");
+      }
+    }
+    this.layout = "single";
+    this.dirtyShards.clear();
+    this.allShardsDirty = true;
     if (await this.adapter.exists(this.embeddingsFile)) {
       await this.adapter.write(
         this.embeddingsFile,
@@ -353,7 +455,14 @@ export class EmbeddingStore {
     // independent of whether their text changed or the provider identity moved.
     const currentIds = new Set(chunks.map((c) => c.id));
     const oldIds = this.state ? Object.keys(this.state.vectors) : [];
-    const removed = oldIds.filter((id) => !currentIds.has(id)).length;
+    let removed = 0;
+    for (const id of oldIds) {
+      if (!currentIds.has(id)) {
+        removed++;
+        this.dirtyShards.add(shardOfId(id));
+      }
+    }
+    if (identityChanged) this.allShardsDirty = true;
     let dim = identityChanged ? 0 : this.state?.dim ?? 0;
     let embedded = 0;
     let sinceCheckpoint = 0;
@@ -387,11 +496,13 @@ export class EmbeddingStore {
               throw new Error("Embedding provider returned inconsistent vector dimensions");
             }
             const f32 = new Float32Array(vec);
-            nextVectors[batch[j].chunk.id] = {
+            const id = batch[j].chunk.id;
+            nextVectors[id] = {
               h: batch[j].hash,
               n: vectorNorm(f32),
               v: encodeVector(f32),
             };
+            this.dirtyShards.add(shardOfId(id));
             embedded++;
             sinceCheckpoint++;
           }
@@ -432,8 +543,70 @@ export class EmbeddingStore {
     return { embedded, reused, removed, skipped: false };
   }
 
-  private async persist(): Promise<void> {
+  /** Persists are chained: a checkpoint can land while a previous persist is
+   * still writing shards, and interleaved writes would tear the layout. */
+  private persist(): Promise<void> {
+    this.persistChain = this.persistChain.then(() => this.doPersist());
+    return this.persistChain;
+  }
+
+  private async doPersist(): Promise<void> {
     if (!this.state) return;
-    await this.adapter.write(this.embeddingsFile, JSON.stringify(this.state));
+    const state = this.state;
+    const count = Object.keys(state.vectors).length;
+    const layout = this.nextLayout(count);
+    const switching = layout !== this.layout;
+    if (switching) {
+      this.logger.info("Embeddings layout switch", { from: this.layout, to: layout, vectors: count });
+    }
+    // Snapshot-and-clear up front so shards dirtied WHILE this persist writes
+    // stay marked for the next one; a failed persist falls back to
+    // rewrite-everything rather than silently under-writing.
+    const writeAll = switching || this.allShardsDirty;
+    const dirty = new Set(this.dirtyShards);
+    this.dirtyShards.clear();
+    this.allShardsDirty = false;
+    try {
+      if (layout === "single") {
+        await this.adapter.write(this.embeddingsFile, JSON.stringify(state));
+        if (switching) {
+          // No delete on the adapter (nothing in this plugin destroys files);
+          // obsolete shards are blanked to a sentinel the loader never reads.
+          for (let i = 0; i < SHARD_COUNT; i++) {
+            // eslint-disable-next-line no-await-in-loop -- rare one-time layout downgrade
+            await this.adapter.write(this.shardFile(i), "{}");
+          }
+        }
+      } else {
+        // Group only the entries that will be written. The O(vectors) key scan
+        // per persist is trivial beside the embedding work between persists.
+        const groups = new Map<number, Record<string, StoredVector>>();
+        for (const [id, sv] of Object.entries(state.vectors)) {
+          const shard = shardOfId(id);
+          if (!writeAll && !dirty.has(shard)) continue;
+          let group = groups.get(shard);
+          if (!group) groups.set(shard, (group = {}));
+          group[id] = sv;
+        }
+        const targets = writeAll ? Array.from({ length: SHARD_COUNT }, (_, i) => i) : [...dirty];
+        for (const i of targets) {
+          // eslint-disable-next-line no-await-in-loop -- sequential adapter writes on purpose
+          await this.adapter.write(this.shardFile(i), JSON.stringify(groups.get(i) ?? {}));
+        }
+        const manifest: ShardedManifest = {
+          version: EMBED_STORE_VERSION,
+          model: state.model,
+          dim: state.dim,
+          layout: "sharded",
+          shardCount: SHARD_COUNT,
+        };
+        await this.adapter.write(this.embeddingsFile, JSON.stringify(manifest));
+        this.logger.info("Persisted embedding shards", { written: targets.length, of: SHARD_COUNT });
+      }
+      this.layout = layout;
+    } catch (err) {
+      this.allShardsDirty = true;
+      throw err;
+    }
   }
 }

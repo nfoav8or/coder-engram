@@ -250,7 +250,7 @@ describe("relevance eval (lexical, golden queries)", () => {
       metadataFile: "Index/metadata.json",
       embeddingsFile: "Index/embeddings.json",
     });
-    im.build(await scanner.scan(SCAN));
+    await im.build(await scanner.scan(SCAN));
     const chunks = im.getChunks();
     const retriever = new LexicalRetriever();
 
@@ -304,7 +304,7 @@ describe("relevance eval (lexical, golden queries)", () => {
       metadataFile: "Index/metadata.json",
       embeddingsFile: "Index/embeddings.json",
     });
-    im.build(await scanner.scan(SCAN));
+    await im.build(await scanner.scan(SCAN));
     const chunks = im.getChunks();
     const retriever = new LexicalRetriever();
 

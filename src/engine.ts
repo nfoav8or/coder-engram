@@ -504,7 +504,7 @@ export class EngramEngine {
     this.extractionCache.consumeReset(); // a full build re-chunks everything
     this.lastScanConfigKey = JSON.stringify(scanConfig);
     this.index.setScanConfigKey(this.lastScanConfigKey);
-    const built = this.index.build(notes);
+    const built = await this.index.build(notes);
     await this.index.persist();
     this.logger.info("Reindexed vault", {
       notes: built.metadata.noteCount,
@@ -541,7 +541,7 @@ export class EngramEngine {
     const force = this.extractionCache.consumeReset()
       ? new Set(attachmentNotes.map((n) => n.path))
       : undefined;
-    const result = this.index.refresh(notes, force);
+    const result = await this.index.refresh(notes, force);
     // Persist only when something changed: a no-op persist re-serializes the
     // whole index (tens of MB at scale) on the main thread, and — because the
     // index files live inside the vault — its own writes re-fire the vault
