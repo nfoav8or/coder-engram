@@ -1,6 +1,6 @@
 # Large vaults — the 0.11.x assessment (P2 + P3)
 
-Status: **assessment for the next y-release**, written after the 0.10.7 P1 set shipped.
+Status: assessment written after 0.10.7; **P2.1 (sharded persistence) and the yielding half of P2.3 are implemented on the 0.11.0 track** — see the notes in each section. Remaining items stand as assessed.
 Nothing in this document is implemented yet unless it says so. Numbers marked *measured*
 come from the benches in `tests/scale.bench.ts` and `tests/ann.spike.bench.ts` on the
 development machine; treat them as one-machine evidence, not guarantees.
@@ -17,7 +17,9 @@ are structural, not tuning.
 
 ## P2 — unlocks ~500k chunks
 
-### P2.1 Sharded index persistence
+### P2.1 Sharded index persistence — IMPLEMENTED (0.11.0 track)
+
+> Shipped as designed with one refinement: the layout is **size-adaptive** with hysteresis (shard above 20k chunks/vectors, return to single-file below 80% of that), so small vaults keep byte-identical single-file behavior and never pay shard overhead. Both caches (chunks + embeddings) shard; embedding checkpoints now rewrite only dirty shards. A corrupt embedding shard drops only its own vectors.
 
 `chunks.json` is one document, re-serialized whole on any change (165 MB at 20k notes).
 Proposal: shard by hash of `notePath` into a fixed 256 buckets
@@ -60,7 +62,9 @@ the ~dozen page survivors, and BM25 scoring needs term statistics, not text. Pro
   own release, with the architecture test extended to keep `Index/` reads inside the
   adapter.
 
-### P2.3 Worker-offloaded parse and chunking
+### P2.3 Worker-offloaded parse and chunking — PARTIAL (0.11.0 track ships the yielding fallback)
+
+> The cooperative-yielding path (yield to the event loop every 500 re-chunked notes in `build`/`refresh`) is implemented — it removes the renderer-freeze failure mode everywhere, including hosts without workers, at sub-second total overhead even at 100k notes. The actual Worker (esbuild second entry point, message protocol, ArrayBuffer transfer) is deferred to the next 0.11.x step: it needs manual in-Obsidian verification that this development loop cannot provide, and the yielding path already caps the user-visible harm.
 
 Initial chunking of a 5 GB vault on the renderer thread freezes Obsidian for minutes.
 The pure core never imports `obsidian` or `node:*` as values — exactly the property that

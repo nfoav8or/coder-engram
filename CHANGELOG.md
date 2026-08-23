@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Size-adaptive index persistence: past ~20k chunks the chunk index persists as
+  256 shard files (routed by note-path hash) instead of one monolithic
+  `chunks.json`, so an edit rewrites ~1/256 of the corpus; the embeddings cache
+  mirrors this past ~20k vectors (a vector-less manifest plus vector shards),
+  and embedding checkpoints rewrite only the shards they touched. Small vaults
+  keep the classic single-file layout byte-for-byte; hysteresis keeps
+  boundary-sized vaults from flip-flopping; layout switches blank obsolete
+  files to sentinels (the adapter has no delete). A corrupt chunk shard forces
+  a rebuild; a corrupt embedding shard drops only its own vectors.
+- `IndexManager.build`/`refresh` yield to the host event loop every 500
+  re-chunked notes, so a large first index or rebuild can no longer freeze the
+  Obsidian UI.
+
 ## [0.10.7] — 2026-08-22
 
 ### Performance
