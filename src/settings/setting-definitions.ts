@@ -348,6 +348,21 @@ export function buildSettingDefinitions(ctx: DefinitionContext): SettingDefiniti
             validate: inRange("Batch size", 1, 512),
           },
         },
+        {
+          name: "Concurrent batches",
+          desc:
+            "Embedding batches in flight at once (1–8). Keep at 1 for hosted APIs so their rate " +
+            "limits are respected; 2–4 speeds up the first pass against a local Ollama.",
+          visible: usesEndpoint,
+          control: {
+            type: "number",
+            key: "embeddingConcurrency",
+            min: 1,
+            max: 8,
+            step: 1,
+            validate: inRange("Concurrent batches", 1, 8),
+          },
+        },
       ],
     },
     {

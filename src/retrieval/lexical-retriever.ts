@@ -54,6 +54,15 @@ interface CorpusStats {
   df: Map<string, number>;
   avgdl: number;
   N: number;
+  /**
+   * Inverted index: term -> ascending chunk indices where the term appears in
+   * the body OR the field terms. Scoring credits a chunk only through those two
+   * sources, so the union of the query terms' posting lists is EXACTLY the set
+   * of chunks that can score > 0 — everything else was a guaranteed-zero
+   * iteration the old full scan paid anyway (O(corpus) per query; the postings
+   * bound it by matches instead).
+   */
+  postings: Map<string, number[]>;
 }
 
 function fieldTermsFor(chunk: IndexedChunk): Set<string> {
@@ -108,13 +117,28 @@ function buildStats(chunks: IndexedChunk[]): CorpusStats {
   const fieldTerms: Set<string>[] = [];
   const docLengths: number[] = [];
   const df = new Map<string, number>();
+  const postings = new Map<string, number[]>();
+  const post = (term: string, i: number) => {
+    const list = postings.get(term);
+    // A term can be in both tf and fieldTerms of the same chunk; ascending
+    // build order makes the duplicate check a cheap last-element comparison.
+    if (list) {
+      if (list[list.length - 1] !== i) list.push(i);
+    } else {
+      postings.set(term, [i]);
+    }
+  };
   let totalLen = 0;
-  for (const chunk of chunks) {
-    const cs = chunkStatsFor(chunk);
+  for (let i = 0; i < chunks.length; i++) {
+    const cs = chunkStatsFor(chunks[i]);
     tf.push(cs.tf);
     docLengths.push(cs.docLength);
     totalLen += cs.docLength;
-    for (const term of cs.tf.keys()) df.set(term, (df.get(term) ?? 0) + 1);
+    for (const term of cs.tf.keys()) {
+      df.set(term, (df.get(term) ?? 0) + 1);
+      post(term, i);
+    }
+    for (const term of cs.fieldTerms) post(term, i);
     headingTerms.push(cs.headingTerms);
     fieldTerms.push(cs.fieldTerms);
   }
@@ -127,6 +151,7 @@ function buildStats(chunks: IndexedChunk[]): CorpusStats {
     df,
     avgdl: totalLen / (chunks.length || 1),
     N: chunks.length,
+    postings,
   };
 }
 
@@ -181,11 +206,18 @@ export class LexicalRetriever implements Retriever {
       return Math.log(1 + (stats.N - n + 0.5) / (n + 0.5));
     });
 
+    // Candidates come from the posting lists, not a full-corpus scan: only a
+    // chunk holding at least one query term (body or field) can score > 0.
+    // Sorted ascending so tie-breaking matches the old index-order iteration.
+    const candidateIdx = new Set<number>();
+    for (const term of uniqueQueryTerms) {
+      const list = stats.postings.get(term);
+      if (list) for (const i of list) candidateIdx.add(i);
+    }
+    const candidateOrder = Array.from(candidateIdx).sort((a, b) => a - b);
+
     const scored: Array<{ chunk: IndexedChunk; score: number; i: number }> = [];
-    for (let i = 0; i < candidates.length; i++) {
-      // A chunk whose body tokenizes to nothing can still deserve field credit
-      // (e.g. a non-Latin body under an ASCII filename).
-      if (stats.docLengths[i] === 0 && stats.fieldTerms[i].size === 0) continue;
+    for (const i of candidateOrder) {
       const tf = stats.tf[i];
       let score = 0;
       for (let t = 0; t < uniqueQueryTerms.length; t++) {

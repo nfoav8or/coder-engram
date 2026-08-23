@@ -375,10 +375,10 @@ export class EngramEngine {
     const projectRootResolver = (p: string) => resolveProjectPaths(this.paths, p).folder;
     const mode = this.effectiveMode();
     if (mode === "vector") {
-      return new VectorRetriever({ vectors: this.embeddingStore.vectorsMap(), projectRootResolver });
+      return new VectorRetriever({ vectors: this.embeddingStore.entriesMap(), projectRootResolver });
     }
     if (mode === "hybrid") {
-      return new HybridRetriever({ vectors: this.embeddingStore.vectorsMap(), projectRootResolver });
+      return new HybridRetriever({ vectors: this.embeddingStore.entriesMap(), projectRootResolver });
     }
     return new LexicalRetriever({ projectRootResolver });
   }
@@ -653,6 +653,7 @@ export class EngramEngine {
       const identity = this.vectorIdentity();
       const pass = await this.embeddingStore.embedIndex(chunks, provider, {
         batchSize: this.settings.embeddingBatchSize,
+        concurrency: this.settings.embeddingConcurrency,
         identity,
       });
       this.lastEmbeddedIdentity = identity;

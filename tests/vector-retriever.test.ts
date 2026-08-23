@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { VectorRetriever } from "../src/retrieval/vector-retriever";
 import { IndexedChunk } from "../src/indexing/index-manager";
+import type { VectorEntry } from "../src/embeddings/embedding-provider";
+import { vectorNorm } from "../src/embeddings/embedding-provider";
+
+const entry = (v: number[]): VectorEntry => ({ vec: new Float32Array(v), norm: vectorNorm(v) });
 
 function chunk(partial: Partial<IndexedChunk> & { id: string; text: string }): IndexedChunk {
   return {
@@ -23,10 +27,10 @@ const corpus: IndexedChunk[] = [
   chunk({ id: "c", notePath: "Projects/x/c.md", tags: ["decision"], text: "gamma vector content" }),
 ];
 
-const vectors = new Map<string, number[]>([
-  ["a", [1, 0, 0]],
-  ["b", [0, 1, 0]],
-  ["c", [0, 0, 1]],
+const vectors = new Map<string, VectorEntry>([
+  ["a", entry([1, 0, 0])],
+  ["b", entry([0, 1, 0])],
+  ["c", entry([0, 0, 1])],
 ]);
 
 describe("VectorRetriever", () => {

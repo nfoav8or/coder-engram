@@ -2,7 +2,7 @@
  * VectorRetriever — ranks chunks by cosine similarity between the (pre-computed)
  * query vector and each chunk's stored embedding.
  *
- * It holds a chunkId -> vector map supplied by the engine (loaded from
+ * It holds a chunkId -> {vector, norm} map supplied by the engine (decoded from
  * EmbeddingStore). `retrieve` is synchronous: the async query embedding is done
  * upstream and arrives as `query.queryVector`. With no query vector (provider
  * down, or not yet embedded) it returns nothing, so hybrid retrieval degrades
@@ -10,7 +10,7 @@
  */
 
 import { IndexedChunk } from "../indexing/index-manager";
-import { vectorNorm } from "../embeddings/embedding-provider";
+import { VectorEntry, vectorNorm } from "../embeddings/embedding-provider";
 import {
   Retriever,
   RetrievalQuery,
@@ -19,25 +19,8 @@ import {
 } from "./retriever";
 import { tokenize, tokenizeChunk, applyFilters, buildSnippet, diversifyByNote } from "./ranking";
 
-/**
- * Stored-vector norms, keyed by vector array identity. A chunk's vector array
- * is a stable reference for as long as the embedding store holds it (rebuilt
- * only on re-embeds/settings changes), so its norm is computed once across all
- * queries instead of once per candidate per query.
- */
-const normCache = new WeakMap<number[], number>();
-
-function cachedNorm(vec: number[]): number {
-  let n = normCache.get(vec);
-  if (n === undefined) {
-    n = vectorNorm(vec);
-    normCache.set(vec, n);
-  }
-  return n;
-}
-
 export interface VectorRetrieverOptions {
-  vectors: Map<string, number[]>;
+  vectors: Map<string, VectorEntry>;
   projectRootResolver?: (project: string) => string;
 }
 
@@ -55,19 +38,19 @@ export class VectorRetriever implements Retriever {
     if (filtered.length === 0) return [];
 
     const queryTerms = Array.from(new Set(tokenize(query.query)));
-    // Same math as cosineSimilarity, with both norms hoisted: the query's once
-    // per call, each stored vector's once per lifetime (see normCache above).
+    // Same math as cosineSimilarity with both norms hoisted: the query's is
+    // computed once per call, each stored vector's was computed at embed time
+    // and travels with the vector — the per-candidate work is the dot product.
     const qNorm = vectorNorm(qv);
     if (qNorm === 0) return [];
     const scored: Array<{ chunk: IndexedChunk; score: number }> = [];
     for (const chunk of filtered) {
-      const vec = this.options.vectors.get(chunk.id);
-      if (!vec || vec.length !== qv.length) continue;
-      const vNorm = cachedNorm(vec);
-      if (vNorm === 0) continue;
+      const entry = this.options.vectors.get(chunk.id);
+      if (!entry || entry.vec.length !== qv.length || entry.norm === 0) continue;
+      const vec = entry.vec;
       let dot = 0;
       for (let i = 0; i < qv.length; i++) dot += qv[i] * vec[i];
-      const score = dot / (qNorm * vNorm);
+      const score = dot / (qNorm * entry.norm);
       if (score <= 0) continue;
       scored.push({ chunk, score });
     }

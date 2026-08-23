@@ -34,6 +34,9 @@ export const EMBEDDING_PROVIDERS: EmbeddingProviderId[] = [
 const MIN_BATCH_SIZE = 1;
 const MAX_BATCH_SIZE = 512;
 const DEFAULT_BATCH_SIZE = 16;
+const MIN_CONCURRENCY = 1;
+const MAX_CONCURRENCY = 8;
+const DEFAULT_CONCURRENCY = 1;
 
 export interface ServerSettings {
   enabled: boolean;
@@ -98,6 +101,9 @@ export interface EngramSettings {
   embeddingApiKey: string;
   /** Chunks per embedding request. Bounds sustained memory/network use. */
   embeddingBatchSize: number;
+  /** Embedding batches in flight at once. 1 = strictly sequential (safe for
+   * rate-limited SaaS endpoints); raise only for a local provider. */
+  embeddingConcurrency: number;
   /** How retrieval combines lexical and vector signals (with a provider set). */
   retrievalMode: RetrievalMode;
   server: ServerSettings;
@@ -124,6 +130,7 @@ export const DEFAULT_SETTINGS: EngramSettings = {
   embeddingEndpoint: "",
   embeddingApiKey: "",
   embeddingBatchSize: DEFAULT_BATCH_SIZE,
+  embeddingConcurrency: DEFAULT_CONCURRENCY,
   retrievalMode: "hybrid",
   server: {
     enabled: false,
@@ -189,6 +196,10 @@ export function migrateSettings(raw: unknown): EngramSettings {
   merged.embeddingBatchSize = Number.isFinite(parsedBatch)
     ? clamp(parsedBatch, MIN_BATCH_SIZE, MAX_BATCH_SIZE)
     : DEFAULT_BATCH_SIZE;
+  const parsedConcurrency = Math.trunc(Number(merged.embeddingConcurrency));
+  merged.embeddingConcurrency = Number.isFinite(parsedConcurrency)
+    ? clamp(parsedConcurrency, MIN_CONCURRENCY, MAX_CONCURRENCY)
+    : DEFAULT_CONCURRENCY;
   // Repair the persisted port by clamping into the valid range; a non-numeric
   // value falls back to the default. Note the finite check is separate from the
   // clamp so a legitimate 0 is clamped to 1 rather than being treated as absent

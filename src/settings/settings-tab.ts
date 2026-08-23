@@ -527,6 +527,23 @@ export class EngramSettingTab extends PluginSettingTab {
           });
           this.deferCommit(t);
         });
+
+      new Setting(containerEl)
+        .setName("Concurrent batches")
+        .setDesc(
+          "Embedding batches in flight at once (1–8). Keep at 1 for hosted APIs so their rate " +
+            "limits are respected; 2–4 speeds up the first pass against a local Ollama.",
+        )
+        .addText((t) => {
+          t.setValue(String(this.s.embeddingConcurrency)).onChange((v) => {
+            const n = Math.trunc(Number(v));
+            if (Number.isFinite(n) && n >= 1 && n <= 8) {
+              this.s.embeddingConcurrency = n;
+              this.dirty = true;
+            }
+          });
+          this.deferCommit(t);
+        });
     }
   }
 

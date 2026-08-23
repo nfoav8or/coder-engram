@@ -24,10 +24,20 @@ export interface EmbeddingProvider {
  * query's within one call, each stored vector's across calls), so caching them
  * cuts the per-candidate work to the dot product alone.
  */
-export function vectorNorm(v: number[]): number {
+export function vectorNorm(v: ArrayLike<number>): number {
   let sum = 0;
   for (let i = 0; i < v.length; i++) sum += v[i] * v[i];
   return Math.sqrt(sum);
+}
+
+/**
+ * One retrievable vector: the Float32Array the scoring loop dots against and
+ * its precomputed Euclidean norm (persisted by the store, so no corpus-wide
+ * norm pass is ever needed at query time).
+ */
+export interface VectorEntry {
+  vec: Float32Array;
+  norm: number;
 }
 
 /** Cosine similarity between two equal-length vectors. */

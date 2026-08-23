@@ -2,6 +2,10 @@ import { describe, it, expect } from "vitest";
 import { HybridRetriever } from "../src/retrieval/hybrid-retriever";
 import { LexicalRetriever } from "../src/retrieval/lexical-retriever";
 import { IndexedChunk } from "../src/indexing/index-manager";
+import type { VectorEntry } from "../src/embeddings/embedding-provider";
+import { vectorNorm } from "../src/embeddings/embedding-provider";
+
+const entry = (v: number[]): VectorEntry => ({ vec: new Float32Array(v), norm: vectorNorm(v) });
 
 function chunk(partial: Partial<IndexedChunk> & { id: string; text: string }): IndexedChunk {
   return {
@@ -26,10 +30,10 @@ const corpus: IndexedChunk[] = [
 
 // Vector map: b is strongly aligned with the query vector below; a and c are
 // orthogonal to it (cosine 0 => excluded from the vector side).
-const vectors = new Map<string, number[]>([
-  ["a", [1, 0, 0]],
-  ["b", [0, 1, 0]],
-  ["c", [1, 0, 0]],
+const vectors = new Map<string, VectorEntry>([
+  ["a", entry([1, 0, 0])],
+  ["b", entry([0, 1, 0])],
+  ["c", entry([1, 0, 0])],
 ]);
 
 describe("HybridRetriever", () => {

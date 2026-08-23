@@ -13,6 +13,7 @@
  */
 
 import { IndexedChunk } from "../indexing/index-manager";
+import type { VectorEntry } from "../embeddings/embedding-provider";
 import {
   Retriever,
   RetrievalQuery,
@@ -30,7 +31,7 @@ const CANDIDATE_MULTIPLIER = 4;
 const MIN_CANDIDATES = 20;
 
 export interface HybridRetrieverOptions {
-  vectors: Map<string, number[]>;
+  vectors: Map<string, VectorEntry>;
   projectRootResolver?: (project: string) => string;
 }
 

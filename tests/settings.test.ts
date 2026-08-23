@@ -73,6 +73,14 @@ describe("migrateSettings", () => {
     expect(() => migrateSettings("nope")).not.toThrow();
   });
 
+  it("clamps embedding concurrency into range and defaults it safely", () => {
+    expect(migrateSettings({}).embeddingConcurrency).toBe(1);
+    expect(migrateSettings({ embeddingConcurrency: 4 }).embeddingConcurrency).toBe(4);
+    expect(migrateSettings({ embeddingConcurrency: 99 }).embeddingConcurrency).toBe(8);
+    expect(migrateSettings({ embeddingConcurrency: 0 }).embeddingConcurrency).toBe(1);
+    expect(migrateSettings({ embeddingConcurrency: "nope" }).embeddingConcurrency).toBe(1);
+  });
+
   it("coerces a non-string server token to the safe empty default", () => {
     // A number/null token from a corrupt blob previously flowed through
     // untouched and threw at startup where validateConfig/checkAuth .trim() it.

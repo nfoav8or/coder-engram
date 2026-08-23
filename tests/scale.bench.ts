@@ -27,6 +27,10 @@ import { EngramEngine } from "../src/engine";
 import { DEFAULT_SETTINGS } from "../src/settings/settings";
 import { NULL_LOGGER } from "../src/utils/logger";
 import { TextExtractor } from "../src/extract/text-extractor";
+import type { VectorEntry } from "../src/embeddings/embedding-provider";
+import { vectorNorm } from "../src/embeddings/embedding-provider";
+
+const entry = (v: number[]): VectorEntry => ({ vec: new Float32Array(v), norm: vectorNorm(v) });
 
 const NOTES = Number(process.env.BENCH_NOTES ?? 2000);
 const DIM = Number(process.env.BENCH_DIM ?? 384);
@@ -203,8 +207,8 @@ describe(`scale benchmark (${NOTES} notes, dim ${DIM}, ${QUERIES} queries)`, () 
 
       // --- synthetic vectors + hybrid query latency ---
       const [vectors, vecBuildMs] = timed(() => {
-        const m = new Map<string, number[]>();
-        for (const c of chunks) m.set(c.id, fakeVector(hashSeed(c.id)));
+        const m = new Map<string, VectorEntry>();
+        for (const c of chunks) m.set(c.id, entry(fakeVector(hashSeed(c.id))));
         return m;
       });
       const hybrid = new HybridRetriever({ vectors });
