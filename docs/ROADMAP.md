@@ -1,6 +1,6 @@
 # Roadmap
 
-Coder Engram is built in milestones. Milestones 1 through 14 are complete (through 0.10.0); the patch releases from 0.9.1 to 0.10.6 are listed under "Patch releases since 0.9.0", the Obsidian review findings and what was done about each under "Plugin review findings", work not yet released under "In progress", and anything not scheduled under "Deferred / future".
+Coder Engram is built in milestones. Milestones 1 through 14 are complete (through 0.10.0); the patch releases from 0.9.1 to 0.10.7 are listed under "Patch releases since 0.9.0", the Obsidian review findings and what was done about each under "Plugin review findings", work not yet released under "In progress", and anything not scheduled under "Deferred / future".
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -165,6 +165,7 @@ described in full in [CHANGELOG.md](../CHANGELOG.md); the short version:
 | 0.10.4 | The plugin assumed text was ASCII: lexical search tokenized Russian, Greek, Japanese, Chinese and Hebrew notes into **nothing**, and an excluded inline tag like `#privé` was misread so the privacy filter failed open (`INDEX_VERSION` bumped to drop the affected notes). |
 | 0.10.5 | The extractive summarizer kept its **own** ASCII-only word pattern after 0.10.4 fixed retrieval's, so `summarize_note` scored every non-Latin sentence 0 and quietly returned the first N sentences instead of the most representative ones. Plus three hot-path economies: an all-unchanged refresh skips the embedding pass's whole-corpus hash sweep, scan include/exclude rules compile once per scan instead of once per file, and `find_related_notes` caches the link graph per index change. |
 | 0.10.6 | Two fixes from the post-0.10.5 review loop: a corrupt settings blob with a non-string `server.token` crashed server startup (violating the documented degrade-without-throwing invariant), and a pending memory whose content ends in a "Related files:"-shaped list was mis-parsed — the tail silently became related-path metadata. Plus three more economies (cached vector norms, per-chunk content-hash memoization, O(1) per-note chunk lookup) and supply-chain hardening: CI/release workflow actions pinned to commit SHAs. |
+| 0.10.7 | The large-vault P1 set: `embeddings.json` v2 stores vectors as binary Float32 bytes with precomputed norms (~40% smaller, migrated in place — no re-embed), lexical retrieval scores only the union of the query terms' posting lists instead of the whole corpus, the embedding pass checkpoints every ~1,024 chunks so an interrupted first pass resumes, and a new Concurrent batches setting (default 1) speeds first passes against local providers. |
 
 Five themes run through them, and they are worth stating because they are where the next
 bug probably is: a filter that fails **open** is invisible (0.9.2, 0.9.7, 0.9.9); a tool that
@@ -188,7 +189,7 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing yet — 0.10.6 has just been cut.
+- Nothing yet — 0.10.7 has just been cut. Next up: the large-vault P2/P3 assessment for the first 0.11.x release (sharded index persistence, lazy chunk text, worker-offloaded parsing, approximate-nearest-neighbour search).
 
 ## Open questions for the maintainer
 
