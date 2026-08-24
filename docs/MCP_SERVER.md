@@ -90,10 +90,20 @@ All enforced in code; see [SECURITY.md](SECURITY.md) for the full model.
 
 - **Off by default.** No listener opens unless you explicitly enable it.
 - **Localhost by default.** Binding a non-loopback host requires **both** the
-  `allowNonLocalhost` opt-in **and** a token, or the server refuses to start.
+  `allowNonLocalhost` opt-in **and** a token of at least 16 characters, or the
+  server refuses to start (the Generate button makes a 64-character one).
 - **Constant-time token auth.** Tokens are compared via SHA-256 digest +
   `timingSafeEqual`, so response timing does not leak the token. Auth is checked
   before the request body is read.
+- **Failed-auth lockout.** After 10 failed authentications within 60 s every
+  request is refused with `429` until the window drains — the constant-time
+  compare defeats timing leaks, not volume, and an exposed bind could otherwise
+  be guessed at wire speed. One global counter (not per client: an attacker can
+  rotate addresses; the only legitimate client is your own agent).
+- **Socket timeouts.** Headers must arrive within 15 s and the whole request
+  within 30 s; idle keep-alive sockets close after 5 s. A slow-trickle client
+  cannot hold sockets open for Node's default minutes. Tool execution time is
+  not bounded by these — they cover receiving the request only.
 - **DNS-rebinding protection.** The `Host` header must be loopback or the bound
   host; any `Origin` header must be a loopback origin. Only a genuinely absent
   `Origin` passes (non-browser clients send none); opaque browser origins

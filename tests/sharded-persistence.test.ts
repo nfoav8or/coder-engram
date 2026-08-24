@@ -30,6 +30,15 @@ function seedNotes(n: number): Record<string, string> {
 const chunkShardFile = (i: number) => `Index/chunks-${i.toString(16).padStart(2, "0")}.json`;
 const embShardFile = (i: number) => `Index/embeddings-${i.toString(16).padStart(2, "0")}.json`;
 
+/** An adapter whose writes can be made to fail, to open crash windows on purpose. */
+class FaultyAdapter extends InMemoryVaultAdapter {
+  failOn: ((path: string, content: string) => boolean) | null = null;
+  async write(path: string, content: string): Promise<void> {
+    if (this.failOn?.(path, content)) throw new Error("simulated write failure");
+    await super.write(path, content);
+  }
+}
+
 async function mtimes(adapter: InMemoryVaultAdapter, files: string[]): Promise<Map<string, number | null>> {
   const out = new Map<string, number | null>();
   for (const f of files) out.set(f, await adapter.getMtime(f));
@@ -127,6 +136,48 @@ describe("size-adaptive sharded chunk persistence", () => {
     await adapter.write(PATHS.metadataFile, JSON.stringify(meta));
     expect(await new IndexManager(adapter, PATHS, opts).load()).toBeNull();
   });
+
+  it("rebuilds when a shard file is missing rather than loading its notes as gone", async () => {
+    // Every shard exists once the layout is adopted, so absence is damage. The
+    // old behavior loaded the shard as empty; noteMtimes then reported its
+    // notes as unchanged, so no refresh ever re-chunked them — a silent,
+    // permanent hole in search results.
+    const adapter = new InMemoryVaultAdapter("v", seedNotes(15));
+    const mgr = new IndexManager(adapter, PATHS, opts);
+    await mgr.build(await new VaultScanner(adapter).scan(scanConfig()));
+    await mgr.persist();
+
+    adapter.removeFile(chunkShardFile(fnv1a32("Notes/n0.md") % 256));
+    expect(await new IndexManager(adapter, PATHS, opts).load()).toBeNull();
+  });
+
+  it("a persist that dies mid layout switch leaves a loadable index either side of the metadata write", async () => {
+    const adapter = new FaultyAdapter("v", seedNotes(5));
+    const mgr = new IndexManager(adapter, PATHS, opts);
+    const scanner = new VaultScanner(adapter);
+    await mgr.build(await scanner.scan(scanConfig()));
+    await mgr.persist();
+    for (let i = 5; i < 15; i++) adapter.touch(`Notes/n${i}.md`, `# Note ${i}\nBody ${i}.`);
+    await mgr.refresh(await scanner.scan(scanConfig(), mgr.getNoteMtimes()));
+
+    // Crash BEFORE the metadata names the new layout: the old single file is
+    // still intact and still the one metadata points at.
+    adapter.failOn = (path) => path === PATHS.metadataFile;
+    await expect(mgr.persist()).rejects.toThrow(/simulated/);
+    expect((await new IndexManager(adapter, PATHS, opts).load())?.chunks).toHaveLength(5);
+
+    // Crash AFTER metadata but before the old file is blanked: metadata names
+    // the shards, which are complete. The reverse order (blank, then metadata)
+    // would load the blank as a valid empty index.
+    adapter.failOn = (path, content) => path === PATHS.chunksFile && content === "[]";
+    await expect(mgr.persist()).rejects.toThrow(/simulated/);
+    expect((await new IndexManager(adapter, PATHS, opts).load())?.chunks).toHaveLength(15);
+
+    adapter.failOn = null;
+    await mgr.persist();
+    expect(await adapter.read(PATHS.chunksFile)).toBe("[]");
+    expect((await new IndexManager(adapter, PATHS, opts).load())?.chunks).toHaveLength(15);
+  });
 });
 
 describe("size-adaptive sharded embeddings persistence", () => {
@@ -205,5 +256,46 @@ describe("size-adaptive sharded embeddings persistence", () => {
     const result = await reloaded.embedIndex(chunks, new MockEmbeddingProvider());
     expect(result.embedded).toBe(dropped);
     expect(result.reused).toBe(15 - dropped);
+  });
+
+  it("keeps persisting after one checkpoint write fails", async () => {
+    // The persist chain used to be built with `.then(run)` only, so a single
+    // rejected persist rejected every later one without running it — the rest
+    // of the session's vectors silently never reached disk.
+    const adapter = new FaultyAdapter("v");
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER, storeOpts);
+    await store.load();
+    const chunks = makeChunks(3);
+    adapter.failOn = (path) => path === FILE;
+    await expect(store.embedIndex(chunks, new MockEmbeddingProvider())).rejects.toThrow(/simulated/);
+
+    adapter.failOn = null;
+    const edited = [...chunks];
+    edited[1] = { id: chunks[1].id, text: "edited so a persist is due" };
+    await expect(store.embedIndex(edited, new MockEmbeddingProvider())).resolves.toMatchObject({ embedded: 1 });
+    const reloaded = new EmbeddingStore(adapter, FILE, NULL_LOGGER, storeOpts);
+    await reloaded.load();
+    expect(reloaded.entriesMap().size).toBe(3);
+  });
+
+  it("rejects a vector whose base64 decodes off a float boundary instead of throwing at decode", async () => {
+    // "AAAA" is shape-valid base64 of length 4 but decodes to 3 bytes;
+    // `new Float32Array(buffer)` throws on that, and the decode runs at
+    // retriever build time with nothing above it to catch the throw.
+    const adapter = new InMemoryVaultAdapter("v");
+    const mock = new MockEmbeddingProvider();
+    await adapter.write(
+      FILE,
+      JSON.stringify({
+        version: 2,
+        model: `${mock.id}:${mock.model}`,
+        dim: 1,
+        vectors: { "Notes/x.md::0": { h: "abc", n: 1, v: "AAAA" } },
+      }),
+    );
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER, storeOpts);
+    await store.load();
+    expect(() => store.entriesMap()).not.toThrow();
+    expect(store.entriesMap().size).toBe(0);
   });
 });

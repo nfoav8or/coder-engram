@@ -34,6 +34,28 @@ import {
 const MAX_BODY_BYTES = 1_000_000; // 1 MB cap on a single request body.
 const MAX_BATCH_SIZE = 32; // cap JSON-RPC batch length to bound per-request work.
 const LISTEN_TIMEOUT_MS = 5_000;
+// Failed-auth lockout: after this many 401s inside the window every request is
+// refused (429) until the window drains. The constant-time compare defeats
+// timing leaks, not volume — a network-exposed token could otherwise be
+// guessed at wire speed. One global counter, not per-client: an attacker can
+// rotate addresses, and the only legitimate client is the user's own agent.
+const AUTH_FAIL_MAX = 10;
+const AUTH_FAIL_WINDOW_MS = 60_000;
+// Minimum token length for a non-loopback bind; the settings UI generates 64.
+const MIN_EXPOSED_TOKEN_LENGTH = 16;
+// Socket timeouts, so a slow-trickle client cannot hold sockets open for
+// Node's default minutes. requestTimeout covers headers + body receipt only;
+// tool execution time is unaffected.
+const HEADERS_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+const KEEP_ALIVE_TIMEOUT_MS = 5_000;
+/** Cap attacker-controlled header text in log lines. */
+const LOG_HEADER_MAX = 128;
+
+function logValue(header: string | string[] | undefined): string | undefined {
+  if (header === undefined) return undefined;
+  return String(header).slice(0, LOG_HEADER_MAX);
+}
 
 export interface LocalServerOptions {
   engine: EngramEngine;
@@ -60,6 +82,8 @@ export class LocalServer {
   private readonly registry = new ToolRegistry();
   private readonly rateLimiter: RateLimiter;
   private readonly clock: () => number;
+  /** Timestamps of recent failed auth attempts (see AUTH_FAIL_MAX). */
+  private authFailures: number[] = [];
   // Serializes start/stop so overlapping settings changes or a double-invoked
   // "Restart" command can never bind two listeners or leak a port.
   private lifecycle: Promise<unknown> = Promise.resolve();
@@ -112,6 +136,12 @@ export class LocalServer {
           `A token is required to bind a non-localhost host ("${host}"). Set a server token first.`,
         );
       }
+      if (s.token.trim().length < MIN_EXPOSED_TOKEN_LENGTH) {
+        throw new ConfigError(
+          `The server token is too short to bind a non-localhost host ("${host}"): ` +
+            `use at least ${MIN_EXPOSED_TOKEN_LENGTH} characters (the Generate button makes a strong one).`,
+        );
+      }
     }
     return { host, port };
   }
@@ -161,15 +191,22 @@ export class LocalServer {
       this.opts.logger.warn("Local server is running WITHOUT a token — any local process can query memory.");
     }
 
-    const server = http.createServer((req, res) => {
+    const server = http.createServer(
+      {
+        headersTimeout: HEADERS_TIMEOUT_MS,
+        requestTimeout: REQUEST_TIMEOUT_MS,
+        keepAliveTimeout: KEEP_ALIVE_TIMEOUT_MS,
+      },
+      (req, res) => {
       // Read the last COMMITTED snapshot so non-server settings changes (which
       // skip the rebind above) still reach auth and the tool context — while
       // in-flight edits to the host's live object never do.
-      this.handleRequest(req, res, this.settings ?? snapshot, address.host).catch((err) => {
-        this.opts.logger.error("Unhandled request error", { error: toMessage(err) });
-        endJson(res, 500, { error: "Internal error." });
-      });
-    });
+        this.handleRequest(req, res, this.settings ?? snapshot, address.host).catch((err) => {
+          this.opts.logger.error("Unhandled request error", { error: toMessage(err) });
+          endJson(res, 500, { error: "Internal error." });
+        });
+      },
+    );
 
     await this.listen(server, address);
     // Persistent handler so a post-listen socket error (e.g. EMFILE on accept)
@@ -254,12 +291,12 @@ export class LocalServer {
 
     // 2. DNS-rebinding protection: validate Host and Origin before anything else.
     if (!isHostHeaderAllowed(req.headers.host, boundHost)) {
-      this.opts.logger.warn("Rejected request: bad Host header", { host: req.headers.host });
+      this.opts.logger.warn("Rejected request: bad Host header", { host: logValue(req.headers.host) });
       endJson(res, 403, { error: "Forbidden host." });
       return;
     }
     if (!isOriginAllowed(req.headers.origin)) {
-      this.opts.logger.warn("Rejected request: cross-origin", { origin: req.headers.origin });
+      this.opts.logger.warn("Rejected request: cross-origin", { origin: logValue(req.headers.origin) });
       endJson(res, 403, { error: "Cross-origin requests are not allowed." });
       return;
     }
@@ -272,9 +309,21 @@ export class LocalServer {
       return;
     }
 
-    // 4. Auth (constant-time). Do this before reading the (potentially large) body.
+    // 4. Auth (constant-time). Do this before reading the (potentially large)
+    //    body. Locked out while the failure window is full — checked first so
+    //    a locked-out caller learns nothing from the compare either.
+    const now = this.clock();
+    this.authFailures = this.authFailures.filter((t) => t > now - AUTH_FAIL_WINDOW_MS);
+    if (this.authFailures.length >= AUTH_FAIL_MAX) {
+      endJson(res, 429, { error: "Too many failed authentication attempts; retry later." });
+      return;
+    }
     const decision = checkAuth(settings.server.token, req.headers.authorization);
     if (!decision.ok) {
+      this.authFailures.push(now);
+      if (this.authFailures.length >= AUTH_FAIL_MAX) {
+        this.opts.logger.warn("Auth lockout engaged", { failures: this.authFailures.length });
+      }
       this.opts.logger.warn("Auth failed", { reason: decision.reason });
       res.setHeader("WWW-Authenticate", "Bearer");
       endJson(res, 401, { error: "Unauthorized." });

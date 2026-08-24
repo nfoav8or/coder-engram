@@ -174,6 +174,11 @@ export class EngramEngine {
   /** Serializes embedding passes so overlapping reindex/refresh/sync can't
    * interleave (last-writer-wins persist / mid-pass index mutation). */
   private embedChain: Promise<void> = Promise.resolve();
+  /** Serializes reindex/refresh. `IndexManager.build`/`refresh` yield to the
+   * event loop mid-pass, so two overlapping calls (auto-index debounce +
+   * settings-triggered refresh + the `reindex_vault` tool) would otherwise
+   * interleave their scans and mutate one index concurrently. */
+  private indexChain: Promise<unknown> = Promise.resolve();
   /** Vector identity of the last COMPLETED embedding pass; null when the last
    * pass failed, was skipped (provider unavailable), or none has run. Lets a
    * no-op refresh skip the pass entirely — the pass re-hashes every chunk in
@@ -494,8 +499,19 @@ export class EngramEngine {
     return loaded;
   }
 
+  /** Run an index pass after any in-flight one completes (see indexChain). */
+  private serializeIndexPass<T>(op: () => Promise<T>): Promise<T> {
+    const run = this.indexChain.then(op, op);
+    this.indexChain = run.catch(() => undefined);
+    return run;
+  }
+
   /** Full rebuild of the index from the current vault, then persist + embed. */
-  async reindex(): Promise<{ noteCount: number; chunkCount: number }> {
+  reindex(): Promise<{ noteCount: number; chunkCount: number }> {
+    return this.serializeIndexPass(() => this.doReindex());
+  }
+
+  private async doReindex(): Promise<{ noteCount: number; chunkCount: number }> {
     const scanConfig = toScanConfig(this.settings);
     const notes: ScannedNote[] = [
       ...(await this.scanner.scan(scanConfig)),
@@ -515,9 +531,13 @@ export class EngramEngine {
   }
 
   /** Incremental refresh (used by auto-index and manual refresh). */
-  async refresh(): Promise<RefreshResult> {
+  refresh(): Promise<RefreshResult> {
+    return this.serializeIndexPass(() => this.doRefresh());
+  }
+
+  private async doRefresh(): Promise<RefreshResult> {
     if (!this.index.getIndex()) {
-      await this.reindex();
+      await this.doReindex();
       return { added: this.index.getChunks().length, updated: 0, removed: 0, unchanged: 0 };
     }
     const scanConfig = toScanConfig(this.settings);

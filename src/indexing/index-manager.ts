@@ -12,7 +12,7 @@
 
 import { VaultAdapter } from "../core/vault-adapter";
 import { toMessage } from "../utils/errors";
-import { fnv1a32 } from "../utils/hash";
+import { Layout, SHARD_COUNT, chooseLayout, shardOf, shardPath } from "../utils/sharding";
 import { chunkMarkdown, ChunkOptions } from "../core/markdown-chunker";
 import { ScannedNote, ScanResult, isUnchangedNote } from "./vault-scanner";
 import { Logger, NULL_LOGGER } from "../utils/logger";
@@ -91,7 +91,7 @@ export interface IndexMetadata {
    * field is written so a reload never has to guess which files to read —
    * the layout decision is recorded, not re-derived.
    */
-  layout?: "single" | "sharded";
+  layout?: Layout;
   /** Shard count when `layout` is "sharded". Only 256 is ever written; a file
    * claiming anything else is treated as corrupt (rebuild) rather than guessed at. */
   shardCount?: number;
@@ -139,26 +139,12 @@ export interface IndexManagerOptions {
   singleFileMaxChunks?: number;
 }
 
-/**
- * Sharded-layout constants. Above SINGLE_FILE_MAX_CHUNKS the index persists as
- * 256 shard files (`chunks-00.json` … `chunks-ff.json`, routed by FNV-1a of
- * the note path) so an edit rewrites ~1/256 of the corpus instead of one
- * monolithic chunks.json — the write cost that dominates large vaults and
- * hammers sync clients. Below SHARD_DOWN_FACTOR × threshold it switches back;
- * the gap is hysteresis so a vault sitting at the boundary doesn't rewrite its
- * whole cache on alternate refreshes. Small vaults never leave the single-file
- * layout and see byte-identical behavior to previous releases.
- */
+/** Above this many chunks the index persists as shard files routed by note
+ * path (see utils/sharding.ts for the layout rules). */
 const SINGLE_FILE_MAX_CHUNKS = 20_000;
-const SHARD_DOWN_FACTOR = 0.8;
-const SHARD_COUNT = 256;
 /** Yield to the host event loop after this many notes are re-chunked in one
  * refresh, so a large rebuild cannot freeze the renderer. */
 const CHUNK_YIELD_EVERY = 500;
-
-function shardOf(notePath: string): number {
-  return fnv1a32(notePath) % SHARD_COUNT;
-}
 
 export function chunkNote(note: ScannedNote, chunkOptions?: ChunkOptions): IndexedChunk[] {
   const chunks = chunkMarkdown(note.content, {
@@ -228,7 +214,7 @@ export class IndexManager {
    * layout switch (rewrite everything, blank the obsolete files) from a
    * steady-state write (dirty shards only).
    */
-  private layout: "single" | "sharded" = "single";
+  private layout: Layout = "single";
   /** Shards touched since the last persist. Meaningful only for the sharded
    * layout; a layout switch or full build sets allShardsDirty instead. */
   private dirtyShards = new Set<number>();
@@ -409,62 +395,27 @@ export class IndexManager {
     return result;
   }
 
-  /** Path of shard `i` (derived from the validated chunks path, so shards can
-   * only ever live beside chunks.json inside `Index/`). */
   private shardFile(i: number): string {
-    const hex = i.toString(16).padStart(2, "0");
-    return this.paths.chunksFile.replace(/\.json$/, `-${hex}.json`);
-  }
-
-  /**
-   * Layout for the NEXT persist. Sticky around the threshold (hysteresis) so a
-   * vault at the boundary doesn't rewrite its whole cache on alternate saves.
-   */
-  private nextLayout(chunkCount: number): "single" | "sharded" {
-    if (this.layout === "sharded") {
-      return chunkCount < this.singleFileMaxChunks * SHARD_DOWN_FACTOR ? "single" : "sharded";
-    }
-    return chunkCount > this.singleFileMaxChunks ? "sharded" : "single";
+    return shardPath(this.paths.chunksFile, i);
   }
 
   /** Persist the current index to disk as JSON (atomic via the adapter). */
   async persist(): Promise<void> {
     if (!this.index) return;
     const chunks = this.index.chunks;
-    const layout = this.nextLayout(chunks.length);
+    const layout = chooseLayout(this.layout, chunks.length, this.singleFileMaxChunks);
     const switching = layout !== this.layout;
     if (switching) {
       this.logger.info("Index layout switch", { from: this.layout, to: layout, chunks: chunks.length });
     }
 
-    if (layout === "single") {
-      await this.adapter.write(this.paths.chunksFile, JSON.stringify(chunks));
-      if (switching) {
-        // The adapter deliberately has no delete (nothing in this plugin ever
-        // destroys files); obsolete shards are blanked to a tiny sentinel the
-        // loader never reads (layout says "single").
-        for (let i = 0; i < SHARD_COUNT; i++) {
-          // eslint-disable-next-line no-await-in-loop -- rare one-time layout downgrade
-          await this.adapter.write(this.shardFile(i), "[]");
-        }
-      }
-    } else {
-      const groups: IndexedChunk[][] = Array.from({ length: SHARD_COUNT }, () => []);
-      for (const chunk of chunks) groups[shardOf(chunk.notePath)].push(chunk);
-      const writeAll = switching || this.allShardsDirty;
-      let written = 0;
-      for (let i = 0; i < SHARD_COUNT; i++) {
-        if (!writeAll && !this.dirtyShards.has(i)) continue;
-        // eslint-disable-next-line no-await-in-loop -- shard writes are sequential on purpose: parallel writes through the adapter would interleave vault I/O with no gain
-        await this.adapter.write(this.shardFile(i), JSON.stringify(groups[i]));
-        written++;
-      }
-      this.logger.info("Persisted index shards", { written, of: SHARD_COUNT });
-      if (switching) {
-        // Blank the obsolete monolith (see the no-delete note above).
-        await this.adapter.write(this.paths.chunksFile, "[]");
-      }
-    }
+    // Snapshot-and-clear up front so a shard dirtied WHILE this persist writes
+    // stays marked for the next one; a failed persist falls back to
+    // rewrite-everything rather than silently under-writing.
+    const writeAll = switching || this.allShardsDirty;
+    const dirty = new Set(this.dirtyShards);
+    this.dirtyShards.clear();
+    this.allShardsDirty = false;
 
     // Carry the mtime map so the next load starts from it rather than deriving
     // mtimes from chunks — a note that produced no chunks leaves no trace there.
@@ -480,11 +431,52 @@ export class IndexManager {
       // byte-compatible with what older releases wrote and read.
       ...(layout === "sharded" ? { layout, shardCount: SHARD_COUNT } : {}),
     };
-    await this.adapter.write(this.paths.metadataFile, JSON.stringify(metadata, null, 2));
-    this.layout = layout;
-    this.dirtyShards.clear();
-    this.allShardsDirty = false;
+
+    // Write order is the crash-safety contract: the new layout's data lands,
+    // then the metadata that names it, and only then is the OLD layout's file
+    // blanked. A crash anywhere leaves metadata pointing at intact data; the
+    // reverse order could leave it naming a file already blanked to "[]",
+    // which loads as a valid, empty index.
+    try {
+      if (layout === "single") {
+        await this.adapter.write(this.paths.chunksFile, JSON.stringify(chunks));
+      } else {
+        // Group only the chunks that will be written; the hash pass over every
+        // chunk is unavoidable, the 255 idle arrays are not.
+        const groups: IndexedChunk[][] = Array.from({ length: SHARD_COUNT }, () => []);
+        for (const chunk of chunks) {
+          const shard = shardOf(chunk.notePath);
+          if (writeAll || dirty.has(shard)) groups[shard].push(chunk);
+        }
+        const targets = writeAll ? Array.from({ length: SHARD_COUNT }, (_, i) => i) : [...dirty];
+        for (const i of targets) {
+          // eslint-disable-next-line no-await-in-loop -- shard writes are sequential on purpose: parallel writes through the adapter would interleave vault I/O with no gain
+          await this.adapter.write(this.shardFile(i), JSON.stringify(groups[i]));
+        }
+        this.logger.info("Persisted index shards", { written: targets.length, of: SHARD_COUNT });
+      }
+      await this.adapter.write(this.paths.metadataFile, JSON.stringify(metadata, null, 2));
+    } catch (err) {
+      this.allShardsDirty = true;
+      throw err;
+    }
     this.metadataStale = false;
+    if (switching) {
+      // The adapter deliberately has no delete (nothing in this plugin ever
+      // destroys files); the obsolete layout's files are blanked to a tiny
+      // sentinel the loader never reads. A failure here cannot lose data (the
+      // metadata no longer names these files); `layout` is flipped only once
+      // it succeeds, so the next persist retries the blanking as a switch.
+      if (layout === "single") {
+        for (let i = 0; i < SHARD_COUNT; i++) {
+          // eslint-disable-next-line no-await-in-loop -- rare one-time layout downgrade
+          await this.adapter.write(this.shardFile(i), "[]");
+        }
+      } else {
+        await this.adapter.write(this.paths.chunksFile, "[]");
+      }
+    }
+    this.layout = layout;
     // Placeholder embeddings shell; populated when a vector provider is enabled.
     if (!(await this.adapter.exists(this.paths.embeddingsFile))) {
       await this.adapter.write(
@@ -516,13 +508,26 @@ export class IndexManager {
           this.logger.warn("Index shard count mismatch; rebuild required");
           return null;
         }
+        // Shards are read concurrently (reads don't interleave anything);
+        // parse and validate in shard order so the chunk order is stable.
+        const raws = await Promise.all(
+          Array.from({ length: SHARD_COUNT }, async (_, i) => {
+            const file = this.shardFile(i);
+            return (await this.adapter.exists(file)) ? this.adapter.read(file) : null;
+          }),
+        );
         chunks = [];
         for (let i = 0; i < SHARD_COUNT; i++) {
-          const file = this.shardFile(i);
-          // eslint-disable-next-line no-await-in-loop -- shards are read sequentially through the adapter
-          if (!(await this.adapter.exists(file))) continue;
-          // eslint-disable-next-line no-await-in-loop
-          const parsed = JSON.parse(await this.adapter.read(file)) as IndexedChunk[];
+          const raw = raws[i];
+          // Every shard is written when the layout is first adopted (empty
+          // ones as "[]"), so a missing file is damage, not "no notes here".
+          // Loading it as empty would be permanent: noteMtimes says the
+          // note is unchanged, so refresh would never re-chunk it.
+          if (raw === null) {
+            this.logger.warn("Index shard missing; rebuild required", { shard: i });
+            return null;
+          }
+          const parsed = JSON.parse(raw) as IndexedChunk[];
           if (!Array.isArray(parsed)) {
             this.logger.warn("Index shard corrupt; rebuild required", { shard: i });
             return null;

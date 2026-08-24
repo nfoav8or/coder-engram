@@ -22,6 +22,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-chunked notes, so a large first index or rebuild can no longer freeze the
   Obsidian UI.
 
+### Security
+
+- Local server: after 10 failed authentications within 60 s every request is
+  refused (`429`) until the window drains, so a network-exposed token cannot be
+  guessed at wire speed (the constant-time compare only closed the timing
+  channel). Binding a non-localhost host now also requires a token of at least
+  16 characters. The HTTP server sets explicit socket timeouts (15 s headers,
+  30 s request, 5 s keep-alive idle) instead of relying on Node's minutes-long
+  defaults, and rejected-request log lines truncate the attacker-controlled
+  `Host`/`Origin` value.
+- Dev-only dependency advisory GHSA-2v37-7h3g-55p8 (`nanoid` via
+  vitest→vite→postcss) resolved by lockfile bump to 3.3.18; `nanoid` is not part
+  of the shipped bundle.
+
+### Fixed
+
+- Sharded chunk index: a missing shard file is now treated as damage (rebuild),
+  not as "no notes here". Loading it as empty was permanent — the note's
+  recorded mtime said "unchanged", so no refresh ever re-chunked it — and
+  silently removed those notes from search.
+- Sharded chunk index: a layout switch now writes the new layout's data, then
+  the metadata naming it, and only then blanks the obsolete file. The previous
+  order could leave metadata naming a file already blanked to `[]`, which a
+  crash in that window turned into a valid, empty index. Dirty-shard marks are
+  snapshotted before writing so a shard dirtied mid-persist is not dropped.
+- Embedding store: a persist that failed once (for example a transient
+  checkpoint write error) rejected every later persist without running it,
+  silently ending persistence for the session; the chain now continues after a
+  failure. A stored vector whose base64 decodes off a 4-byte boundary is
+  rejected at load instead of throwing `RangeError` out of retriever
+  construction at startup.
+- Engine: `reindex`/`refresh` are serialized on one promise chain (as embedding
+  passes already were). `IndexManager.build`/`refresh` now yield mid-pass, so
+  the auto-index debounce, a settings-triggered refresh, and the `reindex_vault`
+  tool could otherwise interleave and mutate one index concurrently.
+
+### Performance
+
+- Sharded persist groups only the chunks whose shard will be written; sharded
+  load reads the 256 shard files concurrently instead of one at a time.
+
+### Changed
+
+- The sharding rules (shard count, routing hash, hysteresis, shard file naming)
+  move to `src/utils/sharding.ts`, shared by the chunk index and the embedding
+  store so the two caches cannot drift apart.
+
 ## [0.10.7] — 2026-08-22
 
 ### Performance

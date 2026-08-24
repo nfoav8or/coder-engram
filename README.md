@@ -62,7 +62,7 @@ Extraction for all of the above is dependency-free and fully local: the bytes ne
 ### Local server (off by default)
 
 - **MCP over JSON-RPC 2.0** so Claude Code can search memory, read context, and propose entries.
-- **Hardened**: disabled by default, binds `127.0.0.1`, constant-time bearer-token auth, DNS-rebinding (Host/Origin) guards, POST-only with a 1 MB body cap, and per-tool rate limits.
+- **Hardened**: disabled by default, binds `127.0.0.1`, constant-time bearer-token auth with a failed-auth lockout, DNS-rebinding (Host/Origin) guards, POST-only with a 1 MB body cap, socket timeouts, and per-tool rate limits.
 - **Curated tool surface** — no generic file read/write, no full-vault dump, and network writes are *always* inbox-first even when direct writes are enabled in the desktop settings.
 
 ## Setting up the local server
@@ -230,8 +230,8 @@ Settings live under **Settings → Coder Engram**. Key settings and their safe d
 | Enable local server | `false` | Disabled by default. Localhost MCP/HTTP bridge for Claude Code. |
 | Server host | `127.0.0.1` | Localhost only unless "Allow non-localhost binding" is on. |
 | Server port | `3999` | |
-| Server token | *(empty)* | Bearer token for server requests; compared in constant time. Required to bind a non-localhost host. |
-| Allow non-localhost binding | `false` | Off by default. Binding a non-localhost host also requires a token. Exposes memory to your network — not recommended. |
+| Server token | *(empty)* | Bearer token for server requests; compared in constant time. Required (16+ characters) to bind a non-localhost host. |
+| Allow non-localhost binding | `false` | Off by default. Binding a non-localhost host also requires a 16+ character token. Exposes memory to your network — not recommended. |
 | Allow direct memory writes | `false` | When off, all writes go to the review inbox. |
 | Append-only writes | `true` | Writes only append, never overwrite. |
 | Collapse near-duplicate hits | `false` | Drops a search hit whose text nearly repeats a higher-ranked one. |

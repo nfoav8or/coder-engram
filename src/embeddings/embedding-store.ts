@@ -24,6 +24,7 @@
 import { VaultAdapter } from "../core/vault-adapter";
 import { toMessage } from "../utils/errors";
 import { fnv1a32 } from "../utils/hash";
+import { Layout, SHARD_COUNT, chooseLayout, shardOf, shardPath } from "../utils/sharding";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 import { EmbeddingProvider, VectorEntry, vectorNorm } from "./embedding-provider";
 
@@ -61,22 +62,10 @@ interface StoredEmbeddings {
   vectors: Record<string, StoredVector>;
 }
 
-/**
- * Size-adaptive persistence, mirroring the chunk index: past
- * SINGLE_FILE_MAX_VECTORS the store persists as a vector-less manifest (the
- * embeddings file itself) plus 256 shard files (`embeddings-00.json` …,
- * routed by FNV-1a of the chunk id), so a checkpoint or an edit rewrites only
- * the shards it touched instead of one monolithic file. Below
- * SHARD_DOWN_FACTOR × threshold it switches back (hysteresis). Small vaults
- * never leave the single-file layout.
- */
+/** Above this many vectors the store persists as a vector-less manifest (the
+ * embeddings file itself) plus shard files routed by chunk id — see
+ * utils/sharding.ts for the layout rules shared with the chunk index. */
 const SINGLE_FILE_MAX_VECTORS = 20_000;
-const SHARD_DOWN_FACTOR = 0.8;
-const SHARD_COUNT = 256;
-
-function shardOfId(chunkId: string): number {
-  return fnv1a32(chunkId) % SHARD_COUNT;
-}
 
 /** The manifest written in place of the single file when sharded. */
 interface ShardedManifest {
@@ -107,6 +96,12 @@ function decodeVector(b64: string): Float32Array {
 
 const BASE64_SHAPE = /^[A-Za-z0-9+/]*={0,2}$/;
 
+/** Decoded byte length of a shape-valid base64 string. */
+function base64ByteLength(b64: string): number {
+  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return (b64.length / 4) * 3 - padding;
+}
+
 /**
  * The stored vectors, checked to be what cosine scoring assumes.
  *
@@ -128,6 +123,10 @@ function isVectorMap(value: unknown): value is Record<string, StoredVector> {
     if (typeof stored.v !== "string" || stored.v.length % 4 !== 0 || !BASE64_SHAPE.test(stored.v)) {
       return false;
     }
+    // Padding can leave a shape-valid string decoding to a byte count that is
+    // not a float boundary; `new Float32Array(buffer)` throws on that, and
+    // the decode runs unguarded at retriever build time.
+    if (base64ByteLength(stored.v) % 4 !== 0) return false;
   }
   return true;
 }
@@ -146,7 +145,7 @@ function isVectorMapV1(value: unknown): value is Record<string, StoredVectorV1> 
   return true;
 }
 
-export interface EmbedIndexResult {
+interface EmbedIndexResult {
   embedded: number;
   reused: number;
   removed: number;
@@ -154,12 +153,12 @@ export interface EmbedIndexResult {
   skipped: boolean;
 }
 
-export interface EmbedChunk {
+interface EmbedChunk {
   id: string;
   text: string;
 }
 
-export interface EmbedIndexOptions {
+interface EmbedIndexOptions {
   batchSize?: number;
   /**
    * Concurrent embed batches in flight (default 1 — strictly sequential).
@@ -211,7 +210,7 @@ export class EmbeddingStore {
   private decoded: { state: StoredEmbeddings; map: Map<string, VectorEntry> } | null = null;
   /** Layout of the current on-disk files; recorded, never re-derived (see
    * IndexManager for the same pattern and rationale). */
-  private layout: "single" | "sharded" = "single";
+  private layout: Layout = "single";
   private dirtyShards = new Set<number>();
   private allShardsDirty = true;
   /** Serializes persists so a checkpoint landing while another persist is
@@ -229,15 +228,7 @@ export class EmbeddingStore {
   }
 
   private shardFile(i: number): string {
-    const hex = i.toString(16).padStart(2, "0");
-    return this.embeddingsFile.replace(/\.json$/, `-${hex}.json`);
-  }
-
-  private nextLayout(vectorCount: number): "single" | "sharded" {
-    if (this.layout === "sharded") {
-      return vectorCount < this.singleFileMaxVectors * SHARD_DOWN_FACTOR ? "single" : "sharded";
-    }
-    return vectorCount > this.singleFileMaxVectors ? "sharded" : "single";
+    return shardPath(this.embeddingsFile, i);
   }
 
   /** Load persisted vectors; tolerant of a missing/corrupt/legacy file. */
@@ -265,7 +256,14 @@ export class EmbeddingStore {
         for (let i = 0; i < SHARD_COUNT; i++) {
           const file = this.shardFile(i);
           // eslint-disable-next-line no-await-in-loop -- shards are read sequentially through the adapter
-          if (!(await this.adapter.exists(file))) continue;
+          if (!(await this.adapter.exists(file))) {
+            // Every shard exists once the layout is adopted; a missing one is
+            // damage. Harmless here (its vectors simply re-embed) but logged
+            // so the re-embed pass that follows is explained.
+            droppedShards++;
+            this.logger.warn("Embedding shard missing; its vectors will re-embed", { shard: i });
+            continue;
+          }
           try {
             // eslint-disable-next-line no-await-in-loop
             const shard = JSON.parse(await this.adapter.read(file)) as unknown;
@@ -459,7 +457,7 @@ export class EmbeddingStore {
     for (const id of oldIds) {
       if (!currentIds.has(id)) {
         removed++;
-        this.dirtyShards.add(shardOfId(id));
+        this.dirtyShards.add(shardOf(id));
       }
     }
     if (identityChanged) this.allShardsDirty = true;
@@ -502,7 +500,7 @@ export class EmbeddingStore {
               n: vectorNorm(f32),
               v: encodeVector(f32),
             };
-            this.dirtyShards.add(shardOfId(id));
+            this.dirtyShards.add(shardOf(id));
             embedded++;
             sinceCheckpoint++;
           }
@@ -546,7 +544,11 @@ export class EmbeddingStore {
   /** Persists are chained: a checkpoint can land while a previous persist is
    * still writing shards, and interleaved writes would tear the layout. */
   private persist(): Promise<void> {
-    this.persistChain = this.persistChain.then(() => this.doPersist());
+    // Run after the previous persist settles either way: chaining only on
+    // fulfilment would let one failed checkpoint reject every later persist
+    // without running it, silently ending persistence for the session.
+    const run = () => this.doPersist();
+    this.persistChain = this.persistChain.then(run, run);
     return this.persistChain;
   }
 
@@ -554,7 +556,7 @@ export class EmbeddingStore {
     if (!this.state) return;
     const state = this.state;
     const count = Object.keys(state.vectors).length;
-    const layout = this.nextLayout(count);
+    const layout = chooseLayout(this.layout, count, this.singleFileMaxVectors);
     const switching = layout !== this.layout;
     if (switching) {
       this.logger.info("Embeddings layout switch", { from: this.layout, to: layout, vectors: count });
@@ -582,7 +584,7 @@ export class EmbeddingStore {
         // per persist is trivial beside the embedding work between persists.
         const groups = new Map<number, Record<string, StoredVector>>();
         for (const [id, sv] of Object.entries(state.vectors)) {
-          const shard = shardOfId(id);
+          const shard = shardOf(id);
           if (!writeAll && !dirty.has(shard)) continue;
           let group = groups.get(shard);
           if (!group) groups.set(shard, (group = {}));

@@ -94,8 +94,16 @@ describe("LocalServer.validateConfig", () => {
     expect(() => LocalServer.validateConfig(s)).toThrow(/token is required/i);
   });
 
-  it("allows a non-localhost host with opt-in AND a token", () => {
+  it("refuses a short token for a non-localhost host", () => {
+    // Nothing else defends an exposed bind against guessing but the lockout;
+    // a hand-typed short token would make that the whole story.
     const s = { ...base, server: { ...base.server, host: "0.0.0.0", allowNonLocalhost: true, token: "abc" } };
+    expect(() => LocalServer.validateConfig(s)).toThrow(/too short/i);
+  });
+
+  it("allows a non-localhost host with opt-in AND a strong token", () => {
+    const token = "0123456789abcdef";
+    const s = { ...base, server: { ...base.server, host: "0.0.0.0", allowNonLocalhost: true, token } };
     expect(() => LocalServer.validateConfig(s)).not.toThrow();
   });
 });
@@ -148,6 +156,16 @@ describe("LocalServer over a real socket", () => {
       body: RPC("tools/list"),
     });
     expect(withAuth.status).toBe(200);
+  });
+
+  it("locks out after repeated auth failures, even for the right token", async () => {
+    const { addr } = await startServer({ token: "s3cret" });
+    for (let i = 0; i < 10; i++) {
+      const res = await raw(addr.port, { headers: { authorization: `Bearer wrong-${i}` }, body: RPC("ping") });
+      expect(res.status).toBe(401);
+    }
+    const locked = await raw(addr.port, { headers: { authorization: "Bearer s3cret" }, body: RPC("ping") });
+    expect(locked.status).toBe(429);
   });
 
   it("rejects a foreign Host header (DNS-rebinding guard)", async () => {

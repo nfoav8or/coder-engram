@@ -19,7 +19,7 @@ are structural, not tuning.
 
 ### P2.1 Sharded index persistence — IMPLEMENTED (0.11.0 track)
 
-> Shipped as designed with one refinement: the layout is **size-adaptive** with hysteresis (shard above 20k chunks/vectors, return to single-file below 80% of that), so small vaults keep byte-identical single-file behavior and never pay shard overhead. Both caches (chunks + embeddings) shard; embedding checkpoints now rewrite only dirty shards. A corrupt embedding shard drops only its own vectors.
+> Shipped as designed with one refinement: the layout is **size-adaptive** with hysteresis (shard above 20k chunks/vectors, return to single-file below 80% of that), so small vaults keep byte-identical single-file behavior and never pay shard overhead. Both caches (chunks + embeddings) shard; embedding checkpoints now rewrite only dirty shards. A corrupt embedding shard drops only its own vectors. Hardened in the follow-up review pass: a missing chunk shard is damage (rebuild), never "no notes here"; a layout switch writes data, then metadata, then blanks the obsolete file, so a crash in the window cannot yield a valid empty index; the engine serializes `reindex`/`refresh` now that a pass yields mid-flight; the layout rules live once in `utils/sharding.ts`.
 
 `chunks.json` is one document, re-serialized whole on any change (165 MB at 20k notes).
 Proposal: shard by hash of `notePath` into a fixed 256 buckets
