@@ -3,6 +3,7 @@ import { MemoryWriter, formatMemoryEntry } from "../src/memory/memory-writer";
 import { resolveMemoryPaths, MemoryEntry } from "../src/memory/memory-types";
 import { InMemoryVaultAdapter } from "../src/core/vault-adapter";
 import { ConfigError, PathSecurityError } from "../src/utils/errors";
+import { INBOX_HEADER } from "../src/memory/pending-inbox";
 
 const paths = resolveMemoryPaths("Claude Code");
 
@@ -67,6 +68,43 @@ describe("MemoryWriter.proposeToInbox", () => {
 
     const inbox = await adapter.read(first.path);
     expect(inbox.match(/## Pending Memory:/g)?.length).toBe(1);
+  });
+
+  describe("the dedup scan is cached against the inbox's mtime", () => {
+    // Reading and re-parsing the whole inbox per call is O(inbox), and the
+    // backlog grows with agent usage rather than vault size. These pin the
+    // cache's two halves: that it actually avoids the re-read, and that it
+    // cannot serve a stale answer after someone else changes the file.
+    it("detects a duplicate without re-reading the inbox", async () => {
+      const adapter = new InMemoryVaultAdapter("v", {});
+      const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+      await writer.proposeToInbox(entry());
+
+      const reads: string[] = [];
+      const realRead = adapter.read.bind(adapter);
+      adapter.read = async (p: string) => {
+        reads.push(p);
+        return realRead(p);
+      };
+
+      const second = await writer.proposeToInbox(entry({ timestamp: 1_800_000_000_000 }));
+      expect(second.duplicate).toBe(true);
+      expect(reads).toEqual([]);
+    });
+
+    it("re-reads and stays correct after the inbox is edited outside the writer", async () => {
+      const adapter = new InMemoryVaultAdapter("v", {});
+      const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+      const { path } = await writer.proposeToInbox(entry());
+
+      // Stand in for the user discarding the entry in Obsidian: the cache
+      // still holds its key, but the file no longer contains it.
+      await adapter.write(path, INBOX_HEADER);
+
+      const again = await writer.proposeToInbox(entry({ timestamp: 1_800_000_000_000 }));
+      expect(again.duplicate, "a discarded entry must be proposable again").toBe(false);
+      expect((await adapter.read(path)).match(/## Pending Memory:/g)?.length).toBe(1);
+    });
   });
 
   it("de-duplicates a restatement differing only in whitespace or case", async () => {

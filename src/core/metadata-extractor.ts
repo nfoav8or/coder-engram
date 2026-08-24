@@ -33,7 +33,28 @@ const FRONTMATTER_FENCE = /^---\s*$/;
  * the scanner folds to NFC before comparing, so both encodings then match the
  * same exclusion. A mark cannot begin a tag, so the first character excludes it.
  */
-const INLINE_TAG = /(^|[\s(])#([\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-]*)/gu;
+/**
+ * A tag is a `#` that does not follow a word character, a `/`, or a markdown
+ * link's `](`.
+ *
+ * The prefix used to be an enumerated class (`[\s(]`), which meant any other
+ * punctuation before the `#` silently dropped the tag: `**#private**` (bold,
+ * an ordinary way to write one), `urgent,#private,todo`, and `"#private"` all
+ * extracted NOTHING. That is the same fail-open shape as the 0.10.4 and 0.9.9
+ * bugs — a note the user tagged to keep out of the index is indexed and served
+ * anyway — so the rule is now stated as what a tag may NOT follow.
+ *
+ * The two exclusions are what the old narrow class bought by accident and must
+ * keep buying: `/` keeps a URL fragment (`https://x.example/#section`) from
+ * reading as a tag, and `](` keeps a markdown anchor link (`[text](#section)`)
+ * from doing the same — the latter was a live false positive under the old
+ * pattern, since `(` was an allowed prefix.
+ *
+ * Lookbehind rather than a consuming group: it does not eat the preceding
+ * character, so adjacent matches are found independently. ES2018, and this
+ * bundle targets ES2020.
+ */
+const INLINE_TAG = /(?<![\p{L}\p{N}_/])(?<!\]\()#([\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-]*)/gu;
 
 function uniq(values: string[]): string[] {
   return Array.from(new Set(values.filter((v) => v.length > 0)));
@@ -68,11 +89,19 @@ function parseFrontmatter(lines: string[]): Frontmatter {
       break;
     }
   }
-  if (end === -1) return result; // unterminated frontmatter → treat as body
-  result.bodyStartLine = end + 1;
+  // An unterminated block (truncated write, sync conflict, hand-edit in
+  // progress) is still scanned for tags, to EOF. Its content stays body —
+  // `bodyStartLine` is left at 0, so nothing is hidden from the index — but
+  // the tags it declares are honored. Dropping them was fail-open: a note
+  // whose only exclusion marker is a YAML `tags:` entry has no `#` anywhere
+  // for the inline pattern to find, so it was indexed and served despite the
+  // user having excluded it. Over-excluding on a damaged file is the safe
+  // direction; under-excluding is the one that leaks.
+  const parseTo = end === -1 ? lines.length : end;
+  if (end !== -1) result.bodyStartLine = end + 1;
 
   let currentListKey: "tags" | "aliases" | null = null;
-  for (let i = 1; i < end; i++) {
+  for (let i = 1; i < parseTo; i++) {
     const line = lines[i];
     // A block-list item: "  - value"
     const listItem = line.match(/^\s*-\s+(.*)$/);
@@ -239,7 +268,7 @@ export function extractMetadata(content: string): NoteMetadata {
   const tags = [...fm.tags];
   for (const m of prose.matchAll(INLINE_TAG)) {
     // Skip pure-numeric tags like "#123" which are usually not real tags.
-    if (!/^\d+$/.test(m[2])) tags.push(m[2]);
+    if (!/^\d+$/.test(m[1])) tags.push(m[1]);
   }
 
   const links: string[] = [];

@@ -4,6 +4,7 @@ import { InMemoryVaultAdapter } from "../src/core/vault-adapter";
 import { DEFAULT_SETTINGS, EngramSettings } from "../src/settings/settings";
 import { NULL_LOGGER } from "../src/utils/logger";
 import { ConfigError } from "../src/utils/errors";
+import { FakeHttpClient } from "../src/core/http-client";
 
 const NOTE = `# Alpha Note
 The indexing pipeline chunks markdown notes for retrieval.
@@ -14,11 +15,12 @@ Extractive summaries reuse the note's own sentences.`;
 function makeEngine(
   seed: Record<string, string>,
   overrides: Partial<EngramSettings> = {},
+  deps: ConstructorParameters<typeof EngramEngine>[4] = {},
 ) {
   const adapter = new InMemoryVaultAdapter("v", seed);
   const settings: EngramSettings = { ...DEFAULT_SETTINGS, ...overrides };
   let t = 10_000;
-  const engine = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++);
+  const engine = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++, deps);
   return { adapter, engine };
 }
 
@@ -102,6 +104,31 @@ describe("EngramEngine.summarizeNote", () => {
     await engine.reindex();
     const summary = await engine.summarizeNote("Notes/a.md");
     expect(summary.method).toBe("lexical");
+  });
+
+  it("falls back to lexical when a configured provider is reachable but fails mid-call", async () => {
+    // The documented guarantee is that summarize_note "fails open to lexical".
+    // The no-provider path was covered; this is the other one — the provider
+    // answers its liveness check, then throws on the embed call. Without the
+    // catch this rejects and the tool returns an error instead of a summary.
+    const endpoint = "http://127.0.0.1:11434";
+    const http = new FakeHttpClient();
+    http.onExact("GET", `${endpoint}/api/tags`, () => ({ status: 200, body: "{}" }));
+    http.onExact("POST", `${endpoint}/api/embed`, () => {
+      throw new Error("connection reset mid-request");
+    });
+    const { engine } = makeEngine(
+      { "Notes/a.md": NOTE },
+      { embeddingProvider: "ollama", embeddingModel: "nomic", embeddingEndpoint: endpoint },
+      { http },
+    );
+    await engine.reindex();
+    const summary = await engine.summarizeNote("Notes/a.md");
+    expect(summary.method).toBe("lexical");
+    expect(summary.sentences.length).toBeGreaterThan(0);
+    // Not vacuous: the provider really was consulted and really did throw, so
+    // this is the catch branch rather than the "no provider configured" one.
+    expect(http.calls.some((c) => c.url.endsWith("/api/embed"))).toBe(true);
   });
 
   it("clamps maxSentences (0 -> at least 1, huge -> capped at available)", async () => {

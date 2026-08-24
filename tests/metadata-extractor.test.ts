@@ -72,6 +72,76 @@ describe("extractMetadata", () => {
     expect(meta.bodyStartLine).toBe(0);
     expect(meta.tags).toEqual([]);
   });
+
+  // Tag extraction is a PRIVACY control: `excludedTags` keeps a note out of
+  // the index, and a tag the parser misses means the note is indexed and
+  // served over the local server despite the user having excluded it. Every
+  // case below failed open before — the same shape as the 0.10.4 and 0.9.9
+  // bugs, which is why they are pinned individually rather than in one blob.
+  describe("inline tags after punctuation (fail-open regressions)", () => {
+    const cases: [string, string][] = [
+      ["bold emphasis", "**#private**"],
+      ["comma-separated list", "urgent,#private,todo"],
+      ["double-quoted", '"#private" note'],
+      ["single-quoted", "'#private' note"],
+      ["after a colon", "status:#private"],
+      ["after a hyphen", "tagged -#private"],
+      ["after a bracket", "[#private]"],
+      ["start of string", "#private"],
+      ["after whitespace", "some #private text"],
+      ["after a paren", "see (#private) here"],
+    ];
+    for (const [name, text] of cases) {
+      it(`finds a tag ${name}`, () => {
+        expect(extractMetadata(text).tags).toContain("private");
+      });
+    }
+  });
+
+  describe("inline-tag shapes that must NOT read as tags", () => {
+    it("ignores a URL fragment", () => {
+      expect(extractMetadata("see https://example.com/page#section now").tags).toEqual([]);
+    });
+
+    it("ignores a markdown anchor link target", () => {
+      // Regression: `(` used to be an allowed prefix, so `](#x)` matched.
+      expect(extractMetadata("see [details](#private) here").tags).toEqual([]);
+    });
+
+    it("ignores a `#` that follows a word character", () => {
+      expect(extractMetadata("written in C#Sharp today").tags).toEqual([]);
+    });
+
+    it("ignores a purely numeric tag", () => {
+      expect(extractMetadata("issue #123 filed").tags).toEqual([]);
+    });
+  });
+
+  it("records the known limit: underscore emphasis is ambiguous with the tag grammar", () => {
+    // `_` is a legal tag CHARACTER, so `__#private__` cannot be read as an
+    // emphasized `#private` without also breaking `#private__`, a legitimate
+    // tag name. Asterisk emphasis — the common form — works and is pinned
+    // above. Documented rather than silently unsupported: if this ever needs
+    // to change, the trade-off is here rather than rediscovered.
+    expect(extractMetadata("__#private__").tags).toEqual([]);
+  });
+
+  it("still honors frontmatter tags when the block is never terminated", () => {
+    // A truncated write / sync conflict leaves no closing `---`. The tags are
+    // the note's only exclusion marker and carry no `#`, so dropping the block
+    // meant the inline pattern had nothing to find and the note was indexed.
+    const meta = extractMetadata("---\ntags:\n  - private\ntitle: Secret\nbody text\n");
+    expect(meta.tags).toContain("private");
+    // Content is NOT hidden: without a closing fence the whole file is body,
+    // exactly as before, so this cannot cause a note to lose its text.
+    expect(meta.bodyStartLine).toBe(0);
+  });
+
+  it("still honors an unterminated inline frontmatter tag list", () => {
+    expect(extractMetadata("---\ntags: private, secret\nbody text\n").tags).toEqual(
+      expect.arrayContaining(["private", "secret"]),
+    );
+  });
 });
 
 describe("link extraction (linear walkers)", () => {

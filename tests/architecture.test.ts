@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { builtinModules } from "node:module";
 
 /**
  * The layering rule this project is built on — "the service/core layers must
@@ -44,6 +45,31 @@ function sourceFiles(dir: string): string[] {
 
 const files = sourceFiles("src").map((path) => ({ path, text: readFileSync(path, "utf8") }));
 
+/**
+ * Every module specifier reached as a VALUE, in any form that actually creates
+ * a runtime dependency: `from "x"`, `require("x")`, and a dynamic `import("x")`
+ * — each with either quote style.
+ *
+ * The checks below used to test for the literal string `from "node:` and
+ * `require("obsidian")`, which meant a single-quoted import, a bare builtin
+ * (`from "fs"` with no `node:` prefix), or a dynamic `await import("node:fs")`
+ * would have sailed straight past the guard. None of those existed in the
+ * tree, so nothing was actually broken — but a rule this load-bearing should
+ * fail on the shape of the violation, not on the formatting convention that
+ * happens to be in use.
+ */
+function valueImports(text: string): string[] {
+  const out: string[] = [];
+  const pattern = /(?:\bfrom\s*|\brequire\s*\(\s*|\bimport\s*\(\s*)["']([^"']+)["']/g;
+  for (const m of text.matchAll(pattern)) out.push(m[1]);
+  return out;
+}
+
+/** Node builtins, whether or not they carry the `node:` prefix. */
+const NODE_BUILTINS = new Set(builtinModules);
+const isNodeModule = (spec: string): boolean =>
+  spec.startsWith("node:") || NODE_BUILTINS.has(spec);
+
 describe("layering", () => {
   it("finds the sources at all", () => {
     // Guards the guard: a path change that silently emptied this list would
@@ -61,10 +87,11 @@ describe("layering", () => {
     // couples a module to the host, and that is still refused everywhere below.
     const importers = files
       .filter((f) => {
-        const withoutTypeImports = f.text.replace(/import\s+type\s+[^;]*?from\s+"obsidian";/g, "");
-        return (
-          /from "obsidian"/.test(withoutTypeImports) || /require\("obsidian"\)/.test(withoutTypeImports)
+        const withoutTypeImports = f.text.replace(
+          /import\s+type\s+[^;]*?from\s+["']obsidian["'];/g,
+          "",
         );
+        return valueImports(withoutTypeImports).includes("obsidian");
       })
       .map((f) => f.path.replace(/\\/g, "/"));
     const uiLayer = (p: string) => p.startsWith("src/ui/");
@@ -73,10 +100,32 @@ describe("layering", () => {
   });
 
   it("keeps `node:*` out of everything but the server layer", () => {
+    // Bare builtins count too: `import { readFile } from "fs"` is the same
+    // runtime dependency as `"node:fs"`, and only the prefixed form used to be
+    // checked. Type-only imports are erased, so they are stripped first for
+    // the same reason as the `obsidian` rule above.
     const importers = files
-      .filter((f) => /from "node:/.test(f.text))
+      .filter((f) => {
+        const withoutTypeImports = f.text.replace(/import\s+type\s+[^;]*?from\s+["'][^"']+["'];/g, "");
+        return valueImports(withoutTypeImports).some(isNodeModule);
+      })
       .map((f) => f.path.replace(/\\/g, "/"));
     expect(importers.filter((p) => !NODE_ALLOWED.includes(p))).toEqual([]);
+  });
+
+  it("guards the guard: the import matcher sees every form that creates a dependency", () => {
+    // If `valueImports` silently stopped matching, both rules above would pass
+    // vacuously — the same failure mode "finds the sources at all" protects
+    // against. Each form here is one a real violation could take.
+    expect(valueImports('import { Notice } from "obsidian";')).toContain("obsidian");
+    expect(valueImports("import { Notice } from 'obsidian';")).toContain("obsidian");
+    expect(valueImports('const o = require("obsidian");')).toContain("obsidian");
+    expect(valueImports('const o = await import("obsidian");')).toContain("obsidian");
+    expect(valueImports('import { readFile } from "node:fs";').some(isNodeModule)).toBe(true);
+    expect(valueImports('import { readFile } from "fs";').some(isNodeModule)).toBe(true);
+    expect(valueImports("const fs = await import('node:fs');").some(isNodeModule)).toBe(true);
+    // And does not fire on ordinary relative imports.
+    expect(valueImports('import { x } from "../utils/paths";').some(isNodeModule)).toBe(false);
   });
 
   it("keeps the README's stated version in step with the manifest", () => {

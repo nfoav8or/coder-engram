@@ -153,4 +153,41 @@ describe("chunkMarkdown", () => {
     const chunks = chunkMarkdown(md, { bodyStartLine: 3 });
     expect(chunks.map((c) => c.heading)).toEqual(["Body"]);
   });
+
+  describe("a trailing newline does not extend the last chunk's span", () => {
+    // `split(/\r?\n/)` yields a phantom "" for a file ending in a newline —
+    // which is how files normally end. A section small enough to fit one chunk
+    // (most notes) returns its span unwindowed, so that phantom used to land in
+    // the last chunk's endLine, and "open at line" / get_note_context pointed
+    // one line past the content.
+    it("agrees with the same content written without the trailing newline", () => {
+      const withNewline = chunkMarkdown("# Heading\nSome body text\n");
+      const without = chunkMarkdown("# Heading\nSome body text");
+      expect(withNewline.map((c) => [c.startLine, c.endLine])).toEqual(
+        without.map((c) => [c.startLine, c.endLine]),
+      );
+    });
+
+    it("ends the last chunk on the last real line", () => {
+      // Two real lines: indices 0 and 1.
+      const [chunk] = chunkMarkdown("# Heading\nSome body text\n");
+      expect(chunk.endLine).toBe(1);
+    });
+
+    it("is correct for a multi-section note", () => {
+      const chunks = chunkMarkdown("# A\nbody a\n# B\nbody b\n");
+      expect(chunks.at(-1)!.endLine).toBe(3);
+    });
+
+    it("keeps a deliberate trailing blank line that is not the split artifact", () => {
+      // "a\n\n" is a real blank line (index 1) plus the artifact (index 2).
+      const [chunk] = chunkMarkdown("body\n\n");
+      expect(chunk.endLine).toBe(1);
+    });
+
+    it("handles CRLF endings the same way", () => {
+      const [chunk] = chunkMarkdown("# Heading\r\nSome body text\r\n");
+      expect(chunk.endLine).toBe(1);
+    });
+  });
 });

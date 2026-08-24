@@ -96,18 +96,27 @@ function contentKey(content: string): string {
   return content.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-/** Two proposals are the "same memory" for dedup when their content (normalized
- * by {@link contentKey}), type, and project match. Metadata that legitimately
- * varies between otherwise-identical proposals (timestamp, source, tags) is
- * intentionally ignored. */
-function isSameMemory(existing: PendingEntry, entry: MemoryEntry): boolean {
-  return (
-    contentKey(existing.content) === contentKey(entry.content) &&
-    existing.type === entry.type &&
-    // Same reason as contentKey: the project name reaching an agent from a
-    // macOS working-directory path is decomposed, the one a user types is not.
-    (existing.project ?? "").normalize("NFC") === (entry.project ?? "").normalize("NFC")
-  );
+/**
+ * The dedup identity of a proposal: content (normalized by {@link contentKey}),
+ * type, and project. Metadata that legitimately varies between otherwise
+ * identical proposals (timestamp, source, tags) is intentionally ignored.
+ *
+ * One function so the O(1) cache below and a full re-scan cannot disagree
+ * about what "the same memory" means — a cache keyed differently from the
+ * comparison it replaces is how a dedup cache silently stops deduping.
+ */
+function dedupKey(content: string, type: string, project: string | undefined): string {
+  // Same reason as contentKey: the project name reaching an agent from a
+  // macOS working-directory path is decomposed, the one a user types is not.
+  return JSON.stringify([contentKey(content), type, (project ?? "").normalize("NFC")]);
+}
+
+function entryKey(entry: MemoryEntry): string {
+  return dedupKey(entry.content, entry.type, entry.project);
+}
+
+function pendingKey(existing: PendingEntry): string {
+  return dedupKey(existing.content, existing.type, existing.project);
 }
 
 /** Format a ms-epoch timestamp as "YYYY-MM-DD HH:MM" in local time. */
@@ -142,6 +151,13 @@ export function formatMemoryEntry(entry: MemoryEntry): string {
 
 export class MemoryWriter {
   private readonly logger: Logger;
+  /**
+   * Dedup keys of the inbox as of `mtime`. Valid only while the file's mtime
+   * still matches — any write this cache did not make (apply, discard, a
+   * hand-edit in Obsidian) moves it and forces a re-parse. See
+   * {@link proposeToInbox}.
+   */
+  private dedupCache: { mtime: number; keys: Set<string> } | null = null;
 
   constructor(
     private readonly adapter: VaultAdapter,
@@ -178,17 +194,50 @@ export class MemoryWriter {
       throw new PathSecurityError("Inbox path escapes the memory root");
     }
     return this.inboxLock.run(async () => {
+      // Creation is still gated on exists(), deliberately not on a null mtime:
+      // they are separate Obsidian calls, and if they ever disagreed, treating
+      // "no mtime" as "no file" would overwrite an inbox full of unreviewed
+      // memory. The mtime below is only ever a cache key.
       if (!(await this.adapter.exists(target))) {
         await this.adapter.write(target, INBOX_HEADER + block);
+        // The file's whole contents are known here — one entry — so seed the
+        // cache rather than forcing the next call to parse what we just wrote.
+        const created = await this.adapter.getMtime(target);
+        this.dedupCache =
+          created === null ? null : { mtime: created, keys: new Set([entryKey(entry)]) };
         this.logger.info("Proposed memory to inbox", { type: entry.type, project: entry.project });
         return { path: target, duplicate: false };
       }
-      const existing = parsePendingInbox(await this.adapter.read(target));
-      if (existing.entries.some((e) => isSameMemory(e, entry))) {
+
+      // Reading and re-parsing the whole inbox on every call is O(inbox), and
+      // the backlog grows with agent usage rather than vault size — an inbox
+      // left unreviewed makes every later add_memory slower. The parsed dedup
+      // keys are cached against the file's mtime instead.
+      //
+      // Staleness is handled by construction rather than by invalidation
+      // calls: apply/discard run under this same lock and change the file, and
+      // a user editing the inbox in Obsidian changes it too, so any mutation
+      // this cache did not make moves the mtime and the next propose re-reads.
+      // A null mtime here simply means no cache hit, so the full parse runs.
+      const mtime = await this.adapter.getMtime(target);
+      let keys = mtime !== null && this.dedupCache?.mtime === mtime ? this.dedupCache.keys : null;
+      if (!keys) {
+        const parsed = parsePendingInbox(await this.adapter.read(target));
+        keys = new Set(parsed.entries.map(pendingKey));
+      }
+
+      if (keys.has(entryKey(entry))) {
+        this.dedupCache = mtime === null ? null : { mtime, keys };
         this.logger.info("Skipped duplicate memory proposal", { type: entry.type, project: entry.project });
         return { path: target, duplicate: true };
       }
       await this.adapter.append(target, block);
+      // Keep the cache warm across consecutive proposals: record our own new
+      // key and the mtime the append produced, so a run of add_memory calls
+      // costs one parse in total rather than one per call.
+      keys.add(entryKey(entry));
+      const after = await this.adapter.getMtime(target);
+      this.dedupCache = after === null ? null : { mtime: after, keys };
       this.logger.info("Proposed memory to inbox", { type: entry.type, project: entry.project });
       return { path: target, duplicate: false };
     });

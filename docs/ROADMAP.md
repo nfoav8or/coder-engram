@@ -136,6 +136,11 @@ which are deliberate and expected to recur. Build verification passed again: the
 `main.js` was reproduced byte-for-byte from the repository, and both it and `styles.css`
 have verified attestations.
 
+**The 0.11.0 review (Aug 24 2026, commit `7fd2a53`) surfaced two new source findings, both
+introduced by the sharded-persistence work and both fixed on the 0.11.x track** — see the
+last two rows. Everything else it reported is one of the standing "kept"/"not applicable"
+entries. Build verification and both attestations passed again.
+
 | Finding | Severity | Resolution |
 | --- | --- | --- |
 | `Plugin.settings` requires 1.13.0 but minAppVersion is 1.7.2 (`settings-tab.ts`) | Error | **Fixed in 0.10.0.** Obsidian 1.13 added its own `Plugin.settings`, and the tab held its host as `Plugin & SettingsHost`, so the read resolved to Obsidian's property. The host is now held at its `SettingsHost` type. |
@@ -143,11 +148,13 @@ have verified attestations.
 | Unnecessary type assertion (`settings.ts`) | Warning | **Fixed in 0.10.0.** |
 | PluginSettingTab does not implement `getSettingDefinitions()` | Warning | **Fixed in 0.10.0** — this milestone. |
 | `display` is deprecated since 1.13.0 | Recommendation | **Kept deliberately.** It is the pre-1.13 fallback and is never called on 1.13+. Removing it would mean raising `minAppVersion` to 1.13.0 and stranding older users. |
-| Use `window.setTimeout()` / `window.clearTimeout()` (7 sites) | Warning | **Not applicable.** All seven are in the pure core and the server layer, which also run in the Node test environment (no `window`) and, for the server, under Node itself. No UI file uses a timer. The rule targets popout-window lifetimes, which these timers do not participate in. |
+| Use `window.setTimeout()` / `window.clearTimeout()` (9 sites as of 0.11.0) | Warning | **Not applicable.** All nine are in the pure core, the shared utils, and the server layer, which also run in the Node test environment (no `window`) and, for the server, under Node itself. The split is deliberate and enforced by where the code runs: the three UI files that need a timer (`pending-memory-modal.ts`, `simple-modals.ts`, `search-modal.ts`) *do* call `window.setTimeout`, because those are the ones that can live in a popout window. The rule targets popout-window lifetimes, which the core/server timers do not participate in. (Was 7 sites through 0.10.7; 0.11.0's cooperative-yield loop in `index-manager.ts` added two.) |
 | Avoid using `global` (`memory-types.ts:63`) | Warning | **False positive, silenced anyway.** The line was `global: string;`, a property of the `MemoryPaths` interface rather than Node's `global` — but the rule matches the bare identifier, so it would be reported on every release. The field is now `globalDir` (shipped in 0.10.1), which costs four lines and keeps future reviews signal-only. |
 | Avoid unnecessary logging to console (`logger.ts`) | Warning | **Kept deliberately.** The logger is gated by the `debugLogging` setting; warnings and errors always emit because they are actionable, and every context object is redacted first. |
 | Release contains extra unsupported files (`SHA256SUMS`) | Recommendation | **Kept deliberately.** `scripts/install.sh` verifies downloads against it, and Obsidian simply does not download it. |
 | Vault enumeration (`getMarkdownFiles`) | Recommendation | **Inherent.** The plugin is a vault indexer; enumerating notes is the feature. Exclusions are applied before anything is read. |
+| Undescribed directive comment (`embedding-store.ts:268`) | Error (0.11.0) | **Fixed on the 0.11.x track.** One `eslint-disable-next-line no-await-in-loop` in the sharded-load path shipped without the `--` rationale every other disable in the repo carries. It now explains itself like the rest; the repo has no bare disables left. |
+| Expected an error object to be thrown (`embedding-store.ts:528`) | Warning (0.11.0) | **Fixed on the 0.11.x track**, and it was a real (if narrow) defect rather than a lint nit. The embedding worker pool captures the first failure into `let failed: unknown` and rethrows it after the pool drains, so a provider rejecting with a non-`Error` (a string, a raw response) propagated that value to callers who all treat a failure as an `Error`. The capture now normalizes with `err instanceof Error ? err : new Error(toMessage(err))`. |
 | Unsafe `any` in the ZIP inflate loop (`zip.ts`) | Error (locally, under their rule set; never reported in an official review) | **Fixed in 0.10.0.** `pipeThrough` loses the element type, so the inflated chunks were `any` — and the size accounting there is what stands between a crafted archive and an unbounded allocation. The reader is now annotated. |
 | Build reproduced the release `main.js` byte-for-byte; attestations verified | Pass | No action. |
 

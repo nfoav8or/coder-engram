@@ -265,7 +265,7 @@ export class EmbeddingStore {
             continue;
           }
           try {
-            // eslint-disable-next-line no-await-in-loop
+            // eslint-disable-next-line no-await-in-loop -- shards are read sequentially through the adapter, same as the exists() check above
             const shard = JSON.parse(await this.adapter.read(file)) as unknown;
             if (!isVectorMap(shard)) throw new Error("malformed shard");
             Object.assign(vectors, shard);
@@ -471,7 +471,10 @@ export class EmbeddingStore {
     }
 
     let cursor = 0;
-    let failed: unknown = null;
+    // Normalized to an Error at capture time: a provider that rejects with a
+    // non-Error (a string, a response object) would otherwise be rethrown as
+    // that value, and every caller here treats a failure as an Error.
+    let failed: Error | null = null;
     const worker = async () => {
       // eslint-disable-next-line no-constant-condition -- take-next-batch pool
       while (true) {
@@ -517,7 +520,7 @@ export class EmbeddingStore {
             (opts.logger ?? this.logger).info("Embedding checkpoint", { embedded, remaining: toEmbed.length - embedded });
           }
         } catch (err) {
-          if (failed === null) failed = err;
+          if (failed === null) failed = err instanceof Error ? err : new Error(toMessage(err));
           return;
         }
       }

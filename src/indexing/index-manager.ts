@@ -29,7 +29,18 @@ import { Logger, NULL_LOGGER } from "../utils/logger";
 // note only when its mtime changed — so without this bump, notes the user
 // excluded would sit in the index indefinitely, still reachable over the local
 // server. One forced rebuild drops them.
-export const INDEX_VERSION = 3;
+//
+// Raised to 4 for the same reason as 3, a different miss in the same parser:
+// an inline tag was only recognized after whitespace or `(`, so any other
+// punctuation before it dropped the tag — `**#private**`, `urgent,#private`,
+// `"#private"` all extracted nothing, and the note was indexed despite the
+// exclusion. A YAML `tags:` block in frontmatter left unterminated was lost
+// the same way. Both fixes only take effect when a note is re-read, and a
+// refresh re-reads only on an mtime change, so the bump is what actually
+// evicts the notes that should never have been indexed. It also corrects the
+// last chunk's `endLine` on any note ending in a newline, which is a chunk
+// boundary change and would qualify on its own.
+export const INDEX_VERSION = 4;
 
 export interface IndexedChunk {
   id: string;

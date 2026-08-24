@@ -68,9 +68,20 @@ describe("migrateSettings", () => {
     expect(migrateSettings({ excludedFolders: "not-an-array" }).excludedFolders).toEqual([]);
   });
 
-  it("does not throw on a garbage blob", () => {
-    expect(() => migrateSettings(42)).not.toThrow();
-    expect(() => migrateSettings("nope")).not.toThrow();
+  it("degrades a garbage blob to the safe defaults, not merely without throwing", () => {
+    // The documented invariant is that a corrupt settings blob degrades to
+    // safe defaults. Asserting only `.not.toThrow()` would keep passing if
+    // the function started returning `{}` or `undefined` — which is the
+    // outcome that actually matters, since every caller then reads
+    // `settings.server.enabled` and friends off whatever came back.
+    for (const garbage of [42, "nope", true, null, undefined, [], () => {}]) {
+      const migrated = migrateSettings(garbage);
+      expect(migrated).toEqual(DEFAULT_SETTINGS);
+      // Spot-check the two that are load-bearing for privacy and egress.
+      expect(migrated.server.enabled).toBe(false);
+      expect(migrated.embeddingProvider).toBe("none");
+      expect(migrated.allowDirectWrites).toBe(false);
+    }
   });
 
   it("clamps embedding concurrency into range and defaults it safely", () => {

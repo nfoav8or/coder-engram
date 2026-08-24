@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security (tag-extraction fail-open — index rebuilds once)
+
+- **An inline tag was only recognized after whitespace or `(`**, so any other
+  punctuation in front of it dropped the tag entirely: `**#private**` (bold —
+  an ordinary way to write one), `urgent,#private,todo`, and `"#private"` all
+  extracted nothing. Tags are a **privacy control** — `excludedTags` is what
+  keeps a note out of the index and away from the local server — so a missed
+  tag means the note was indexed and served despite being excluded. This is
+  the same fail-open shape as the 0.10.4 and 0.9.9 bugs. The rule is now
+  stated as what a tag may *not* follow (a word character, a `/`, or a
+  markdown link's `](`), which keeps the URL-fragment guard the old narrow
+  pattern provided by accident and additionally fixes a live false positive:
+  `[text](#section)` used to register `section` as a tag.
+- **An unterminated frontmatter block discarded its `tags:` list**, and since
+  those tags carry no `#`, nothing was left for the inline pattern to find.
+  A truncated write or a sync conflict was enough to trigger it. Such a block
+  is now scanned for tags to end-of-file; its content still counts as body, so
+  nothing is hidden from the index by the change.
+- `INDEX_VERSION` is raised to 4. Fixing a parser only changes what happens on
+  the next *read* of a note, and a refresh re-reads only when the mtime
+  changed — so the bump is what actually evicts notes that should never have
+  been indexed. Expect one automatic rebuild.
+
+### Fixed
+
+- A note ending in a newline gave its last chunk an `endLine` one line past
+  the end, because splitting on newlines produces a trailing empty element
+  that is not a line. Only the final chunk of a note was affected, and only
+  when its section fit in a single chunk — the common case — so "open at
+  line" and `get_note_context` landed just past the content.
+
+### Performance
+
+- `add_memory` no longer re-reads and re-parses the whole review inbox on
+  every call to check for duplicates. That was O(inbox), and the inbox grows
+  with agent usage rather than vault size, so an unreviewed backlog slowed
+  every later proposal. Dedup keys are cached against the inbox file's mtime;
+  an apply, a discard, or a hand-edit in Obsidian moves the mtime and forces a
+  re-parse, so the cache cannot go stale.
+
+### Tests
+
+- The MCP tool surface is now asserted as an exact set rather than with
+  `toContain`. The invariant is what is *absent* — promotion is UI-only and
+  there is no generic file access — and a containment check keeps passing when
+  a tool is added, which is precisely the change that would breach it.
+- The layering guard now detects a host/Node dependency in every form that
+  creates one: single- or double-quoted, `require()`, a dynamic `import()`,
+  and a bare builtin (`from "fs"`, not just `"node:fs"`). It previously
+  matched only double-quoted `from "node:` / `require("obsidian")`. Nothing in
+  the tree was violating it, but the guard was checking formatting as much as
+  substance. A meta-test now pins the matcher itself.
+- `migrateSettings` on a garbage blob is asserted to return the safe defaults,
+  not merely to avoid throwing — the outcome that matters, since callers read
+  `server.enabled` and friends straight off the result.
+- `summarize_note`'s documented fail-open now covers the case that was
+  untested: a provider that passes its liveness check and then throws
+  mid-call.
+
+### Fixed (Obsidian 0.11.0 review)
+
+- The embedding worker pool captured the first batch failure into an
+  `unknown` and rethrew it verbatim, so a provider that rejects with a
+  non-`Error` (a string, a raw response object) propagated that value to
+  callers that all treat a failure as an `Error`. The capture now normalizes
+  to an `Error`, keeping the original when there is one.
+- The one `eslint-disable` in the repo that shipped without a `--` rationale
+  (in the sharded embedding-load path) now carries one, matching every other
+  disable in the codebase.
+
+Everything else the 0.11.0 review reported is a standing, documented
+decision — see the review table in [docs/ROADMAP.md](docs/ROADMAP.md).
+
 ### Security (2026-08-24 pass)
 
 - ZIP stored (uncompressed) entries now check their actual byte length

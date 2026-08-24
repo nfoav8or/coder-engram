@@ -148,8 +148,10 @@ embeddings opt-in.
 
 ## Open questions for the maintainer
 
-- Shard count: fixed 256, or scaled by vault size? (Fixed is simpler; 256 shards of a
-  5 GB vault ≈ 20 MB each, acceptable.)
+- ~~Shard count: fixed 256, or scaled by vault size?~~ **Settled in 0.11.0: fixed 256**
+  (`SHARD_COUNT` in `src/utils/sharding.ts`). Fixed is simpler, and 256 shards of a 5 GB
+  vault land around 20 MB each. A file claiming any other shard count is treated as
+  corrupt and rebuilt rather than guessed at.
 - Is IndexedDB categorically off the table, or acceptable as an optional cache location
   for users whose sync clients choke on `Index/`? (This doc assumes off the table.)
 - Real-vault recall eval corpus: which vault/queries should gate the IVF ship decision?

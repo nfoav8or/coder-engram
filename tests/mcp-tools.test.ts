@@ -50,18 +50,29 @@ describe("ToolRegistry", () => {
     }
   });
 
-  it("lists the expected tools with input schemas", () => {
+  it("exposes EXACTLY the curated tool surface, with input schemas", () => {
+    // Asserted as an exact set, not with `toContain`: the security invariant
+    // is what is ABSENT. Promotion of an inbox entry is UI-only, and there is
+    // deliberately no generic file read/write or whole-vault dump. A
+    // `toContain` list keeps passing when a new tool is added to ALL_TOOLS,
+    // which is precisely the change that would breach the invariant, so the
+    // check has to fail on an unexpected ADDITION as well as a removal.
     const registry = new ToolRegistry();
-    const names = registry.list().map((t) => t.name);
-    expect(names).toContain("search_vault_memory");
-    expect(names).toContain("add_memory");
-    expect(names).toContain("get_project_context");
-    expect(names).toContain("get_global_context");
-    expect(names).toContain("list_projects");
-    expect(names).toContain("get_recent_sessions");
-    expect(names).toContain("reindex_vault");
-    expect(names).toContain("get_note_context");
-    expect(names).toContain("find_related_notes");
+    const names = registry.list().map((t) => t.name).sort();
+    expect(names).toEqual(
+      [
+        "add_memory",
+        "find_related_notes",
+        "get_global_context",
+        "get_note_context",
+        "get_project_context",
+        "get_recent_sessions",
+        "list_projects",
+        "reindex_vault",
+        "search_vault_memory",
+        "summarize_note",
+      ].sort(),
+    );
     for (const def of registry.list()) {
       expect(def.inputSchema.type).toBe("object");
     }

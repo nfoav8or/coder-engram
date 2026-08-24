@@ -309,6 +309,14 @@ export function chunkMarkdown(content: string, options: ChunkOptions = {}): Chun
   const bodyStartLine = options.bodyStartLine ?? 0;
 
   const lines = content.split(/\r?\n/);
+  // A file ending in a newline splits to a phantom trailing "" that is not a
+  // real line. The windowed path already trims it, but a section that fits in
+  // one chunk (the common case for ordinary notes) returns its span straight
+  // from `splitIntoSections`, so the LAST chunk of most notes reported an
+  // `endLine` one past the end — enough for "open at line" and
+  // `get_note_context` to land past the content. Dropping the phantom shifts
+  // no real line, since it is only ever the final element.
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
   const sections = splitIntoSections(lines, bodyStartLine);
   const chunks: Chunk[] = [];
   for (const section of sections) {
