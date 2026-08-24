@@ -77,7 +77,11 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
         method: "GET",
         timeoutMs: 5_000,
       });
-      return res.status >= 200 && res.status < 300;
+      const ok = res.status >= 200 && res.status < 300;
+      if (!ok) {
+        this.logger.warn("Ollama responded but is not usable", { status: res.status });
+      }
+      return ok;
     } catch (err) {
       this.logger.warn("Ollama not reachable", {
         error: toMessage(err),

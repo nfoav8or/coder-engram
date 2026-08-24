@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security (2026-08-24 pass)
+
+- ZIP stored (uncompressed) entries now check their actual byte length
+  against the decompression-bomb cap, not just the central directory's
+  declared `uncompressedSize` — the two can differ for a crafted entry. Not
+  currently reachable (the upstream 50 MB attachment cap already bounds any
+  archive), closed as defense-in-depth ahead of that cap ever changing.
+- Ollama / OpenAI-compatible provider availability checks now log the HTTP
+  status on a non-2xx response (previously silent). A wrong API key or
+  auth failure degraded retrieval to lexical-only indefinitely with no signal
+  distinguishing it from "the endpoint isn't running yet."
+- `version-bump.mjs` now refuses to move the version backward or sideways,
+  and reads+parses both `manifest.json` and `versions.json` before writing
+  either, so a malformed `versions.json` fails closed instead of leaving
+  `manifest.json` updated with `versions.json` still on the old version.
+- The release workflow's `versions.json` lookup no longer splices the tag
+  name into a `node -p` JavaScript string literal; it's passed through `env:`
+  instead. Only reachable by whoever can already push a tag (same trust
+  level), closed as defense-in-depth.
+- `package.json` gained `"private": true` — nothing in the release pipeline
+  publishes to npm, but an accidental manual `npm publish` is now refused.
+
 ### Security
 
 - A session note's filename stem (`ProjectMemory.startSession`) is now
@@ -23,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   endpoint/model/API key) with a whitespace-only value now degrades to
   lexical retrieval immediately with a clear log, instead of building a
   provider that only fails once a request is actually made.
+
+### Fixed (2026-08-24 pass)
+
+- `summarize_note`'s sentence splitter treated every abbreviation's period
+  ("Dr.", "U.S.", "etc.") as a sentence boundary, so fragments like "S." could
+  be selected and surfaced verbatim as a "sentence" — a real break of the
+  module's stated promise that a summary is only ever the note's own
+  sentences. Abbreviation-shaped fragments now merge with the next one.
+- A memory root change (`updateSettings`) didn't reset the one-shot
+  attachment-extraction-cache-clear flag, so a stale, possibly-sensitive
+  extracted-attachment cache found at the new root (a reused or restored
+  folder) was never pruned even with attachment indexing off there too.
 
 ### Fixed
 

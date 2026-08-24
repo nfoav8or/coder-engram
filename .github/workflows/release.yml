@@ -68,7 +68,7 @@ jobs:
           # app version may install. version-bump.mjs writes both files, so a
           # missing entry means the manifest was edited by hand — and the
           # release would publish while older clients are never offered it.
-          VERSIONS_ENTRY="$(node -p "require('./versions.json')['$VERSION'] || ''")"
+          VERSIONS_ENTRY="$(VERSION="$VERSION" node -e "console.log(require('./versions.json')[process.env.VERSION] || '')")"
           if [ -z "$VERSIONS_ENTRY" ]; then
             echo "versions.json has no entry for '$VERSION'." >&2
             echo "Run 'npm version $VERSION' rather than editing manifest.json by hand." >&2

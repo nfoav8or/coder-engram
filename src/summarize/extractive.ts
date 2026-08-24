@@ -42,12 +42,42 @@ const STOP_WORDS = new Set([
   "when", "where", "how", "why", "there", "here", "than", "too", "very", "just",
 ]);
 
+// Common abbreviations whose period is not a sentence boundary. A run of
+// single letters ("U.S.", "e.g.") is caught separately, below — this list is
+// only for multi-letter abbreviations.
+const ABBREVIATIONS = new Set([
+  "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "approx",
+  "no", "vol", "fig", "dept", "gov", "rev", "capt", "gen", "col", "lt", "sgt",
+]);
+
+/**
+ * True if `part` — one `[^.!?]+(?:[.!?]+|$)` split fragment ending in a `.` —
+ * ends on an abbreviation rather than a real sentence boundary, so it should
+ * be merged with the next fragment instead of standing alone.
+ */
+function endsWithAbbreviation(part: string): boolean {
+  const trimmed = part.trimEnd();
+  if (!trimmed.endsWith(".")) return false;
+  const word = trimmed.slice(0, -1).match(/[A-Za-z]+$/)?.[0];
+  if (!word) return false;
+  // A single letter is an initial or the first/second letter of a
+  // dotted-abbreviation run ("U.S.", "e.g.") — each dot in the run splits
+  // its own single-letter fragment, so this rule alone reassembles them.
+  return word.length === 1 || ABBREVIATIONS.has(word.toLowerCase());
+}
+
 /**
  * Split Markdown text into sentence-like units. Lines are separated first (so a
  * heading or list item is its own unit), then each line is split on sentence
  * punctuation. Common Markdown markers (heading `#`, list `-*+`, quote `>`) are
  * stripped from the front so they don't pollute the text. No lookbehind is used
  * (keeps the compiled target broad).
+ *
+ * A naive split on `.!?` treats every abbreviation's period as a sentence
+ * boundary ("Dr. Smith" -> "Dr." + " Smith"), which would surface fragments
+ * like "S." as standalone "sentences" — a real failure of the module's own
+ * promise that a summary is only ever the note's own sentences. Fragments
+ * ending on a likely abbreviation are merged back into the next fragment.
  */
 export function splitIntoSentences(text: string): string[] {
   const units: string[] = [];
@@ -61,10 +91,14 @@ export function splitIntoSentences(text: string): string[] {
       .replace(/^\d+\.\s+/, "")
       .trim();
     if (!cleaned) continue;
-    const parts = cleaned.match(/[^.!?]+(?:[.!?]+|$)/g) ?? [cleaned];
-    for (const part of parts) {
-      const s = part.trim();
+    const rawParts = cleaned.match(/[^.!?]+(?:[.!?]+|$)/g) ?? [cleaned];
+    let buffer = "";
+    for (let i = 0; i < rawParts.length; i++) {
+      buffer += rawParts[i];
+      if (i < rawParts.length - 1 && endsWithAbbreviation(rawParts[i])) continue;
+      const s = buffer.trim();
       if (s.length >= 2) units.push(s);
+      buffer = "";
     }
   }
   return units;

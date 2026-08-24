@@ -26,6 +26,22 @@ describe("splitIntoSentences", () => {
     const units = splitIntoSentences("# Heading\n\n- item one\n- item two");
     expect(units).toEqual(["Heading", "item one", "item two"]);
   });
+
+  it("does not split on an abbreviation's period", () => {
+    // A naive split on every "." would produce fragments like "Dr.", "S.",
+    // and " Jones." — none of which are sentences in the source note, and
+    // any could get selected and surfaced as one by the ranking backends.
+    expect(splitIntoSentences("Dr. Smith went to the U.S. today. He met Mr. Jones.")).toEqual([
+      "Dr. Smith went to the U.S. today.",
+      "He met Mr. Jones.",
+    ]);
+  });
+
+  it("still splits a real sentence that happens to end right after an abbreviation-shaped word", () => {
+    expect(splitIntoSentences("See the appendix, etc. The rest follows next.")).toEqual([
+      "See the appendix, etc. The rest follows next.",
+    ]);
+  });
 });
 
 describe("scoreLexical", () => {

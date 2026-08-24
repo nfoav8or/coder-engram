@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { FakeHttpClient } from "../src/core/http-client";
 import { OpenAiEmbeddingProvider } from "../src/embeddings/openai-embedding-provider";
+import { NULL_LOGGER } from "../src/utils/logger";
 
 const ENDPOINT = "https://api.example.com/v1";
 const KEY = "sk-test-123";
@@ -93,5 +94,22 @@ describe("OpenAiEmbeddingProvider", () => {
     const http = new FakeHttpClient();
     http.onExact("GET", `${ENDPOINT}/models`, () => ({ status: 500, body: "" }));
     expect(await make(http).isAvailable()).toBe(false);
+  });
+
+  it("logs the status on a non-2xx /models response, distinct from a transport failure", async () => {
+    // A wrong API key returns 401 here, not a network error — it used to be
+    // logged nowhere, indistinguishable from the endpoint simply not existing.
+    const http = new FakeHttpClient();
+    http.onExact("GET", `${ENDPOINT}/models`, () => ({ status: 401, body: "" }));
+    const warn = vi.fn();
+    const provider = new OpenAiEmbeddingProvider({
+      http,
+      endpoint: ENDPOINT,
+      model: "text-embed",
+      apiKey: KEY,
+      logger: { ...NULL_LOGGER, warn },
+    });
+    expect(await provider.isAvailable()).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("not usable"), { status: 401 });
   });
 });

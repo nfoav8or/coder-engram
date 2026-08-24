@@ -174,6 +174,28 @@ describe("attachment indexing (fake PDF extractor)", () => {
     expect((await engine.search({ query: "harrier" })).length).toBe(0);
   });
 
+  it("clears a stale extraction cache found at a NEW root too, not just the one it already cleared", async () => {
+    // The one-shot clear flag used to live for the engine's whole lifetime,
+    // not per cache instance. Simulate the flag already having fired once
+    // (attachments were off, cache cleared) and then the memoryRoot moving to
+    // a folder that already has its own populated (stale, possibly
+    // sensitive) extracted.json on disk — e.g. a reused or restored folder.
+    const seed = {
+      "Papers/doc.pdf": "harrier survey notes",
+      "Brain/Index/extracted.json": JSON.stringify({
+        version: 2,
+        entries: { "Old/other.pdf": { mtime: 1, text: "stale falcon data" } },
+      }),
+    };
+    const { adapter, engine } = makeEngine(seed, { indexAttachments: false });
+    await engine.reindex(); // fires the one-shot clear at the original root
+    await adapter.exists("Claude Code/Index/extracted.json");
+
+    engine.updateSettings({ ...DEFAULT_SETTINGS, indexAttachments: false, memoryRoot: "Brain" });
+    await engine.refresh();
+    expect(await adapter.read("Brain/Index/extracted.json")).not.toContain("falcon");
+  });
+
   it("migrates a pre-v4 settings blob to indexAttachments=false", () => {
     const migrated = migrateSettings({ schemaVersion: 3, indexingEnabled: true });
     expect(migrated.indexAttachments).toBe(false);

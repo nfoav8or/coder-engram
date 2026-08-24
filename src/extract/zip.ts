@@ -109,6 +109,14 @@ export async function readZipEntry(
     throw new Error(`zip entry too large when inflated: ${entry.name}`);
   }
   if (entry.method === 0) {
+    // The gate above trusts the central directory's DECLARED uncompressedSize;
+    // for a stored (uncompressed) entry the bytes actually sliced come from
+    // compressedSize instead, which that check never looked at. A crafted
+    // entry could under-declare uncompressedSize while compressedSize (and so
+    // `raw`) is large — check the real byte count too.
+    if (raw.byteLength > cap) {
+      throw new Error(`zip entry too large when inflated: ${entry.name}`);
+    }
     if (budget) budget.remaining -= raw.byteLength;
     return raw;
   }

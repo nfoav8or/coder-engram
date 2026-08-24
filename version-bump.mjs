@@ -16,13 +16,39 @@ if (!targetVersion) {
   process.exit(1);
 }
 
+/** Bare x.y.z compare (this project's tags are always bare, never pre-release). */
+function compareVersions(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  }
+  return 0;
+}
+
+// Read and parse BOTH files before writing either, so a malformed
+// versions.json fails closed instead of leaving manifest.json updated while
+// versions.json is stuck on the old version.
 const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
+const versions = JSON.parse(readFileSync("versions.json", "utf8"));
+
+if (!/^\d+\.\d+\.\d+$/.test(targetVersion)) {
+  console.error(`version-bump: "${targetVersion}" is not a bare x.y.z version.`);
+  process.exit(1);
+}
+if (compareVersions(targetVersion, manifest.version) <= 0) {
+  console.error(
+    `version-bump: refusing to move version backward or sideways: ` +
+      `"${manifest.version}" -> "${targetVersion}". Edit manifest.json/versions.json by hand if this is intentional.`,
+  );
+  process.exit(1);
+}
+
 const { minAppVersion } = manifest;
 manifest.version = targetVersion;
-writeFileSync("manifest.json", JSON.stringify(manifest, null, 2) + "\n");
-
-const versions = JSON.parse(readFileSync("versions.json", "utf8"));
 versions[targetVersion] = minAppVersion;
+
+writeFileSync("manifest.json", JSON.stringify(manifest, null, 2) + "\n");
 writeFileSync("versions.json", JSON.stringify(versions, null, 2) + "\n");
 
 console.log(`version-bump: set manifest + versions.json to ${targetVersion} (minAppVersion ${minAppVersion}).`);

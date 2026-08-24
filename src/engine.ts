@@ -436,6 +436,13 @@ export class EngramEngine {
       this.store = new MemoryStore(this.adapter, this.paths, this.logger.child("memory"));
       this.embeddingStore = this.newEmbeddingStore();
       this.extractionCache = this.newExtractionCache();
+      // This flag guards a one-shot clear of a cache that may hold sensitive
+      // PDF/Office text. It's engine-lifetime state, but the cache instance
+      // just changed to point at the new root's Index/extracted.json — reset
+      // it so a stale, previously-populated cache at the new root (e.g. an
+      // old memoryRoot reused, or a restored folder) still gets the clear
+      // cycle if attachment indexing is off there too.
+      this.extractionCacheCleared = false;
       this.embeddingProvider = this.buildProvider();
       this.retriever = this.buildRetriever();
     } else if (embeddingChanged) {

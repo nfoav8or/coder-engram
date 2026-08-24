@@ -106,7 +106,16 @@ export class OpenAiEmbeddingProvider implements EmbeddingProvider {
         headers: this.authHeaders(),
         timeoutMs: 5_000,
       });
-      return res.status >= 200 && res.status < 300;
+      const ok = res.status >= 200 && res.status < 300;
+      if (!ok) {
+        // Distinguishes "not started yet" (network failure, caught below)
+        // from "reachable but rejecting requests" (bad key, wrong model,
+        // auth failure) — a 401 here previously logged nothing at all, so a
+        // persistently wrong key degraded to lexical with no signal beyond a
+        // one-time settings-save Notice easy to miss.
+        this.logger.warn("OpenAI-compatible endpoint responded but is not usable", { status: res.status });
+      }
+      return ok;
     } catch (err) {
       this.logger.warn("OpenAI-compatible endpoint not reachable", {
         error: toMessage(err),

@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { FakeHttpClient } from "../src/core/http-client";
 import {
   OllamaEmbeddingProvider,
   DEFAULT_OLLAMA_ENDPOINT,
 } from "../src/embeddings/ollama-provider";
+import { NULL_LOGGER } from "../src/utils/logger";
 
 const ENDPOINT = "http://127.0.0.1:11434";
 
@@ -65,6 +66,22 @@ describe("OllamaEmbeddingProvider", () => {
     const http = new FakeHttpClient();
     http.onExact("GET", `${ENDPOINT}/api/tags`, () => ({ status: 404, body: "" }));
     expect(await make(http).isAvailable()).toBe(false);
+  });
+
+  it("logs the status on a non-2xx tags response, distinct from a transport failure", async () => {
+    // A reachable-but-rejecting endpoint (bad auth, wrong path) previously
+    // logged nothing at all — indistinguishable from "not started yet."
+    const http = new FakeHttpClient();
+    http.onExact("GET", `${ENDPOINT}/api/tags`, () => ({ status: 401, body: "" }));
+    const warn = vi.fn();
+    const provider = new OllamaEmbeddingProvider({
+      http,
+      endpoint: ENDPOINT,
+      model: "nomic",
+      logger: { ...NULL_LOGGER, warn },
+    });
+    expect(await provider.isAvailable()).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("not usable"), { status: 401 });
   });
 
   it("isAvailable is false on a transport error", async () => {

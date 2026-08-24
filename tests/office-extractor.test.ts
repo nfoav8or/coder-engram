@@ -124,6 +124,17 @@ describe("zip reader", () => {
     await readZipEntry(storedZip, readZipDirectory(storedZip)[0], storedBudget);
     expect(storedBudget.remaining).toBe(200);
   });
+
+  it("catches a lying declared size on a STORED entry too, not just deflated ones", async () => {
+    // A stored entry's actual bytes come from compressedSize, not
+    // uncompressedSize — the gate that only looks at the declared
+    // uncompressedSize would pass a forged small declaration while the real
+    // (compressedSize-sliced) bytes are large.
+    const storedZip = makeZip({ "a.txt": "x".repeat(1000) }, { store: true });
+    const dir = readZipDirectory(storedZip);
+    const lying = { ...dir[0], uncompressedSize: 10 };
+    await expect(readZipEntry(storedZip, lying, { remaining: 500 })).rejects.toThrow(/too large/);
+  });
 });
 
 describe("OfficeExtractor", () => {
