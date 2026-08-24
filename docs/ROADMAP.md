@@ -1,6 +1,6 @@
 # Roadmap
 
-Coder Engram is built in milestones. Milestones 1 through 15 are complete (through 0.11.0); the patch releases from 0.9.1 to 0.10.7 are listed under "Patch releases since 0.9.0", the Obsidian review findings and what was done about each under "Plugin review findings", work not yet released under "In progress", and anything not scheduled under "Deferred / future".
+Coder Engram is built in milestones. Milestones 1 through 15 are complete (through 0.11.0); the patch releases from 0.9.1 to 0.11.1 are listed under "Patch releases since 0.9.0", the Obsidian review findings and what was done about each under "Plugin review findings", work not yet released under "In progress", and anything not scheduled under "Deferred / future".
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -181,6 +181,7 @@ described in full in [CHANGELOG.md](../CHANGELOG.md); the short version:
 | 0.10.5 | The extractive summarizer kept its **own** ASCII-only word pattern after 0.10.4 fixed retrieval's, so `summarize_note` scored every non-Latin sentence 0 and quietly returned the first N sentences instead of the most representative ones. Plus three hot-path economies: an all-unchanged refresh skips the embedding pass's whole-corpus hash sweep, scan include/exclude rules compile once per scan instead of once per file, and `find_related_notes` caches the link graph per index change. |
 | 0.10.6 | Two fixes from the post-0.10.5 review loop: a corrupt settings blob with a non-string `server.token` crashed server startup (violating the documented degrade-without-throwing invariant), and a pending memory whose content ends in a "Related files:"-shaped list was mis-parsed — the tail silently became related-path metadata. Plus three more economies (cached vector norms, per-chunk content-hash memoization, O(1) per-note chunk lookup) and supply-chain hardening: CI/release workflow actions pinned to commit SHAs. |
 | 0.10.7 | The large-vault P1 set: `embeddings.json` v2 stores vectors as binary Float32 bytes with precomputed norms (~40% smaller, migrated in place — no re-embed), lexical retrieval scores only the union of the query terms' posting lists instead of the whole corpus, the embedding pass checkpoints every ~1,024 chunks so an interrupted first pass resumes, and a new Concurrent batches setting (default 1) speeds first passes against local providers. |
+| 0.11.1 | A hardening pass over the subsystems 0.11.0's persistence work did not touch. **Tag extraction failed open twice** — an inline tag was only recognized after whitespace or `(`, so `**#private**`, `urgent,#private,todo` and `"#private"` extracted nothing, and an unterminated frontmatter block discarded its `tags:` list — meaning notes the user had excluded were indexed and served (`INDEX_VERSION` bumped to 4 to evict them). Also: the last chunk of a note ending in a newline reported an `endLine` past the end; `summarize_note` split sentences on abbreviation periods; `add_memory` re-parsed the whole review inbox per call (now mtime-cached); and the two source findings from Obsidian's automated 0.11.0 review are closed. |
 
 Five themes run through them, and they are worth stating because they are where the next
 bug probably is: a filter that fails **open** is invisible (0.9.2, 0.9.7, 0.9.9); a tool that
@@ -204,7 +205,15 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing yet — 0.11.0 has just been cut. Next on the large-vault track, per [LARGE_VAULTS.md](LARGE_VAULTS.md): P2.2 lazy chunk text behind a chunk-handle accessor (0.11.1), then P3.1 IVF vector search plus a large-vault mode switch gated on a real-vault recall eval (0.11.2), with the P2.3 Web Worker offload slotted where in-Obsidian verification allows.
+- Nothing unreleased — 0.11.1 has just been cut.
+
+**Next, in order**, per [LARGE_VAULTS.md](LARGE_VAULTS.md):
+
+1. **P2.2 lazy chunk text** — `IndexedChunk.text` moves behind a chunk-handle accessor, with tokenize/stats caches persisted per shard so BM25 never needs the body. Resident heap per chunk drops from roughly 2 KB to 200 B, putting 1M chunks near 1 GB with vectors. This is the API-breaking step and lands alone on purpose: `text` is read by the chunker, all three retrievers, the summarizer, the MCP tools, and memory search.
+2. **P3.1 IVF vector search** behind the existing `Retriever` interface, plus the **P3.2 large-vault mode** switch that turns the set on coherently instead of exposing nine knobs. Gated on a real-vault recall eval added to `npm run eval` — the spike's 43–57× speedup at ≥99.7% recall was measured on a deliberately clustered synthetic corpus, which flatters recall.
+3. **P2.3 Web Worker offload** for initial chunking, slotted wherever in-Obsidian verification is available. The cooperative-yield fallback shipped in 0.11.0 already removes the renderer-freeze failure mode, so this is a throughput win rather than a correctness one.
+
+Standing work between releases: the review loop that produced 0.10.1–0.11.1 keeps running — audit what is already shipped, fix what fails open first, and treat a stale document as an unfinished release.
 
 ## Open questions for the maintainer
 

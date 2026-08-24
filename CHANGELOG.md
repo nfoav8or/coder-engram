@@ -7,157 +7,142 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Security (tag-extraction fail-open — index rebuilds once)
+## [0.11.1] — 2026-08-24
+
+A hardening release: four review passes over the subsystems 0.11.0's sharded
+persistence work did not touch, plus the two source findings from Obsidian's
+automated 0.11.0 review. **Tag extraction failed open in two ways, so the index
+rebuilds once on upgrade.**
+
+### Security
+
+Tags are a privacy control — `excludedTags` is what keeps a note out of the
+index and away from the local MCP server — so a tag the parser misses means the
+note is indexed and served despite being excluded. Two such misses, the same
+fail-open shape as the 0.10.4 and 0.9.9 bugs:
 
 - **An inline tag was only recognized after whitespace or `(`**, so any other
   punctuation in front of it dropped the tag entirely: `**#private**` (bold —
   an ordinary way to write one), `urgent,#private,todo`, and `"#private"` all
-  extracted nothing. Tags are a **privacy control** — `excludedTags` is what
-  keeps a note out of the index and away from the local server — so a missed
-  tag means the note was indexed and served despite being excluded. This is
-  the same fail-open shape as the 0.10.4 and 0.9.9 bugs. The rule is now
-  stated as what a tag may *not* follow (a word character, a `/`, or a
-  markdown link's `](`), which keeps the URL-fragment guard the old narrow
-  pattern provided by accident and additionally fixes a live false positive:
-  `[text](#section)` used to register `section` as a tag.
+  extracted nothing. The rule is now stated as what a tag may *not* follow (a
+  word character, a `/`, or a markdown link's `](`), which keeps the
+  URL-fragment guard the old narrow pattern provided by accident and
+  additionally fixes a live false positive: `[text](#section)` used to register
+  `section` as a tag.
 - **An unterminated frontmatter block discarded its `tags:` list**, and since
-  those tags carry no `#`, nothing was left for the inline pattern to find.
-  A truncated write or a sync conflict was enough to trigger it. Such a block
-  is now scanned for tags to end-of-file; its content still counts as body, so
+  those tags carry no `#`, nothing was left for the inline pattern to find. A
+  truncated write or a sync conflict was enough to trigger it. Such a block is
+  now scanned for tags to end-of-file; its content still counts as body, so
   nothing is hidden from the index by the change.
 - `INDEX_VERSION` is raised to 4. Fixing a parser only changes what happens on
   the next *read* of a note, and a refresh re-reads only when the mtime
   changed — so the bump is what actually evicts notes that should never have
-  been indexed. Expect one automatic rebuild.
+  been indexed. **Expect one automatic rebuild.**
+
+Other hardening, none of it reachable through a live path today — each closed
+as defense-in-depth:
+
+- A session note's filename stem (`ProjectMemory.startSession`) is resolved
+  against its sessions folder via `resolveInVault` instead of concatenated, so
+  a stamp containing `..` cannot write outside the project's session folder.
+- Pending-inbox single-line fields (`Source`, `Origin`, tags, related paths)
+  also collapse U+2028/U+2029 (LINE/PARAGRAPH SEPARATOR), which some Markdown
+  renderers draw as a hard break — an agent-supplied field containing one could
+  otherwise render as a spoofed extra line in the review UI. The file and the
+  parser were never affected.
+- ZIP stored (uncompressed) entries check their actual byte length against the
+  decompression-bomb cap, not just the central directory's declared
+  `uncompressedSize`; the two can differ for a crafted entry. The upstream
+  50 MB attachment cap already bounds any archive today.
+- A local-provider config (Ollama endpoint/model, OpenAI-compatible
+  endpoint/model/API key) with a missing *or whitespace-only* value degrades to
+  lexical retrieval immediately with a logged reason, instead of building a
+  provider that only fails once a request is actually made.
+- Ollama / OpenAI-compatible availability checks log the HTTP status on a
+  non-2xx response. A wrong API key previously degraded retrieval to
+  lexical-only indefinitely with nothing distinguishing it from "the endpoint
+  isn't running yet."
+- `version-bump.mjs` refuses a version that moves backward or sideways, and
+  parses both `manifest.json` and `versions.json` before writing either, so a
+  malformed `versions.json` fails closed rather than leaving the manifest
+  bumped and `versions.json` stale.
+- The release workflow's `versions.json` lookup passes the tag name through
+  `env:` instead of splicing it into a `node -p` string literal.
+- `package.json` gained `"private": true`: nothing in the pipeline publishes to
+  npm, and an accidental manual `npm publish` is now refused.
 
 ### Fixed
 
-- A note ending in a newline gave its last chunk an `endLine` one line past
-  the end, because splitting on newlines produces a trailing empty element
-  that is not a line. Only the final chunk of a note was affected, and only
-  when its section fit in a single chunk — the common case — so "open at
-  line" and `get_note_context` landed just past the content.
+- A note ending in a newline gave its last chunk an `endLine` one line past the
+  end, because splitting on newlines produces a trailing empty element that is
+  not a line. Only the final chunk of a note was affected, and only when its
+  section fit in a single chunk — the common case — so "open at line" and
+  `get_note_context` landed just past the content.
+- `summarize_note`'s sentence splitter treated every abbreviation's period
+  ("Dr.", "U.S.", "etc.") as a sentence boundary, so fragments like "S." could
+  be selected and surfaced verbatim as a "sentence" — a real break of the
+  module's stated promise that a summary is only ever the note's own sentences.
+- Search's `folder`/`project`/`tag` filters are case- and Unicode-form
+  insensitive, matching the fold vault-scan exclusions already used. A filter
+  typed as `notes`, or in a different accent normalization form, no longer
+  silently returns zero results.
+- A memory-root change (`updateSettings`) did not reset the one-shot
+  attachment-extraction-cache-clear flag, so a stale, possibly sensitive
+  extracted-attachment cache found at the new root (a reused or restored
+  folder) was never pruned even with attachment indexing off there too.
+- The embedding worker pool captured the first batch failure into an `unknown`
+  and rethrew it verbatim, so a provider rejecting with a non-`Error` (a
+  string, a raw response object) propagated that value to callers that all
+  treat a failure as an `Error`. *(Obsidian 0.11.0 review.)*
+- Vault scanning snapshots `excludedTags` once per scan, as the folder and
+  pattern filters already did, instead of reading the settings array live on
+  every file.
 
 ### Performance
 
-- `add_memory` no longer re-reads and re-parses the whole review inbox on
-  every call to check for duplicates. That was O(inbox), and the inbox grows
-  with agent usage rather than vault size, so an unreviewed backlog slowed
-  every later proposal. Dedup keys are cached against the inbox file's mtime;
-  an apply, a discard, or a hand-edit in Obsidian moves the mtime and forces a
+- `add_memory` no longer re-reads and re-parses the whole review inbox on every
+  call to check for duplicates. That was O(inbox), and the inbox grows with
+  agent usage rather than vault size, so an unreviewed backlog slowed every
+  later proposal. Dedup keys are cached against the inbox file's mtime; an
+  apply, a discard, or a hand-edit in Obsidian moves the mtime and forces a
   re-parse, so the cache cannot go stale.
+
+### Changed
+
+- `MemoryType`'s value list is exported once (`MEMORY_TYPES` in
+  `memory-types.ts`) and imported by both the `add_memory` MCP tool and the Add
+  Memory modal, instead of being hand-copied in each — a new memory type can no
+  longer be added to one and silently missed by the other.
+- Settings-tab warning Notices (embedding provider choice, server host,
+  non-localhost binding, direct writes) are raised through one shared method on
+  both the declarative and imperative code paths.
+- The case/Unicode-fold helper used by search filtering and vault-scan
+  exclusions lives once, in `src/utils/text.ts`.
+- Removed a redundant `Math.min`/`Math.max` clamp around two MCP `limit`
+  arguments already range-validated by `optionalNumber` (which throws rather
+  than silently clamping).
+- The one `eslint-disable` in the repo that shipped without a `--` rationale
+  now carries one. *(Obsidian 0.11.0 review.)*
 
 ### Tests
 
-- The MCP tool surface is now asserted as an exact set rather than with
+608 → 634. The three privacy and correctness fixes above were each confirmed to
+fail without their fix.
+
+- The MCP tool surface is asserted as an exact set rather than with
   `toContain`. The invariant is what is *absent* — promotion is UI-only and
   there is no generic file access — and a containment check keeps passing when
   a tool is added, which is precisely the change that would breach it.
-- The layering guard now detects a host/Node dependency in every form that
-  creates one: single- or double-quoted, `require()`, a dynamic `import()`,
-  and a bare builtin (`from "fs"`, not just `"node:fs"`). It previously
-  matched only double-quoted `from "node:` / `require("obsidian")`. Nothing in
-  the tree was violating it, but the guard was checking formatting as much as
-  substance. A meta-test now pins the matcher itself.
+- The layering guard detects a host/Node dependency in every form that creates
+  one: single- or double-quoted, `require()`, a dynamic `import()`, and a bare
+  builtin (`from "fs"`, not just `"node:fs"`). Nothing in the tree was
+  violating it, but the guard was checking formatting as much as substance. A
+  meta-test now pins the matcher itself.
 - `migrateSettings` on a garbage blob is asserted to return the safe defaults,
   not merely to avoid throwing — the outcome that matters, since callers read
   `server.enabled` and friends straight off the result.
 - `summarize_note`'s documented fail-open now covers the case that was
-  untested: a provider that passes its liveness check and then throws
-  mid-call.
-
-### Fixed (Obsidian 0.11.0 review)
-
-- The embedding worker pool captured the first batch failure into an
-  `unknown` and rethrew it verbatim, so a provider that rejects with a
-  non-`Error` (a string, a raw response object) propagated that value to
-  callers that all treat a failure as an `Error`. The capture now normalizes
-  to an `Error`, keeping the original when there is one.
-- The one `eslint-disable` in the repo that shipped without a `--` rationale
-  (in the sharded embedding-load path) now carries one, matching every other
-  disable in the codebase.
-
-Everything else the 0.11.0 review reported is a standing, documented
-decision — see the review table in [docs/ROADMAP.md](docs/ROADMAP.md).
-
-### Security (2026-08-24 pass)
-
-- ZIP stored (uncompressed) entries now check their actual byte length
-  against the decompression-bomb cap, not just the central directory's
-  declared `uncompressedSize` — the two can differ for a crafted entry. Not
-  currently reachable (the upstream 50 MB attachment cap already bounds any
-  archive), closed as defense-in-depth ahead of that cap ever changing.
-- Ollama / OpenAI-compatible provider availability checks now log the HTTP
-  status on a non-2xx response (previously silent). A wrong API key or
-  auth failure degraded retrieval to lexical-only indefinitely with no signal
-  distinguishing it from "the endpoint isn't running yet."
-- `version-bump.mjs` now refuses to move the version backward or sideways,
-  and reads+parses both `manifest.json` and `versions.json` before writing
-  either, so a malformed `versions.json` fails closed instead of leaving
-  `manifest.json` updated with `versions.json` still on the old version.
-- The release workflow's `versions.json` lookup no longer splices the tag
-  name into a `node -p` JavaScript string literal; it's passed through `env:`
-  instead. Only reachable by whoever can already push a tag (same trust
-  level), closed as defense-in-depth.
-- `package.json` gained `"private": true` — nothing in the release pipeline
-  publishes to npm, but an accidental manual `npm publish` is now refused.
-
-### Security
-
-- A session note's filename stem (`ProjectMemory.startSession`) is now
-  resolved against its sessions folder via `resolveInVault` instead of
-  concatenated, so a stamp containing `..` can't write outside the project's
-  session folder. Not currently reachable (the only caller passes a generated
-  timestamp), closed ahead of any future caller.
-- Pending-inbox single-line fields (`Source`, `Origin`, tags, related paths)
-  now also collapse U+2028/U+2029 (LINE/PARAGRAPH SEPARATOR), which some
-  Markdown renderers treat as a hard line break — an agent-supplied field
-  containing one could otherwise render as a spoofed extra line in the review
-  UI. The underlying file and parser were never affected.
-- A local-provider config (Ollama endpoint/model, OpenAI-compatible
-  endpoint/model/API key) with a whitespace-only value now degrades to
-  lexical retrieval immediately with a clear log, instead of building a
-  provider that only fails once a request is actually made.
-
-### Fixed (2026-08-24 pass)
-
-- `summarize_note`'s sentence splitter treated every abbreviation's period
-  ("Dr.", "U.S.", "etc.") as a sentence boundary, so fragments like "S." could
-  be selected and surfaced verbatim as a "sentence" — a real break of the
-  module's stated promise that a summary is only ever the note's own
-  sentences. Abbreviation-shaped fragments now merge with the next one.
-- A memory root change (`updateSettings`) didn't reset the one-shot
-  attachment-extraction-cache-clear flag, so a stale, possibly-sensitive
-  extracted-attachment cache found at the new root (a reused or restored
-  folder) was never pruned even with attachment indexing off there too.
-
-### Fixed
-
-- Search's `folder`/`project`/`tag` filters are now case- and Unicode-form
-  insensitive, matching the exclusion logic vault scanning already used: a
-  filter typed as `notes` or in a different accent normalization form no
-  longer silently returns zero results against notes stored as `Notes/...`
-  or in the other normalization form.
-- Vault scanning now snapshots `excludedTags` once per scan (as the folder
-  and pattern filters already did), instead of reading the settings array
-  live on every file — hardening against a settings edit applying
-  inconsistently within one in-flight scan.
-
-### Changed
-
-- `MemoryType`'s value list is now exported once (`MEMORY_TYPES` in
-  `memory-types.ts`) and imported by both the `add_memory` MCP tool and the
-  Add Memory modal, instead of being hand-copied in each — a new memory type
-  can no longer be added to one and silently missed by the other.
-- Settings-tab warning Notices (embedding provider choice, server host,
-  non-localhost binding, direct writes) are raised through one shared method
-  on both the declarative and imperative code paths, instead of being
-  duplicated verbatim in each.
-- Removed a redundant `Math.min`/`Math.max` clamp around two MCP `limit`
-  arguments already range-validated (and would throw, not silently clamp) by
-  `optionalNumber`.
-- The case/Unicode-fold helper used by search filtering and vault-scan
-  exclusions now lives once, in `src/utils/text.ts`.
+  untested: a provider that passes its liveness check and then throws mid-call.
 
 ## [0.11.0] — 2026-08-23
 
@@ -925,7 +910,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.11.0...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.11.1...HEAD
+[0.11.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.1
 [0.11.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.0
 [0.10.7]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.7
 [0.10.6]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.6
