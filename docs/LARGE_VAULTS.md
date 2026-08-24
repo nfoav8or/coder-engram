@@ -1,6 +1,6 @@
 # Large vaults — the 0.11.x assessment (P2 + P3)
 
-Status: assessment written after 0.10.7; **P2.1 (sharded persistence) and the yielding half of P2.3 are implemented on the 0.11.0 track** — see the notes in each section. Remaining items stand as assessed.
+Status: assessment written after 0.10.7; **P2.1 (sharded persistence) and the yielding half of P2.3 shipped in 0.11.0** — see the notes in each section. Remaining items stand as assessed.
 Nothing in this document is implemented yet unless it says so. Numbers marked *measured*
 come from the benches in `tests/scale.bench.ts` and `tests/ann.spike.bench.ts` on the
 development machine; treat them as one-machine evidence, not guarantees.
@@ -17,7 +17,7 @@ are structural, not tuning.
 
 ## P2 — unlocks ~500k chunks
 
-### P2.1 Sharded index persistence — IMPLEMENTED (0.11.0 track)
+### P2.1 Sharded index persistence — SHIPPED (0.11.0)
 
 > Shipped as designed with one refinement: the layout is **size-adaptive** with hysteresis (shard above 20k chunks/vectors, return to single-file below 80% of that), so small vaults keep byte-identical single-file behavior and never pay shard overhead. Both caches (chunks + embeddings) shard; embedding checkpoints now rewrite only dirty shards. A corrupt embedding shard drops only its own vectors. Hardened in the follow-up review pass: a missing chunk shard is damage (rebuild), never "no notes here"; a layout switch writes data, then metadata, then blanks the obsolete file, so a crash in the window cannot yield a valid empty index; the engine serializes `reindex`/`refresh` now that a pass yields mid-flight; the layout rules live once in `utils/sharding.ts`.
 
@@ -62,7 +62,7 @@ the ~dozen page survivors, and BM25 scoring needs term statistics, not text. Pro
   own release, with the architecture test extended to keep `Index/` reads inside the
   adapter.
 
-### P2.3 Worker-offloaded parse and chunking — PARTIAL (0.11.0 track ships the yielding fallback)
+### P2.3 Worker-offloaded parse and chunking — PARTIAL (0.11.0 shipped the yielding fallback)
 
 > The cooperative-yielding path (yield to the event loop every 500 re-chunked notes in `build`/`refresh`) is implemented — it removes the renderer-freeze failure mode everywhere, including hosts without workers, at sub-second total overhead even at 100k notes. The actual Worker (esbuild second entry point, message protocol, ArrayBuffer transfer) is deferred to the next 0.11.x step: it needs manual in-Obsidian verification that this development loop cannot provide, and the yielding path already caps the user-visible harm.
 
@@ -134,9 +134,9 @@ here that alters scores.
 
 ## Sequencing recommendation for 0.11.x
 
-1. **0.11.0**: P2.1 shards + P2.3 worker (both are invisible to behavior; big, safe
-   wins; shared shard format lands once). Migration: read legacy single files, write
-   shards, done.
+1. **0.11.0 (shipped)**: P2.1 shards + the yielding half of P2.3. The Worker itself
+   slipped: it needs in-Obsidian verification, and yielding already caps the harm. It
+   lands in whichever 0.11.x step first has that verification.
 2. **0.11.1**: P2.2 lazy text behind the chunk-handle accessor (the API-breaking one —
    isolated on purpose).
 3. **0.11.2**: P3.1 IVF behind the existing `Retriever` interface + P3.2 mode switch,

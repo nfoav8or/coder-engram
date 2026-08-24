@@ -1,6 +1,6 @@
 # Roadmap
 
-Coder Engram is built in milestones. Milestones 1 through 14 are complete (through 0.10.0); the patch releases from 0.9.1 to 0.10.7 are listed under "Patch releases since 0.9.0", the Obsidian review findings and what was done about each under "Plugin review findings", work not yet released under "In progress", and anything not scheduled under "Deferred / future".
+Coder Engram is built in milestones. Milestones 1 through 15 are complete (through 0.11.0); the patch releases from 0.9.1 to 0.10.7 are listed under "Patch releases since 0.9.0", the Obsidian review findings and what was done about each under "Plugin review findings", work not yet released under "In progress", and anything not scheduled under "Deferred / future".
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -117,6 +117,14 @@ Coder Engram is built in milestones. Milestones 1 through 14 are complete (throu
 - Better than the imperative version in two places: the memory root is now rejected inline as you type (it was a `Notice` after the fact), and image-text indexing is visibly disabled until attachment indexing is on.
 - The layering test now distinguishes a **type-only** import of `obsidian` from a value import. The invariant it protects is "no runtime dependency on the host outside the adapters", and `import type` is erased — which is what makes the definitions testable.
 
+## Milestone 15 — large vaults, part 1: size-adaptive persistence (done, 0.11.0)
+
+- **Both caches shard past ~20k entries.** `chunks.json` becomes 256 shard files routed by FNV-1a of the note path; `embeddings.json` becomes a vector-less manifest plus 256 vector shards routed by chunk id. An edit rewrites ~1/256 of the corpus, and an embedding checkpoint rewrites only the shards it touched. Below the threshold (with hysteresis at 80%) nothing changes: small vaults keep byte-identical single files. The layout is recorded in the metadata, never re-derived; the rules live once in `utils/sharding.ts`.
+- **Builds no longer freeze the UI.** `IndexManager.build`/`refresh` yield to the host every 500 re-chunked notes, and the engine serializes overlapping index passes on one chain — the yields made the auto-index debounce, a settings-triggered refresh, and the `reindex_vault` tool interleavable.
+- **Review loop on the above** found and fixed: a missing chunk shard loaded as "no notes here" and, because the note's mtime read as unchanged, stayed missing forever; a layout switch blanked the old file before writing the metadata, so a crash in the window produced a valid empty index; one failed embedding checkpoint rejected every later persist without running it; a shape-valid base64 vector could throw `RangeError` out of retriever construction at startup.
+- **Local server hardening** from the same pass: 10 failed authentications in 60 s lock the server (`429`) until the window drains, explicit socket timeouts replace Node's minutes-long defaults, and a non-localhost bind requires a 16+ character token.
+- **Assessment for the rest of the track** is in [LARGE_VAULTS.md](LARGE_VAULTS.md): lazy chunk text (P2.2), worker offload (P2.3 remainder), and a measured pure-TS IVF approximate-nearest-neighbour prototype (P3.1; 43–57× query speedup at ≥99.7% recall in the spike).
+
 ## Plugin review findings (Obsidian automated review)
 
 Recorded in full, including the ones deliberately left alone. Reproduced locally with
@@ -189,7 +197,7 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing yet — 0.10.7 has just been cut. The large-vault P2/P3 assessment for the 0.11.x series is written up in [LARGE_VAULTS.md](LARGE_VAULTS.md): sharded index persistence, lazy chunk text, worker-offloaded parsing, and a measured pure-TS IVF approximate-nearest-neighbour prototype (43–57× query speedup at ≥99.7% recall in the spike).
+- Nothing yet — 0.11.0 has just been cut. Next on the large-vault track, per [LARGE_VAULTS.md](LARGE_VAULTS.md): P2.2 lazy chunk text behind a chunk-handle accessor (0.11.1), then P3.1 IVF vector search plus a large-vault mode switch gated on a real-vault recall eval (0.11.2), with the P2.3 Web Worker offload slotted where in-Obsidian verification allows.
 
 ## Open questions for the maintainer
 
