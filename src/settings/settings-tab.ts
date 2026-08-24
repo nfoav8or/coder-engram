@@ -434,12 +434,7 @@ export class EngramSettingTab extends PluginSettingTab {
         dd.addOption("ollama", "Ollama (local)");
         dd.addOption("openai-compatible", "OpenAI-compatible");
         dd.setValue(this.s.embeddingProvider).onChange(async (v) => {
-          if (v === "openai-compatible") {
-            new Notice(
-              "OpenAI-compatible sends your indexed note text to the configured endpoint. " +
-                "Use a local endpoint or a provider you trust.",
-            );
-          }
+          this.warnAbout("embeddingProvider", v);
           this.s.embeddingProvider = v as EngramSettings["embeddingProvider"];
           await this.commit();
           this.display(); // show/hide provider-specific fields
@@ -574,9 +569,7 @@ export class EngramSettingTab extends PluginSettingTab {
       .addText((t) => {
         t.setValue(this.s.server.host).onChange((v) => {
           const host = v.trim() || "127.0.0.1";
-          if (host !== "127.0.0.1" && host !== "localhost") {
-            new Notice("Warning: binding the server to a non-localhost address exposes memory to your network.");
-          }
+          this.warnAbout("server.host", host);
           this.s.server.host = host;
           this.dirty = true;
         });
@@ -591,7 +584,7 @@ export class EngramSettingTab extends PluginSettingTab {
       )
       .addToggle((t) =>
         t.setValue(this.s.server.allowNonLocalhost).onChange(async (v) => {
-          if (v) new Notice("Non-localhost binding allowed. The server can now expose memory to your network.");
+          this.warnAbout("server.allowNonLocalhost", v);
           this.s.server.allowNonLocalhost = v;
           await this.commit();
         }),
@@ -640,7 +633,7 @@ export class EngramSettingTab extends PluginSettingTab {
       .setDesc("When OFF (default), all writes go to the review inbox. When ON, tools may write memory files directly.")
       .addToggle((t) =>
         t.setValue(this.s.allowDirectWrites).onChange(async (v) => {
-          if (v) new Notice("Direct writes enabled. Memory files can now be modified without review.");
+          this.warnAbout("allowDirectWrites", v);
           this.s.allowDirectWrites = v;
           await this.commit();
         }),

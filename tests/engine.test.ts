@@ -219,6 +219,14 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
     expect(await adapter.read(file)).toContain("Wrapped up.");
   });
 
+  it("refuses a session stamp that would escape the project's sessions folder", async () => {
+    // The stamp is caller-supplied; nothing upstream sanitizes it. It must be
+    // resolved against the sessions root rather than concatenated, so a
+    // traversal payload can't land the note elsewhere in the vault.
+    const { engine } = makeEngine({});
+    await expect(engine.startSession("Demo", "../../../evil")).rejects.toThrow();
+  });
+
   it("writes a settings backup inside the Config folder", async () => {
     const { adapter, engine } = makeEngine({});
     await engine.backupSettings({ ...DEFAULT_SETTINGS, defaultProject: "Demo" });

@@ -69,7 +69,10 @@ export interface PendingBlockFields {
  * path) have no legitimate newline, so collapsing is lossless in practice.
  */
 function oneLine(value: string): string {
-  return value.replace(/\s*[\r\n]+\s*/g, " ").trim();
+  // U+2028/U+2029 (LINE/PARAGRAPH SEPARATOR) aren't `\n`, so they don't affect
+  // parsing, but some Markdown renderers treat them as a hard line break —
+  // collapsed here too so a single-line field can't display as multiple lines.
+  return value.replace(/\s*[\r\n\u2028\u2029]+\s*/g, " ").trim();
 }
 
 /**

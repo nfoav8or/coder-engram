@@ -15,6 +15,7 @@ import { toMessage } from "../utils/errors";
 import { extractMetadata, NoteMetadata } from "../core/metadata-extractor";
 import { normalizeVaultRelativePath } from "../utils/paths";
 import { Logger, NULL_LOGGER } from "../utils/logger";
+import { foldForCompare } from "../utils/text";
 
 export interface ScanConfig {
   /** Allowlist of folders; empty means the entire vault. */
@@ -69,25 +70,6 @@ function normalizeFolder(folder: string): string {
     .split("/")
     .filter((segment) => segment !== "" && segment !== ".")
     .join("/");
-}
-
-/**
- * Fold a value for FILTER COMPARISON — never for storing a path or reading a
- * file, where the exact bytes on disk are what the adapter needs.
- *
- * Case folds because a user who types "private" for a folder named "Private"
- * means that folder, and on macOS and Windows the filesystem folds case anyway.
- *
- * Unicode normalization folds for the same reason one step further out: macOS
- * stores an accented filename DECOMPOSED (NFD — "e" plus a combining accent)
- * while the same name typed into the settings box arrives COMPOSED (NFC, one
- * codepoint). They are one name to a person and to the filesystem, but two
- * different strings, so an exclusion naming an accented folder silently matched
- * nothing and left those notes indexed and readable over the server — the same
- * failure direction as matching case exactly.
- */
-function foldForCompare(value: string): string {
-  return value.normalize("NFC").toLowerCase();
 }
 
 /**
@@ -202,6 +184,12 @@ export class VaultScanner {
     const eligibleByPath = this.pathEligibility(config);
     const eligible = files.filter((f) => eligibleByPath(f.path));
     const out: ScanResult[] = [];
+    // Snapshotted once, like the folder/pattern filters `pathEligibility`
+    // hoists: `config` is the settings object's own array, and the per-file
+    // loop below awaits a disk read, so a settings edit mid-scan could
+    // otherwise apply the old tag list to some notes and the new one to
+    // others within a single scan.
+    const excludedTags = config.excludedTags;
 
     for (const file of eligible) {
       if (knownMtimes?.get(file.path) === file.mtime) {
@@ -212,7 +200,7 @@ export class VaultScanner {
         // eslint-disable-next-line no-await-in-loop -- sequential reads keep peak memory at one note; a whole vault read in parallel would hold every note at once
         const content = await this.adapter.read(normalizeVaultRelativePath(file.path));
         const metadata = extractMetadata(content);
-        if (this.hasExcludedTag(metadata, config.excludedTags)) continue;
+        if (this.hasExcludedTag(metadata, excludedTags)) continue;
         out.push({ path: file.path, mtime: file.mtime, content, metadata });
       } catch (err) {
         this.logger.warn(`Skipped unreadable note: ${file.path}`, {

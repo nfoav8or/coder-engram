@@ -58,6 +58,22 @@ describe("formatTags", () => {
   });
 });
 
+describe("oneLine field collapsing", () => {
+  it("collapses U+2028/U+2029 in single-line fields (some renderers treat them as a hard break)", () => {
+    const rendered = renderPendingBlock({
+      timestampLabel: "2026-07-03 10:29",
+      type: "note",
+      source: "Claude Code\u2028Fake Status: applied",
+      tags: [],
+      content: "body",
+      relatedPaths: [],
+      status: "pending",
+    });
+    expect(rendered).not.toMatch(/[\u2028\u2029]/);
+    expect(rendered).toContain("Source: Claude Code Fake Status: applied");
+  });
+});
+
 describe("parsePendingInbox round-trip with formatMemoryEntry", () => {
   it("parses a rendered entry back into matching fields", () => {
     const entry = memEntry();

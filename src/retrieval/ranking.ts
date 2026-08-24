@@ -4,6 +4,7 @@
 
 import { IndexedChunk } from "../indexing/index-manager";
 import { RetrievalFilters } from "./retriever";
+import { foldForCompare } from "../utils/text";
 
 const STOPWORDS = new Set([
   "the", "a", "an", "and", "or", "of", "to", "in", "is", "are", "was", "were",
@@ -60,10 +61,16 @@ function normalizeFolder(folder: string): string {
   return folder.trim().replace(/^\/+|\/+$/g, "");
 }
 
+/**
+ * Case- and Unicode-form-insensitive: a folder filter typed by hand ("notes")
+ * must still match a note path stored as "Notes/..." or in a different
+ * normalization form, or a legitimately-scoped search silently returns nothing.
+ */
 function isUnderFolder(path: string, folder: string): boolean {
-  const f = normalizeFolder(folder);
+  const f = foldForCompare(normalizeFolder(folder));
   if (f === "") return true;
-  return path === f || path.startsWith(f + "/");
+  const p = foldForCompare(path);
+  return p === f || p.startsWith(f + "/");
 }
 
 /**
@@ -89,8 +96,8 @@ export function applyFilters(
       if (!isUnderFolder(chunk.notePath, projFolder)) return false;
     }
     if (filters.tag) {
-      const want = filters.tag.toLowerCase().replace(/^#/, "");
-      const has = chunk.tags.some((t) => t.toLowerCase().replace(/^#/, "") === want);
+      const want = foldForCompare(filters.tag).replace(/^#/, "");
+      const has = chunk.tags.some((t) => foldForCompare(t).replace(/^#/, "") === want);
       if (!has) return false;
     }
     if (filters.sinceMtime !== undefined && chunk.mtime < filters.sinceMtime) return false;

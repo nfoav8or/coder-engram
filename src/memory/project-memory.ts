@@ -8,7 +8,7 @@
 
 import { VaultAdapter } from "../core/vault-adapter";
 import { MemoryPaths, ProjectPaths, resolveProjectPaths } from "./memory-types";
-import { joinVaultPath } from "../utils/paths";
+import { resolveInVault } from "../utils/paths";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 
 const TEMPLATES: Record<keyof Omit<ProjectPaths, "name" | "folder" | "sessions">, (name: string) => string> = {
@@ -70,7 +70,11 @@ export class ProjectMemory {
   async startSession(name: string, stamp: string): Promise<string> {
     const project = resolveProjectPaths(this.paths, name);
     await this.adapter.ensureFolder(project.sessions);
-    const file = joinVaultPath(project.sessions, `${stamp}.md`);
+    // `stamp` is caller-supplied (currently always a generated timestamp, but
+    // nothing here should assume that); resolve it against the sessions root
+    // rather than concatenating, so a stamp containing ".." can't write
+    // outside the project's session folder.
+    const file = resolveInVault(project.sessions, `${stamp}.md`);
     if (!(await this.adapter.exists(file))) {
       await this.adapter.write(
         file,

@@ -75,6 +75,26 @@ describe("applyFilters", () => {
     expect(out).not.toBe(chunks);
     expect(out).toHaveLength(0);
   });
+
+  it("matches a folder filter regardless of case", () => {
+    const out = applyFilters(chunks, { folder: "notes" });
+    expect(out).toHaveLength(1);
+  });
+
+  it("matches a folder filter across NFC/NFD normalization forms", () => {
+    // "café" as NFC (one codepoint) vs NFD ("e" + combining accent) is the
+    // same folder name to a person, but a naive === comparison treats them as
+    // two different strings — the same failure direction as case mismatch.
+    const nfc = "Notes/Café/a.md".normalize("NFC");
+    const nfd = "Notes/Café".normalize("NFD");
+    const chunk = makeChunk({ id: "b", notePath: nfc });
+    expect(applyFilters([chunk], { folder: nfd })).toHaveLength(1);
+  });
+
+  it("matches a tag filter across case and normalization form", () => {
+    const chunk = makeChunk({ id: "c", notePath: "Notes/c.md", tags: ["Café"] });
+    expect(applyFilters([chunk], { tag: "café" })).toHaveLength(1);
+  });
 });
 
 describe("findTermMatches", () => {

@@ -20,6 +20,20 @@ export type MemoryType =
   | "architecture"
   | "session";
 
+/** Every `MemoryType`, in the order shown to a user. The one place this list
+ * is written out — the MCP tool schema and the Add Memory modal both import
+ * it, so a new type can't be added to one and silently missed by the other. */
+export const MEMORY_TYPES: readonly MemoryType[] = [
+  "decision",
+  "note",
+  "task",
+  "open-question",
+  "action-item",
+  "preference",
+  "architecture",
+  "session",
+];
+
 export type Confidence = "low" | "medium" | "high";
 
 export interface MemoryEntry {

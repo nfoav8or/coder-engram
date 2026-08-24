@@ -31,7 +31,7 @@ import {
   optionalNumber,
   optionalBoolean,
 } from "../utils/validation";
-import { MemoryEntry } from "../memory/memory-types";
+import { MemoryEntry, MEMORY_TYPES } from "../memory/memory-types";
 import { dropNearDuplicates, diversifyByNote } from "../retrieval/ranking";
 import { IndexedChunk } from "../indexing/index-manager";
 
@@ -240,17 +240,6 @@ const MAX_CHARS_SCHEMA = {
     `${CONTEXT_DEFAULT_MAX_CHARS}); output is truncated past this.`,
 } as const;
 
-const MEMORY_TYPES = [
-  "decision",
-  "note",
-  "task",
-  "open-question",
-  "action-item",
-  "preference",
-  "architecture",
-  "session",
-];
-
 // --- tool implementations ----------------------------------------------------
 
 const searchTool: Tool = {
@@ -283,10 +272,7 @@ const searchTool: Tool = {
     ctx.rateLimiter.enforceWindow("search_vault_memory", SEARCH_MAX_PER_MINUTE, RATE_WINDOW_MS);
     const obj = requireObject(args, "arguments");
     const query = requireString(obj, "query", { maxLength: 2000 });
-    const limit = Math.min(
-      SEARCH_MAX_LIMIT,
-      Math.max(1, Math.trunc(optionalNumber(obj, "limit", SEARCH_DEFAULT_LIMIT, { min: 1, max: SEARCH_MAX_LIMIT }))),
-    );
+    const limit = Math.trunc(optionalNumber(obj, "limit", SEARCH_DEFAULT_LIMIT, { min: 1, max: SEARCH_MAX_LIMIT }));
     const folder = optionalString(obj, "folder", "", 1000) || undefined;
     const tag = optionalString(obj, "tag", "", 200) || undefined;
     const project = optionalString(obj, "project", "", 200) || undefined;
@@ -369,7 +355,9 @@ const addMemoryTool: Tool = {
     const obj = requireObject(args, "arguments");
     const content = requireString(obj, "content", { maxLength: 50_000 });
     const rawType = optionalString(obj, "type", "note", 40);
-    const type = (MEMORY_TYPES.includes(rawType) ? rawType : "note") as MemoryEntry["type"];
+    const type = (MEMORY_TYPES as readonly string[]).includes(rawType)
+      ? (rawType as MemoryEntry["type"])
+      : "note";
     const project = optionalString(obj, "project", "", 200) || undefined;
     const source = optionalString(obj, "source", "MCP", 200) || "MCP";
     // Sized to what the field IS: a tag is a word, a related path is a vault
@@ -496,10 +484,7 @@ const getRecentSessionsTool: Tool = {
     ctx.rateLimiter.enforceWindow("get_recent_sessions", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
     const obj = requireObject(args, "arguments");
     const project = requireString(obj, "project", { maxLength: 200 });
-    const limit = Math.min(
-      SESSIONS_MAX_LIMIT,
-      Math.max(1, Math.trunc(optionalNumber(obj, "limit", 5, { min: 1, max: SESSIONS_MAX_LIMIT }))),
-    );
+    const limit = Math.trunc(optionalNumber(obj, "limit", 5, { min: 1, max: SESSIONS_MAX_LIMIT }));
     const maxChars = contextMaxChars(obj);
     const sessions = await ctx.engine.getRecentSessions(project, limit);
     if (sessions.length === 0) return `No sessions found for "${project}".`;

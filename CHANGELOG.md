@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- A session note's filename stem (`ProjectMemory.startSession`) is now
+  resolved against its sessions folder via `resolveInVault` instead of
+  concatenated, so a stamp containing `..` can't write outside the project's
+  session folder. Not currently reachable (the only caller passes a generated
+  timestamp), closed ahead of any future caller.
+- Pending-inbox single-line fields (`Source`, `Origin`, tags, related paths)
+  now also collapse U+2028/U+2029 (LINE/PARAGRAPH SEPARATOR), which some
+  Markdown renderers treat as a hard line break — an agent-supplied field
+  containing one could otherwise render as a spoofed extra line in the review
+  UI. The underlying file and parser were never affected.
+- A local-provider config (Ollama endpoint/model, OpenAI-compatible
+  endpoint/model/API key) with a whitespace-only value now degrades to
+  lexical retrieval immediately with a clear log, instead of building a
+  provider that only fails once a request is actually made.
+
+### Fixed
+
+- Search's `folder`/`project`/`tag` filters are now case- and Unicode-form
+  insensitive, matching the exclusion logic vault scanning already used: a
+  filter typed as `notes` or in a different accent normalization form no
+  longer silently returns zero results against notes stored as `Notes/...`
+  or in the other normalization form.
+- Vault scanning now snapshots `excludedTags` once per scan (as the folder
+  and pattern filters already did), instead of reading the settings array
+  live on every file — hardening against a settings edit applying
+  inconsistently within one in-flight scan.
+
+### Changed
+
+- `MemoryType`'s value list is now exported once (`MEMORY_TYPES` in
+  `memory-types.ts`) and imported by both the `add_memory` MCP tool and the
+  Add Memory modal, instead of being hand-copied in each — a new memory type
+  can no longer be added to one and silently missed by the other.
+- Settings-tab warning Notices (embedding provider choice, server host,
+  non-localhost binding, direct writes) are raised through one shared method
+  on both the declarative and imperative code paths, instead of being
+  duplicated verbatim in each.
+- Removed a redundant `Math.min`/`Math.max` clamp around two MCP `limit`
+  arguments already range-validated (and would throw, not silently clamp) by
+  `optionalNumber`.
+- The case/Unicode-fold helper used by search filtering and vault-scan
+  exclusions now lives once, in `src/utils/text.ts`.
+
 ## [0.11.0] — 2026-08-23
 
 ### Added

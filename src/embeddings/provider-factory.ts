@@ -39,7 +39,8 @@ export function createEmbeddingProvider(
       return new MockEmbeddingProvider();
 
     case "ollama": {
-      if (!config.model) {
+      const model = config.model?.trim();
+      if (!model) {
         logger.warn("Ollama provider needs a model name; using lexical retrieval");
         return null;
       }
@@ -49,14 +50,17 @@ export function createEmbeddingProvider(
       }
       return new OllamaEmbeddingProvider({
         http: deps.http,
-        endpoint: config.endpoint || DEFAULT_OLLAMA_ENDPOINT,
-        model: config.model,
+        endpoint: config.endpoint?.trim() || DEFAULT_OLLAMA_ENDPOINT,
+        model,
         logger,
       });
     }
 
     case "openai-compatible": {
-      if (!config.model || !config.endpoint || !config.apiKey) {
+      const model = config.model?.trim();
+      const endpoint = config.endpoint?.trim();
+      const apiKey = config.apiKey?.trim();
+      if (!model || !endpoint || !apiKey) {
         logger.warn(
           "OpenAI-compatible provider needs endpoint, model, and API key; using lexical retrieval",
         );
@@ -68,9 +72,9 @@ export function createEmbeddingProvider(
       }
       return new OpenAiEmbeddingProvider({
         http: deps.http,
-        endpoint: config.endpoint,
-        model: config.model,
-        apiKey: config.apiKey,
+        endpoint,
+        model,
+        apiKey,
         logger,
       });
     }

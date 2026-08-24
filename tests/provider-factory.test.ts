@@ -38,6 +38,12 @@ describe("createEmbeddingProvider", () => {
       expect(p).toBeInstanceOf(OllamaEmbeddingProvider);
       expect(p?.id).toBe("ollama");
     });
+    it("returns null when model is whitespace-only (a hand-edited data.json, not the settings UI)", () => {
+      const p = createEmbeddingProvider(cfg({ provider: "ollama", model: "   " }), {
+        http: new FakeHttpClient(),
+      });
+      expect(p).toBeNull();
+    });
   });
 
   describe("openai-compatible", () => {
@@ -64,6 +70,10 @@ describe("createEmbeddingProvider", () => {
       const p = createEmbeddingProvider(cfg(full), { http: new FakeHttpClient() });
       expect(p).toBeInstanceOf(OpenAiEmbeddingProvider);
       expect(p?.id).toBe("openai-compatible");
+    });
+    it("returns null when apiKey is whitespace-only", () => {
+      const p = createEmbeddingProvider(cfg({ ...full, apiKey: "   " }), { http: new FakeHttpClient() });
+      expect(p).toBeNull();
     });
   });
 });

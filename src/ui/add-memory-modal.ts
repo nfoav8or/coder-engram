@@ -7,18 +7,7 @@
 import { App, Modal, Notice, Setting } from "obsidian";
 import { toMessage } from "../utils/errors";
 import { EngramEngine } from "../engine";
-import { MemoryEntry, MemoryType, Confidence } from "../memory/memory-types";
-
-const TYPES: MemoryType[] = [
-  "decision",
-  "note",
-  "task",
-  "open-question",
-  "action-item",
-  "preference",
-  "architecture",
-  "session",
-];
+import { MemoryEntry, MemoryType, Confidence, MEMORY_TYPES } from "../memory/memory-types";
 
 export class AddMemoryModal extends Modal {
   private type: MemoryType = "note";
@@ -47,7 +36,7 @@ export class AddMemoryModal extends Modal {
     });
 
     new Setting(contentEl).setName("Type").addDropdown((dd) => {
-      for (const t of TYPES) dd.addOption(t, t);
+      for (const t of MEMORY_TYPES) dd.addOption(t, t);
       dd.setValue(this.type).onChange((v) => (this.type = v as MemoryType));
     });
 
