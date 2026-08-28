@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-08-28
+
+### Changed
+
+- **BREAKING: `minAppVersion` is now 1.13.0.** Obsidian will not offer this
+  release to an older app. **Nobody is stranded and nothing breaks:**
+  `versions.json` still maps every release up to 0.11.4 to 1.7.2, so an app
+  below 1.13 is offered 0.11.4 and keeps a fully working plugin — it simply
+  stops receiving new features. Users on 1.13 or later are unaffected and need
+  do nothing.
+- **The imperative settings tab is gone** — about 450 lines, and with it the
+  duplicate definition of every settings row. Obsidian has ignored `display()`
+  since 1.13 whenever `getSettingDefinitions()` returns anything, so this code
+  had not rendered for a user on a current app in a long time; it existed only
+  as the pre-1.13 fallback that the old floor required. Settings now have one
+  source of truth, `setting-definitions.ts`, which is also what puts every
+  setting in Obsidian's settings search.
+
+### Fixed
+
+- **The settings tab stated the containment guarantee, and 1.13+ users never
+  saw it.** "All plugin-managed memory lives inside this vault… Nothing is
+  written outside the vault" was a plain paragraph in the imperative tab with
+  no declarative counterpart, so it disappeared for anyone on 1.13 or later the
+  moment the declarative path took over — the one place the UI states the
+  property the whole design rests on. Found by diffing the two paths row by row
+  before deleting either, and restored as a definition of its own. This is a
+  pre-existing gap, not one the deletion introduced.
+
+### Added
+
+- `npm test` now fails if the README's stated minimum Obsidian version drifts
+  from `manifest.json`. Raising a floor is exactly the change that updates the
+  manifest and forgets the prose, leaving the README telling users an older app
+  will work when the release is not even offered to them. It caught this
+  release's own stale line.
+
 ## [0.11.4] — 2026-08-28
 
 ### Fixed
@@ -1231,6 +1268,7 @@ First working local memory + lexical RAG layer.
 - No cloud services or API keys required for the default experience.
 
 [Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.11.3...HEAD
+[0.12.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.12.0
 [0.11.4]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.4
 [0.11.3]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.3
 [0.11.2]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.2

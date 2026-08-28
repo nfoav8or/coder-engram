@@ -166,6 +166,22 @@ export function buildSettingDefinitions(ctx: DefinitionContext): SettingDefiniti
       heading: "Indexing",
       items: [
         {
+          // The imperative tab opened with this as a plain paragraph above the
+          // first heading, and the declarative path had no equivalent — so from
+          // 1.13 onward, where Obsidian ignores `display()` entirely, nobody
+          // has been shown it. It is the one place the settings UI states the
+          // containment guarantee the whole design rests on, which is why it is
+          // restored here rather than dropped along with `display()`.
+          name: "Where memory is stored",
+          searchable: false,
+          render: (setting: Setting) => {
+            setting.setDesc(
+              "All plugin-managed memory lives inside this vault, under the memory root below. " +
+                "Nothing is written outside the vault.",
+            );
+          },
+        },
+        {
           name: "Enable indexing",
           desc: "Scan and index vault notes for retrieval.",
           control: { type: "toggle", key: "indexingEnabled" },

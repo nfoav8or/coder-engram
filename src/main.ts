@@ -529,8 +529,8 @@ export default class EngramPlugin
       leaf = workspace.getRightLeaf(false);
       await leaf?.setViewState({ type: CONTROL_PANEL_VIEW_TYPE, active: true });
     }
-    // `revealLeaf` returns a promise as of Obsidian 1.7.2 (hence minAppVersion);
-    // leaving it unawaited would drop any rejection on the floor.
+    // `revealLeaf` returns a promise (since Obsidian 1.7.2, well below the
+    // 1.13.0 floor); leaving it unawaited would drop any rejection on the floor.
     if (leaf) await workspace.revealLeaf(leaf);
   }
 

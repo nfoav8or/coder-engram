@@ -1,6 +1,4 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   buildSettingDefinitions,
   readSettingValue,
@@ -50,6 +48,13 @@ describe("setting definitions", () => {
   it("gives every persisted setting a control, or renders it deliberately", () => {
     // The failure this catches: a setting added to the model and to nothing
     // else, invisible in the UI and unfindable in settings search.
+    //
+    // Since 0.12.0 this is the ONLY guard on that. It used to sit beside a
+    // parity check against the imperative `display()` tab, which existed
+    // because two settings UIs shipped and a setting could reach one and not
+    // the other. `minAppVersion` is 1.13.0 now and `display()` is gone, so
+    // that failure mode cannot occur and the check was removed rather than
+    // left to compare against a file that no longer renders anything.
     const { ctx } = context();
     const keyed = new Set(controls(ctx).map((c) => c.key));
     // The two secrets are rendered rather than declared, because the
@@ -215,38 +220,6 @@ describe("setting definitions", () => {
     };
     expect(disabledWhen(false)).toBe(true);
     expect(disabledWhen(true)).toBe(false);
-  });
-
-  it("offers the same settings as the imperative tab it ships alongside", () => {
-    // Two settings UIs ship: `display()` for apps below 1.13 and these
-    // definitions for 1.13+. Obsidian picks one, so a setting added to only
-    // one of them is invisible to half the users and nothing else would catch
-    // it — the imperative tab cannot be imported here (it extends a runtime
-    // Obsidian class), so this compares its source.
-    const tabSource = readFileSync(
-      join(__dirname, "..", "src", "settings", "settings-tab.ts"),
-      "utf8",
-    );
-    const imperative = new Set(
-      [
-        ...tabSource.matchAll(/\.setName\("([^"]+)"\)/g),
-        ...tabSource.matchAll(/add(?:List|Saving)Setting\(\s*containerEl,\s*"([^"]+)"/g),
-      ].map((m) => m[1].toLowerCase()),
-    );
-
-    const { ctx } = context();
-    // Section headings and the two informational rows have no counterpart:
-    // the imperative tab writes those as plain paragraphs, not settings.
-    const INFO_ROWS = new Set(["security notice", "about context savings"]);
-    const declarative = buildSettingDefinitions(ctx)
-      .flatMap((item) => ("items" in item && item.items ? item.items : [item]))
-      .map((d) => ("name" in d ? d.name : ""))
-      .filter(Boolean)
-      .map((n) => n.toLowerCase())
-      .filter((n) => !INFO_ROWS.has(n));
-
-    const missingFromImperative = declarative.filter((n) => !imperative.has(n));
-    expect(missingFromImperative, "settings only users on 1.13+ can reach").toEqual([]);
   });
 
   it("offers every provider and retrieval mode the settings model accepts", () => {

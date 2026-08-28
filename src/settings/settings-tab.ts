@@ -1,16 +1,20 @@
 /**
  * settings-tab — the plugin settings UI.
  *
- * Communicates the safe defaults (memory lives inside the vault; server off;
- * writes go to the review inbox) and validates the memory root so it can never
- * be set to a path that escapes the vault. The server section carries an
- * explicit security warning.
+ * Since 0.12.0 this is a thin host adapter, not a renderer: `minAppVersion` is
+ * 1.13.0, so Obsidian always builds the tab from `getSettingDefinitions()` and
+ * the imperative `display()` path is gone. What remains is the plumbing the
+ * declarative renderer calls into — reading and writing control values,
+ * debouncing commits so a keystroke does not restart the index or rebind the
+ * server, and raising the warnings that belong to a value changing rather than
+ * to how it was entered.
+ *
+ * The rows themselves, including memory-root validation and the server security
+ * notice, live in `setting-definitions.ts`.
  */
 
-import { App, Plugin, PluginSettingTab, Setting, Notice, SettingDefinitionItem } from "obsidian";
-import { toMessage } from "../utils/errors";
-import { ContextSavingsSettings, EngramSettings, parseList } from "./settings";
-import { normalizeVaultRelativePath } from "../utils/paths";
+import { App, Plugin, PluginSettingTab, Notice, SettingDefinitionItem } from "obsidian";
+import { EngramSettings } from "./settings";
 import { debounce } from "../utils/debounce";
 import { buildSettingDefinitions, readSettingValue, writeSettingValue } from "./setting-definitions";
 
@@ -22,9 +26,10 @@ export interface SettingsHost {
 }
 
 /**
- * How long a change waits before the plugin acts on it, on the declarative
- * path. A commit restarts subsystems, and `setControlValue` fires as the user
- * types; the imperative path below uses a blur listener for the same purpose.
+ * How long a change waits before the plugin acts on it. A commit restarts
+ * subsystems — the server rebinds, the index reloads — and `setControlValue`
+ * fires as the user types, so acting on every keystroke would turn typing into
+ * a restart storm.
  */
 const COMMIT_DELAY_MS = 400;
 
@@ -33,12 +38,12 @@ export class EngramSettingTab extends PluginSettingTab {
    * The same object as the `Plugin` handed to `super()`, held at its
    * `SettingsHost` type on purpose.
    *
-   * Obsidian 1.13 gave `Plugin` a `settings` property of its own. Reading
-   * `settings` off a `Plugin & SettingsHost` therefore resolves to Obsidian's,
-   * which does not exist on the 1.7.2 this plugin declares as its minimum —
-   * `obsidianmd/no-unsupported-api` flags it, and it is the kind of accident
-   * that only shows up on an older app. This plugin's settings come from this
-   * plugin, so read them through the interface that declares them.
+   * Obsidian 1.13 gave `Plugin` a `settings` property of its own, so reading
+   * `settings` off a `Plugin & SettingsHost` resolves to Obsidian's rather than
+   * this plugin's. This plugin's settings come from this plugin, so they are
+   * read through the interface that declares them. The collision is why this
+   * matters even now that 1.13 is the minimum: the two properties would simply
+   * be different objects, silently.
    */
   private readonly host: SettingsHost;
 
@@ -51,30 +56,25 @@ export class EngramSettingTab extends PluginSettingTab {
     return this.host.settings;
   }
 
-  /** Set by text-field edits; flushed to a single commit on blur / tab close. */
-  private dirty = false;
-  /** Raw memory-root text, validated only at flush so half-typed roots never
-   * reload the index (and the user isn't Noticed per keystroke). */
-  private rawMemoryRoot: string | null = null;
-
   private async commit(): Promise<void> {
     await this.host.saveSettings();
     await this.host.onSettingsChanged();
   }
 
-  // --- declarative settings (Obsidian 1.13+) ---------------------------------
+  // --- declarative settings ---------------------------------------------------
   //
-  // Both paths ship, and the app picks: `display()` below is never called once
-  // `getSettingDefinitions()` returns a non-empty array, so 1.13 and newer
-  // render from the definitions and get settings search, while older apps —
-  // which have no idea these methods exist — keep the imperative tab. That is
-  // why `minAppVersion` stays at 1.7.2 rather than following the new API.
+  // The only rendering path as of 0.12.0. `minAppVersion` is 1.13.0, so
+  // Obsidian always builds the tab from these definitions, and every setting
+  // appears in settings search. The imperative `display()` that used to ship
+  // alongside for older apps is gone; `versions.json` still maps every release
+  // up to 0.11.4 to 1.7.2, so an app below 1.13 is offered 0.11.4 and keeps
+  // working rather than being handed a tab it cannot render.
 
   /**
    * Commit debounce for the declarative path.
    *
    * `setControlValue` fires as the user edits a control, and a commit restarts
-   * subsystems — the server rebinds, the index reloads. The imperative tab
+   * subsystems — the server rebinds, the index reloads. The old imperative tab
    * batches those with a blur listener, which the declarative API gives no hook
    * for, so the batching moves here: the value lands in settings immediately
    * (the control never fights the typing) and the expensive reaction waits.
@@ -84,13 +84,12 @@ export class EngramSettingTab extends PluginSettingTab {
   }, COMMIT_DELAY_MS);
 
   /**
-   * NOTE for Obsidian's automated review: this and the two guarded calls below
-   * reference APIs newer than the declared `minAppVersion`, which its
-   * `no-unsupported-api` rule reports. That is deliberate and safe. Declaring
-   * the method is inert on an older app — nothing there calls it, and
-   * `display()` still renders the tab — and implementing both is what lets
-   * 1.13+ gain settings search without raising the floor for everyone else.
-   * Raising it instead would strand every user below 1.13 on 0.9.9.
+   * The tab. Obsidian builds every row from what this returns, which is what
+   * puts each setting in settings search.
+   *
+   * As of 0.12.0 `minAppVersion` is 1.13.0, so this API and the two below are
+   * no longer newer than the declared floor and `no-unsupported-api` has
+   * nothing to report about them.
    */
   getSettingDefinitions(): SettingDefinitionItem[] {
     return buildSettingDefinitions({
@@ -123,17 +122,15 @@ export class EngramSettingTab extends PluginSettingTab {
   }
 
   /**
-   * `update()` and `refreshDomState()` exist only on 1.13+. They are reached
-   * exclusively from `setControlValue`, which only the declarative renderer
-   * calls — so on an older app this code is unreachable rather than merely
-   * unused. Called through a guard anyway, because "unreachable" is a claim
-   * about another program's behaviour.
+   * `update()` and `refreshDomState()` are guaranteed by the 1.13.0 floor, so
+   * the optional call is no longer bridging an older app. It stays because the
+   * alternative is a hard throw out of a settings keystroke if a future
+   * Obsidian renames either one — and the cost of being wrong is asymmetric:
+   * a row that fails to re-render is a visual glitch, an exception here breaks
+   * editing settings at all.
    */
   private get newerApi(): { update?: () => void; refreshDomState?: () => void } {
-    // Typed as possibly-absent because on an app older than 1.13 they ARE
-    // absent — the ambient types describe the newest Obsidian, not the oldest
-    // one this plugin supports. Same shape as reaching a companion plugin's
-    // API: check, then call.
+    // Typed as possibly-absent so the call site above must go through `?.`.
     return this;
   }
 
@@ -146,9 +143,8 @@ export class EngramSettingTab extends PluginSettingTab {
   }
 
   /**
-   * The warnings the imperative tab raises as the user flips a control. They
-   * belong to the value changing rather than to how it was entered, so the
-   * declarative path raises the same ones.
+   * Warnings that belong to a value changing rather than to how it was
+   * entered, so they live here rather than in any one control's renderer.
    */
   private warnAbout(key: string, value: unknown): void {
     if (key === "embeddingProvider" && value === "openai-compatible") {
@@ -170,489 +166,14 @@ export class EngramSettingTab extends PluginSettingTab {
     }
   }
 
-  /**
-   * Text fields update settings state per keystroke but COMMIT only when the
-   * field loses focus (or the tab closes): a commit restarts subsystems —
-   * server rebind, index reload from a half-typed memory root — so committing
-   * on every input event turns typing into a restart storm.
-   */
-  private deferCommit(t: { inputEl: HTMLInputElement | HTMLTextAreaElement }): void {
-    t.inputEl.addEventListener("blur", () => void this.flushCommit());
-  }
-
-  /** One context-savings toggle; the three differ only in label and target key. */
-  private addSavingSetting(
-    containerEl: HTMLElement,
-    name: string,
-    desc: string,
-    key: keyof ContextSavingsSettings,
-  ): void {
-    new Setting(containerEl)
-      .setName(name)
-      .setDesc(desc)
-      .addToggle((t) =>
-        t.setValue(this.s.contextSavings[key]).onChange(async (v) => {
-          this.s.contextSavings[key] = v;
-          await this.commit();
-        }),
-      );
-  }
-
-  /**
-   * A scan-list setting: one path/tag/pattern per line, parsed on input and
-   * committed on blur like every other text field. The four of these differ
-   * only in label and which key they write, so they share one builder.
-   */
-  private addListSetting(
-    containerEl: HTMLElement,
-    name: string,
-    desc: string,
-    key: "includedFolders" | "excludedFolders" | "excludedTags" | "excludedPathPatterns",
-  ): void {
-    new Setting(containerEl)
-      .setName(name)
-      .setDesc(desc)
-      .addTextArea((t) => {
-        t.setValue(this.s[key].join("\n")).onChange((v) => {
-          this.s[key] = parseList(v);
-          this.dirty = true;
-        });
-        this.deferCommit(t);
-      });
-  }
-
-  private async flushCommit(): Promise<void> {
-    if (this.rawMemoryRoot !== null) {
-      const value = this.rawMemoryRoot.trim();
-      this.rawMemoryRoot = null;
-      try {
-        this.s.memoryRoot = normalizeVaultRelativePath(value || "Claude Code");
-      } catch {
-        new Notice("Invalid memory root: must be a relative path inside the vault. Keeping the previous value.");
-      }
-    }
-    if (!this.dirty) return;
-    this.dirty = false;
-    await this.commit();
-  }
-
   hide(): void {
+    // The debounce is cancelled and the commit run immediately: a tab closed
+    // mid-debounce would otherwise drop the last edit.
     this.commitSoon.cancel();
-    void this.flushCommit();
     void this.commit();
     super.hide();
   }
 
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-
-    containerEl.createEl("p", {
-      text: "All plugin-managed memory lives inside this vault, under the memory root below. Nothing is written outside the vault.",
-      cls: "engram-stat-row",
-    });
-
-    this.renderIndexingSection();
-    this.renderEmbeddingSection();
-    this.renderServerSection();
-    this.renderWriteSafetySection();
-    this.renderAdvancedSection();
-  }
-
-  private renderIndexingSection(): void {
-    const { containerEl } = this;
-    this.section("Indexing");
-
-    new Setting(containerEl)
-      .setName("Enable indexing")
-      .setDesc("Scan and index vault notes for retrieval.")
-      .addToggle((t) =>
-        t.setValue(this.s.indexingEnabled).onChange(async (v) => {
-          this.s.indexingEnabled = v;
-          await this.commit();
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName("Memory root")
-      .setDesc("Vault-relative folder for plugin-managed memory. Must stay inside the vault.")
-      .addText((t) => {
-        t.setPlaceholder("Claude Code")
-          .setValue(this.s.memoryRoot)
-          .onChange((v) => {
-            this.rawMemoryRoot = v;
-            this.dirty = true;
-          });
-        this.deferCommit(t);
-      });
-
-    this.addListSetting(
-      containerEl,
-      "Included folders",
-      "Allowlist (one per line or comma-separated). Empty = whole vault.",
-      "includedFolders",
-    );
-    this.addListSetting(containerEl, "Excluded folders", "Denylist of folders to skip.", "excludedFolders");
-    this.addListSetting(
-      containerEl,
-      "Excluded tags",
-      "Notes carrying any of these tags are never indexed.",
-      "excludedTags",
-    );
-    this.addListSetting(
-      containerEl,
-      "Excluded path patterns",
-      "Glob (*, **) or substring patterns for sensitive notes to skip.",
-      "excludedPathPatterns",
-    );
-
-    new Setting(containerEl)
-      .setName("Index attachments")
-      .setDesc(
-        "Extract and index text from PDFs (via Obsidian's built-in PDF engine), " +
-          "Office documents (docx/pptx/xlsx, odt/odp/ods, rtf), plain text " +
-          "(txt/csv), and Canvas text cards. Fully local. Indexed attachment " +
-          "text becomes searchable and readable over the local server, like " +
-          "any note; exclusions apply to attachments too.",
-      )
-      .addToggle((t) =>
-        t.setValue(this.s.indexAttachments).onChange(async (v) => {
-          this.s.indexAttachments = v;
-          await this.commit();
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName("Index text inside images (needs Text Extractor)")
-      .setDesc(
-        "Read text out of PNG/JPG/WEBP/BMP attachments by delegating to the Text Extractor " +
-          "plugin, if you have it installed and enabled. Nothing happens without it, and " +
-          "nothing happens unless Index attachments is on above. " +
-          "Note that Text Extractor downloads OCR language data from the internet on first " +
-          "use — the only attachment path here that touches the network, and it belongs to " +
-          "that plugin, not this one.",
-      )
-      .addToggle((t) =>
-        t.setValue(this.s.indexImageText).onChange(async (v) => {
-          this.s.indexImageText = v;
-          await this.commit();
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName("Auto-index on file change")
-      .setDesc("Debounced refresh when notes change. Off by default.")
-      .addToggle((t) =>
-        t.setValue(this.s.autoIndexOnChange).onChange(async (v) => {
-          this.s.autoIndexOnChange = v;
-          await this.commit();
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName("Default project")
-      .setDesc("Used by project-context and add-to-project commands.")
-      .addText((t) => {
-        t.setValue(this.s.defaultProject).onChange((v) => {
-          this.s.defaultProject = v.trim();
-          this.dirty = true;
-        });
-        this.deferCommit(t);
-      });
-
-    new Setting(containerEl)
-      .setName("Rebuild index")
-      .setDesc("Discard and rebuild the index from scratch.")
-      .addButton((b) =>
-        b.setButtonText("Rebuild now").onClick(async () => {
-          new Notice("Rebuilding index…");
-          try {
-            await this.host.rebuildIndex();
-            new Notice("Index rebuilt.");
-          } catch (err) {
-            new Notice(`Rebuild failed: ${toMessage(err)}`);
-          }
-        }),
-      );
-
-  }
-
-  private renderAdvancedSection(): void {
-    const { containerEl } = this;
-
-    this.section("Context savings for Claude Code");
-    containerEl.createEl("p", {
-      text:
-        "Each trims redundancy from what the MCP tools return, and each can hide something you " +
-        "wanted to see, so they are chosen individually and all start off. Output size caps apply either way.",
-      cls: "engram-stat-row",
-    });
-    this.addSavingSetting(
-      containerEl,
-      "Collapse near-duplicate hits",
-      "A search hit whose text nearly repeats a higher-ranked one is dropped. Saves repeating a memory recorded in two places — at the cost of not showing that both copies exist.",
-      "collapseNearDuplicates",
-    );
-    this.addSavingSetting(
-      containerEl,
-      "Cap one note's share of a page",
-      "Stops a single long note filling the whole result page, leaving room for other notes. Its lower-ranked passages are held back.",
-      "capPerNoteShare",
-    );
-    this.addSavingSetting(
-      containerEl,
-      "Merge overlapping passages",
-      "On a full-note read, consecutive windows of one section are joined and the ~150 characters each carries from the previous window are sent once. Leaves the text agreeing with the line ranges shown.",
-      "mergeOverlappingPassages",
-    );
-
-    this.section("Advanced");
-    new Setting(containerEl)
-      .setName("Debug logging")
-      .setDesc("Log activity to the developer console. Secrets are always redacted.")
-      .addToggle((t) =>
-        t.setValue(this.s.debugLogging).onChange(async (v) => {
-          this.s.debugLogging = v;
-          await this.commit();
-        }),
-      );
-  }
-
-  private renderEmbeddingSection(): void {
-    const { containerEl } = this;
-    this.section("Retrieval & embeddings");
-
-    new Setting(containerEl)
-      .setName("Embedding provider")
-      .setDesc(
-        "None keeps retrieval fully offline (lexical BM25). Mock is deterministic hashing for " +
-          "development. Ollama (local) and OpenAI-compatible enable vector + hybrid retrieval.",
-      )
-      .addDropdown((dd) => {
-        dd.addOption("none", "None (lexical BM25)");
-        dd.addOption("mock", "Mock (development)");
-        dd.addOption("ollama", "Ollama (local)");
-        dd.addOption("openai-compatible", "OpenAI-compatible");
-        dd.setValue(this.s.embeddingProvider).onChange(async (v) => {
-          this.warnAbout("embeddingProvider", v);
-          this.s.embeddingProvider = v as EngramSettings["embeddingProvider"];
-          await this.commit();
-          this.display(); // show/hide provider-specific fields
-        });
-      });
-
-    new Setting(containerEl)
-      .setName("Retrieval mode")
-      .setDesc(
-        "How results are ranked when a provider is set. Hybrid fuses lexical + vector (recommended); " +
-          "Vector is embeddings-only; Lexical ignores embeddings. Always lexical when the provider is None.",
-      )
-      .addDropdown((dd) => {
-        dd.addOption("hybrid", "Hybrid (lexical + vector)");
-        dd.addOption("vector", "Vector only");
-        dd.addOption("lexical", "Lexical only");
-        dd.setValue(this.s.retrievalMode).onChange(async (v) => {
-          this.s.retrievalMode = v as EngramSettings["retrievalMode"];
-          await this.commit();
-        });
-      });
-
-    const provider = this.s.embeddingProvider;
-    const needsEndpoint = provider === "ollama" || provider === "openai-compatible";
-
-    if (needsEndpoint) {
-      new Setting(containerEl)
-        .setName("Embedding model")
-        .setDesc(
-          provider === "ollama"
-            ? "Ollama model name, e.g. nomic-embed-text or mxbai-embed-large."
-            : "Model name, e.g. text-embedding-3-small.",
-        )
-        .addText((t) => {
-          t.setValue(this.s.embeddingModel).onChange((v) => {
-            this.s.embeddingModel = v.trim();
-            this.dirty = true;
-          });
-          this.deferCommit(t);
-        });
-
-      new Setting(containerEl)
-        .setName("Endpoint")
-        .setDesc(
-          provider === "ollama"
-            ? "Base URL of the Ollama server. Default http://127.0.0.1:11434."
-            : "Base URL of the OpenAI-compatible API, including any version prefix (e.g. https://api.openai.com/v1).",
-        )
-        .addText((t) => {
-          t.setPlaceholder(provider === "ollama" ? "http://127.0.0.1:11434" : "https://api.openai.com/v1")
-            .setValue(this.s.embeddingEndpoint)
-            .onChange((v) => {
-              this.s.embeddingEndpoint = v.trim();
-              this.dirty = true;
-            });
-          this.deferCommit(t);
-        });
-    }
-
-    if (provider === "openai-compatible") {
-      new Setting(containerEl)
-        .setName("API key")
-        .setDesc("Bearer token for the endpoint. Stored locally and never logged.")
-        .addText((t) => {
-          t.setPlaceholder("(required)").setValue(this.s.embeddingApiKey).onChange((v) => {
-            this.s.embeddingApiKey = v.trim();
-            this.dirty = true;
-          });
-          t.inputEl.type = "password";
-          this.deferCommit(t);
-        });
-    }
-
-    if (needsEndpoint) {
-      new Setting(containerEl)
-        .setName("Batch size")
-        .setDesc("Chunks per embedding request (1–512). Lower this if the provider rejects large batches.")
-        .addText((t) => {
-          t.setValue(String(this.s.embeddingBatchSize)).onChange((v) => {
-            const n = Math.trunc(Number(v));
-            if (Number.isFinite(n) && n >= 1 && n <= 512) {
-              this.s.embeddingBatchSize = n;
-              this.dirty = true;
-            }
-          });
-          this.deferCommit(t);
-        });
-
-      new Setting(containerEl)
-        .setName("Concurrent batches")
-        .setDesc(
-          "Embedding batches in flight at once (1–8). Keep at 1 for hosted APIs so their rate " +
-            "limits are respected; 2–4 speeds up the first pass against a local Ollama.",
-        )
-        .addText((t) => {
-          t.setValue(String(this.s.embeddingConcurrency)).onChange((v) => {
-            const n = Math.trunc(Number(v));
-            if (Number.isFinite(n) && n >= 1 && n <= 8) {
-              this.s.embeddingConcurrency = n;
-              this.dirty = true;
-            }
-          });
-          this.deferCommit(t);
-        });
-    }
-  }
-
-  private renderServerSection(): void {
-    const { containerEl } = this;
-    this.section("Local server (Claude Code / MCP bridge)");
-
-    const warning = containerEl.createDiv({ cls: "engram-security-warning" });
-    warning.createEl("strong", { text: "Security notice. " });
-    warning.appendText(
-      "The local server lets external tools query and propose memory. Keep it bound to 127.0.0.1, " +
-        "set a token, and only enable it while you need it. Never bind to a public interface.",
-    );
-
-    new Setting(containerEl)
-      .setName("Enable local server")
-      .setDesc("Disabled by default. Starts a localhost bridge for Claude Code.")
-      .addToggle((t) =>
-        t.setValue(this.s.server.enabled).onChange(async (v) => {
-          this.s.server.enabled = v;
-          await this.commit();
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName("Host")
-      .setDesc("Bind address. Leave as 127.0.0.1 unless you fully understand the risk.")
-      .addText((t) => {
-        t.setValue(this.s.server.host).onChange((v) => {
-          const host = v.trim() || "127.0.0.1";
-          this.warnAbout("server.host", host);
-          this.s.server.host = host;
-          this.dirty = true;
-        });
-        this.deferCommit(t);
-      });
-
-    new Setting(containerEl)
-      .setName("Allow non-localhost binding")
-      .setDesc(
-        "Off by default. Required (together with a token) before the server will bind to any " +
-          "address other than localhost. Leave OFF unless you fully understand the risk.",
-      )
-      .addToggle((t) =>
-        t.setValue(this.s.server.allowNonLocalhost).onChange(async (v) => {
-          this.warnAbout("server.allowNonLocalhost", v);
-          this.s.server.allowNonLocalhost = v;
-          await this.commit();
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName("Port")
-      .addText((t) => {
-        t.setValue(String(this.s.server.port)).onChange((v) => {
-          const port = Number(v);
-          if (Number.isInteger(port) && port >= 1 && port <= 65535) {
-            this.s.server.port = port;
-            this.dirty = true;
-          }
-        });
-        this.deferCommit(t);
-      });
-
-    new Setting(containerEl)
-      .setName("Token")
-      .setDesc("Required auth token for server requests. Strongly recommended; mandatory for non-localhost.")
-      .addText((t) => {
-        t.setPlaceholder("(set a strong token)").setValue(this.s.server.token).onChange((v) => {
-          this.s.server.token = v.trim();
-          this.dirty = true;
-        });
-        t.inputEl.type = "password";
-        this.deferCommit(t);
-      })
-      .addButton((b) =>
-        b.setButtonText("Generate").onClick(async () => {
-          this.s.server.token = generateToken();
-          await this.commit();
-          this.display(); // re-render to show the new token value
-          new Notice("Generated a new server token.");
-        }),
-      );
-  }
-
-  private renderWriteSafetySection(): void {
-    const { containerEl } = this;
-    this.section("Memory write safety");
-
-    new Setting(containerEl)
-      .setName("Allow direct memory writes")
-      .setDesc("When OFF (default), all writes go to the review inbox. When ON, tools may write memory files directly.")
-      .addToggle((t) =>
-        t.setValue(this.s.allowDirectWrites).onChange(async (v) => {
-          this.warnAbout("allowDirectWrites", v);
-          this.s.allowDirectWrites = v;
-          await this.commit();
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName("Append-only writes")
-      .setDesc("When ON (default), writes only append and never overwrite existing memory.")
-      .addToggle((t) =>
-        t.setValue(this.s.appendOnly).onChange(async (v) => {
-          this.s.appendOnly = v;
-          await this.commit();
-        }),
-      );
-  }
-
-  private section(title: string): void {
-    new Setting(this.containerEl).setName(title).setHeading();
-  }
 }
 
 /** Generate a 256-bit random token as hex, using the platform CSPRNG. */

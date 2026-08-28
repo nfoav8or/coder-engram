@@ -143,6 +143,22 @@ describe("layering", () => {
     expect(manifest, "manifest.json and package.json disagree").toBe(version);
 
     const readme = readFileSync("README.md", "utf8");
+
+    // The minimum Obsidian version is the other README claim with a
+    // machine-readable source of truth, and raising it is exactly the kind of
+    // change that updates the manifest and forgets the prose — leaving the
+    // README telling users an older app will work when the release will not
+    // even be offered to them.
+    const minApp = (
+      JSON.parse(readFileSync("manifest.json", "utf8")) as { minAppVersion: string }
+    ).minAppVersion;
+    const statedMin = /minimum Obsidian (\d+\.\d+\.\d+)/.exec(readme);
+    expect(statedMin, "README does not state a `minimum Obsidian x.y.z`").not.toBeNull();
+    expect(
+      statedMin?.[1],
+      `README says minimum Obsidian ${statedMin?.[1]}, but the manifest requires ${minApp}.`,
+    ).toBe(minApp);
+
     const status = /^> \*\*Status:\*\* (\d+\.\d+\.\d+)\./m.exec(readme);
     expect(status, "README has no `> **Status:** x.y.z.` line to check").not.toBeNull();
     expect(
