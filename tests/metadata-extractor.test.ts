@@ -137,6 +137,48 @@ describe("extractMetadata", () => {
     expect(meta.bodyStartLine).toBe(0);
   });
 
+  describe("a block list survives blank lines and comments inside it", () => {
+    // Both are legal YAML inside a sequence, but any non-`key: value` line
+    // cleared the key that later `- item` lines belong to — so every tag after
+    // the first blank or comment was dropped. Fail-open, and it applies to
+    // ordinary terminated frontmatter, not just a truncated block.
+    it("keeps items after a blank line", () => {
+      const doc = "---\ntags:\n  - private\n\n  - secret\n---\nbody";
+      expect(extractMetadata(doc).tags).toEqual(expect.arrayContaining(["private", "secret"]));
+    });
+
+    it("keeps items after a comment", () => {
+      const doc = "---\ntags:\n  - private\n  # a note\n  - secret\n---\nbody";
+      expect(extractMetadata(doc).tags).toEqual(expect.arrayContaining(["private", "secret"]));
+    });
+
+    it("still ends the list at a real key", () => {
+      const doc = "---\ntags:\n  - private\ntitle: T\n---\nbody";
+      const meta = extractMetadata(doc);
+      expect(meta.tags).toEqual(["private"]);
+      expect(meta.title).toBe("T");
+    });
+  });
+
+  describe("once a real key is seen, a stray line does not end the scan", () => {
+    // 0.11.2 regressed here: bounding the unterminated scan to stop at
+    // non-frontmatter-shaped lines also stopped it AFTER a genuine key had
+    // already established the block, so tags following a stray line were lost
+    // — the fail-open direction. 0.11.1 found these; 0.11.2 did not.
+    it("survives unresolved merge-conflict markers between keys", () => {
+      const doc =
+        "---\ntitle: My note\n<<<<<<< HEAD\ntags: private, work\n=======\ntags: public\n>>>>>>> other\n";
+      expect(extractMetadata(doc).tags).toEqual(
+        expect.arrayContaining(["private", "work", "public"]),
+      );
+    });
+
+    it("survives a plain prose line dropped between two keys", () => {
+      const doc = "---\ntitle: My note\nRandom line that is not YAML at all\ntags: secret\n";
+      expect(extractMetadata(doc).tags).toContain("secret");
+    });
+  });
+
   it("stops at an indented line that precedes any real key (the trade-off, recorded)", () => {
     // A list item or indented line BEFORE any `key: value` is not recognizable
     // as frontmatter — YAML cannot open a sequence and then a mapping key in

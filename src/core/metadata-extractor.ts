@@ -148,9 +148,26 @@ function parseFrontmatter(lines: string[]): Frontmatter {
       // `key: value`-looking line, adopts that line as metadata. Over-excluding
       // is the safe direction here; under-excluding leaks a note to the agent.
       const comment = /^\s*#/.test(line);
-      const continuesBlock = blank || comment || (sawKey && /^\s/.test(line));
+      // Once a real `key: value` has appeared, the block IS frontmatter and a
+      // later stray line is skipped rather than ending the scan. Breaking after
+      // that point lost the tags outright — the fail-open direction — for
+      // shapes that occur in practice: unresolved git merge-conflict markers
+      // between two keys, or any hand-edit or sync conflict that drops a plain
+      // line in the middle. 0.11.1 found those tags and 0.11.2 did not, so this
+      // restores them.
+      //
+      // The horizontal-rule protection is untouched, because it rests entirely
+      // on `sawKey` still being FALSE: a document that merely opens with `---`
+      // and then prose has produced no key, so it still stops at that first
+      // line and cannot adopt a later `tags:`/`title:` out of its own body.
+      const continuesBlock = sawKey || blank || comment;
       if (unterminated && !continuesBlock) break;
-      currentListKey = null;
+      // A blank line or a comment does not end a block list — both are legal
+      // inside one — so they must not clear the key that later `- item` lines
+      // belong to. Clearing it dropped every tag after the first blank or
+      // comment, which is the fail-open direction and applies to ordinary
+      // TERMINATED frontmatter too, not just a truncated block.
+      if (!blank && !comment) currentListKey = null;
       continue;
     }
     sawKey = true;

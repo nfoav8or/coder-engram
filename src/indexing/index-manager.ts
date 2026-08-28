@@ -54,7 +54,21 @@ import { Logger, NULL_LOGGER } from "../utils/logger";
 // The cost of a bump is lower than it used to be: since the vector cache is
 // now loaded regardless of whether the chunk index loaded, a forced rebuild
 // re-chunks but does NOT re-embed.
-export const INDEX_VERSION = 5;
+// Raised to 6 for two more misses in the same parser, one of them a
+// regression 0.11.2 itself shipped:
+//   - After a real `key: value` had established an unterminated block as
+//     frontmatter, a later stray line still ENDED the scan, so tags behind
+//     unresolved merge-conflict markers or a hand-edited plain line were lost.
+//     0.11.1 found those tags; 0.11.2 did not. Bounding the scan to stop a
+//     horizontal-rule document from adopting body prose went one step too far.
+//   - A blank line or a comment INSIDE a `tags:` block list cleared the key
+//     those items belong to, dropping every tag after it. Both are legal YAML,
+//     and this one applies to ordinary terminated frontmatter too — it is not
+//     specific to a damaged file.
+// Same reasoning as every bump above: the fix only changes what happens the
+// next time a note is read, so the bump is what evicts notes that are indexed
+// now and should not be. Re-chunks only; cached vectors are still reused.
+export const INDEX_VERSION = 6;
 
 export interface IndexedChunk {
   id: string;

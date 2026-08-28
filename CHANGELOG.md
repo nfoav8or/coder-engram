@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.3] — 2026-08-28
+
+Two more ways tag exclusion could fail open, **one of them a regression 0.11.2
+itself introduced**. If you are on 0.11.2, upgrading is worth doing promptly.
+
+**On upgrade:** `INDEX_VERSION` goes to 6, so the index rebuilds once more.
+Re-chunking only — cached vectors are reused.
+
+### Security
+
+- **A stray line after a real key ended the frontmatter scan, losing the tags
+  behind it.** 0.11.2 bounded the unterminated-frontmatter scan so a document
+  that merely opens with `---` as a horizontal rule could not adopt a `tags:`
+  or `title:` line out of its own body prose. That bound went one step too far:
+  it also stopped the scan *after* a genuine `key: value` had already
+  established the block as frontmatter. Unresolved git merge-conflict markers
+  between two keys, or any hand-edit or sync conflict that drops a plain line
+  mid-block, lost every tag that followed. **0.11.1 found those tags and 0.11.2
+  did not** — a note the user had excluded was indexed and served. Once a real
+  key has been seen the block is frontmatter and a later stray line is now
+  skipped rather than ending the scan; the horizontal-rule protection is
+  untouched, because it rests entirely on no key having appeared yet.
+- **A blank line or a comment inside a `tags:` block list dropped every tag
+  after it.** Both are legal YAML inside a sequence, but any non-`key: value`
+  line cleared the key that later `- item` lines belong to. Unlike the case
+  above this was never specific to a damaged file — it applies to ordinary,
+  correctly terminated frontmatter, and predates 0.11.2.
+
+### Tests
+
+672 → 677. Both fixes are covered by tests confirmed to fail without them, and
+the first is pinned against the exact shapes 0.11.1 handled and 0.11.2 did not.
+
 ## [0.11.2] — 2026-08-28
 
 A correctness and honesty release. Three of the fixes below close ways the
@@ -1064,7 +1097,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.11.2...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.11.3...HEAD
+[0.11.3]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.3
 [0.11.2]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.2
 [0.11.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.1
 [0.11.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.0
