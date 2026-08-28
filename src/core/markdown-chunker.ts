@@ -306,8 +306,22 @@ function windowSection(section: RawSection, maxChars: number, overlapChars: numb
 }
 
 export function chunkMarkdown(content: string, options: ChunkOptions = {}): Chunk[] {
-  const maxChars = options.maxChars ?? DEFAULTS.maxChars;
-  const overlapChars = options.overlapChars ?? DEFAULTS.overlapChars;
+  const maxChars = Math.max(1, options.maxChars ?? DEFAULTS.maxChars);
+  // Overlap is capped at half the window so at least half of every chunk is
+  // new content. Nothing enforced any relation between the two, so a caller
+  // passing `overlapChars >= maxChars` drove `pieceLimit` (below) to its floor
+  // of 1 and `splitLongParagraph` hard-sliced every paragraph one character per
+  // chunk — its whitespace preference is real, but no word boundary fits inside
+  // a budget of 1. `< maxChars` is not enough of a bound: an overlap of
+  // `maxChars - 1` leaves the same budget of 1. The shipped app always uses the
+  // defaults (`IndexManager` passes no `ChunkOptions`, and 150 of 2000 is well
+  // under the cap, so nothing about default output changes), which is why this
+  // was never reachable in production — it is a precondition of an exported
+  // pure function, held here rather than assumed of every caller.
+  const overlapChars = Math.min(
+    Math.max(0, options.overlapChars ?? DEFAULTS.overlapChars),
+    Math.floor(maxChars / 2),
+  );
   const bodyStartLine = options.bodyStartLine ?? 0;
 
   const lines = stripBom(content).split(/\r?\n/);

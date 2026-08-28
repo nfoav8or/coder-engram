@@ -319,6 +319,52 @@ describe("format injection through agent-supplied fields", () => {
     expect(entries[0].content).toContain("after");
   });
 
+  it("gates optional fields on the collapsed value so parse and render agree", () => {
+    // `oneLine` can reduce a truthy field (a lone newline) to "", which the
+    // parser reads back as `undefined`. Gating render on the RAW value emitted
+    // "Project: " and lost the field on the next parse — a round-trip failure
+    // in the module whose whole contract is that parse and render agree.
+    const rendered = renderPendingBlock({
+      timestampLabel: "2026-01-01 00:00",
+      type: "note",
+      project: "\n",
+      source: "test",
+      originTool: "  ",
+      confidence: "\u2028",
+      tags: [],
+      content: "body",
+      relatedPaths: [],
+      status: "  ",
+    });
+    expect(rendered).not.toContain("Project:");
+    expect(rendered).not.toContain("Origin:");
+    expect(rendered).not.toContain("Confidence:");
+    // A blank status parses back as "pending"; the file now says so outright.
+    expect(rendered).toContain("Status: pending");
+    const reparsed = parsePendingInbox(INBOX_HEADER + rendered).entries[0];
+    expect(renderPendingBlock(reparsed)).toBe(rendered);
+  });
+
+  it("drops blank related paths rather than writing a bare bullet", () => {
+    // Reachable from `add_memory`: `optionalStringArray` checks type and
+    // length, not blankness, so `relatedPaths: [""]` wrote "* " into the file
+    // the user reads — and the parser's `^\*\s+(.+)$` then dropped it, so the
+    // parsed view under-reported what was on disk.
+    const rendered = renderPendingBlock({
+      timestampLabel: "2026-01-01 00:00",
+      type: "note",
+      source: "test",
+      tags: [],
+      content: "body",
+      relatedPaths: ["", "   ", "Notes/a.md"],
+      status: "pending",
+    });
+    expect(rendered).not.toMatch(/^\*\s*$/m);
+    const reparsed = parsePendingInbox(INBOX_HEADER + rendered).entries[0];
+    expect(reparsed.relatedPaths).toEqual(["Notes/a.md"]);
+    expect(renderPendingBlock(reparsed)).toBe(rendered);
+  });
+
   it("neutralized content survives a second render without drifting", () => {
     const first = formatMemoryEntry(memEntry({ content: "x\n## Pending Memory: forged" }));
     const parsed = parsePendingInbox(INBOX_HEADER + first).entries[0];

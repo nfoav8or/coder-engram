@@ -201,5 +201,25 @@ describe("chunkMarkdown", () => {
       const [chunk] = chunkMarkdown("# Heading\r\nSome body text\r\n");
       expect(chunk.endLine).toBe(1);
     });
+
+    it("keeps words intact when overlap would consume the whole window", () => {
+      // Nothing enforced `overlapChars < maxChars`, so the two together drove
+      // `pieceLimit` to its floor of 1 and every paragraph was hard-sliced one
+      // character per chunk. The shipped app never passes `ChunkOptions`
+      // (`IndexManager` uses the defaults), so this was a precondition of the
+      // exported function rather than a live defect.
+      const text = "alpha beta gamma delta epsilon zeta eta theta iota kappa";
+      const chunks = chunkMarkdown(text, { maxChars: 40, overlapChars: 40 });
+      // Every piece is whole words, not single characters.
+      for (const c of chunks) {
+        expect(c.text.length, `shredded: ${JSON.stringify(c.text)}`).toBeGreaterThan(1);
+      }
+      expect(chunks.some((c) => c.text.includes("alpha"))).toBe(true);
+      // An overlap far larger than the window is clamped, not honoured.
+      const wide = chunkMarkdown(text, { maxChars: 40, overlapChars: 9999 });
+      expect(wide.some((c) => c.text.includes("alpha"))).toBe(true);
+      // The defaults sit well under the cap, so ordinary output is unchanged.
+      expect(chunkMarkdown(text)).toEqual(chunkMarkdown(text, { maxChars: 2000, overlapChars: 150 }));
+    });
   });
 });

@@ -126,6 +126,21 @@ describe("parseList", () => {
   });
 });
 
+describe("migrateSettings defaultProject", () => {
+  it("coerces a non-string default project instead of deferring the crash", () => {
+    // `showProjectContext` and `startSessionNote` guard only with
+    // `if (!project)`, so a truthy non-string passes and reaches
+    // `sanitizeProjectName`, whose `name.trim()` throws. Migration exists so a
+    // corrupt blob is safe on load, not so it fails later at first use.
+    for (const bad of [42, {}, ["a"], true, null]) {
+      const out = migrateSettings({ defaultProject: bad } as unknown);
+      expect(typeof out.defaultProject, `defaultProject: ${JSON.stringify(bad)}`).toBe("string");
+      expect(out.defaultProject).toBe("");
+    }
+    expect(migrateSettings({ defaultProject: "  Engram  " }).defaultProject).toBe("Engram");
+  });
+});
+
 describe("toScanConfig", () => {
   it("projects settings into a scan config", () => {
     const cfg = toScanConfig({ ...DEFAULT_SETTINGS, excludedFolders: ["Private"] });

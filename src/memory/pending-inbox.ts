@@ -116,28 +116,45 @@ function neutralizeRelatedTail(content: string): string {
  * the only place that knows which parts of the format are structural.
  */
 export function renderPendingBlock(f: PendingBlockFields): string {
+  // Every optional field is gated on its COLLAPSED value, not its raw one.
+  // `oneLine` can reduce a truthy input (a lone "\n", say) to "", and the
+  // parser maps an empty field back to `undefined` — so gating on the raw
+  // value emitted "Project: " and lost the field on the next parse, breaking
+  // the parse-render round-trip this module's contract rests on. Blank related
+  // paths are dropped for the sharper version of the same problem: `* ` with
+  // nothing after it is a malformed bullet in a file the user reads, and the
+  // parser's `^\*\s+(.+)$` then silently drops it, so the parsed view
+  // under-reports what is on disk. `add_memory` reaches this with
+  // `relatedPaths: [""]` — `optionalStringArray` checks type and length, not
+  // blankness.
   const lines: string[] = [];
+  const project = oneLine(f.project ?? "");
+  const originTool = oneLine(f.originTool ?? "");
+  const confidence = oneLine(f.confidence ?? "");
+  const relatedPaths = f.relatedPaths.map(oneLine).filter((p) => p !== "");
   lines.push(`${HEADING_PREFIX}${oneLine(f.timestampLabel)}`);
   lines.push("");
   lines.push(`Type: ${oneLine(f.type)}`);
-  if (f.project) lines.push(`Project: ${oneLine(f.project)}`);
+  if (project) lines.push(`Project: ${project}`);
   lines.push(`Source: ${oneLine(f.source)}`);
-  if (f.originTool) lines.push(`Origin: ${oneLine(f.originTool)}`);
-  if (f.confidence) lines.push(`Confidence: ${oneLine(f.confidence)}`);
+  if (originTool) lines.push(`Origin: ${originTool}`);
+  if (confidence) lines.push(`Confidence: ${confidence}`);
   lines.push(`Tags: ${formatTags(f.tags)}`);
   lines.push("");
   lines.push("Content:");
   lines.push("");
   const content = neutralizeHeadings(f.content.trim());
-  lines.push(f.relatedPaths.length > 0 ? content : neutralizeRelatedTail(content));
-  if (f.relatedPaths.length > 0) {
+  lines.push(relatedPaths.length > 0 ? content : neutralizeRelatedTail(content));
+  if (relatedPaths.length > 0) {
     lines.push("");
     lines.push(RELATED_HEADER);
     lines.push("");
-    for (const p of f.relatedPaths) lines.push(`* ${oneLine(p)}`);
+    for (const p of relatedPaths) lines.push(`* ${p}`);
   }
   lines.push("");
-  lines.push(`Status: ${oneLine(f.status)}`);
+  // A blank status parses back as "pending"; writing that literally keeps the
+  // file saying what the parser will read from it.
+  lines.push(`Status: ${oneLine(f.status) || "pending"}`);
   lines.push("");
   lines.push("---");
   lines.push("");

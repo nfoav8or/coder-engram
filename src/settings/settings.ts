@@ -187,6 +187,15 @@ export function migrateSettings(raw: unknown): EngramSettings {
   if (!RETRIEVAL_MODES.includes(merged.retrievalMode)) {
     merged.retrievalMode = DEFAULT_SETTINGS.retrievalMode;
   }
+  // `defaultProject` is the one string field a non-string value survives all
+  // the way to a crash rather than degrading: `showProjectContext` and
+  // `startSessionNote` both guard only with `if (!project)`, so a truthy `42`
+  // or `{}` passes and reaches `sanitizeProjectName`, whose `name.trim()`
+  // throws a TypeError the first time the user runs either command. Migration
+  // is supposed to make a corrupt blob safe, not defer the failure to first
+  // use. Trimmed here for the same reason the settings tab trims on input.
+  merged.defaultProject =
+    typeof merged.defaultProject === "string" ? merged.defaultProject.trim() : "";
   merged.embeddingModel = typeof merged.embeddingModel === "string" ? merged.embeddingModel : "";
   merged.embeddingEndpoint =
     typeof merged.embeddingEndpoint === "string" ? merged.embeddingEndpoint : "";

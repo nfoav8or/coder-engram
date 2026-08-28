@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A corrupt `data.json` holding a non-string `defaultProject` migrated cleanly
+  and then crashed at first use. `migrateSettings` coerces every other field but
+  merged this one through the blind spread, and both commands that read it guard
+  only with `if (!project)` — which a truthy `42` or `{}` passes, reaching
+  `sanitizeProjectName` and its `name.trim()`. The documented invariant is that
+  a corrupt blob degrades to safe defaults *without throwing*; deferring the
+  throw to the first project command defeats it from a different angle. Now
+  coerced and trimmed like every other string setting.
+- `add_memory` with a blank entry in `relatedPaths` wrote a bare `* ` bullet
+  into `pending-memory.md`. `optionalStringArray` validates type and length but
+  not blankness, so a malformed bullet reached the file the user reviews — and
+  the inbox parser's `^\*\s+(.+)$` then dropped it, so the parsed view
+  under-reported what was on disk. `renderPendingBlock`, the single producer of
+  that format, now drops blank paths.
+- Optional inbox fields could vanish across a render → parse → render cycle.
+  Render gated on the raw field but wrote `oneLine(field)`, which collapses a
+  truthy whitespace-only value to `""` — which the parser reads back as
+  `undefined`. Every optional field is now gated on its collapsed value, and a
+  blank status is written as the literal `pending` the parser would read from
+  it. Not reachable today (nothing re-renders a parsed entry, and
+  `formatMemoryEntry` hardcodes the status), but the module's contract is that
+  parse and render agree, and it did not.
+- `chunkMarkdown` shredded text one character per chunk when a caller passed
+  `overlapChars >= maxChars`. Nothing related the two, so the per-piece budget
+  fell to its floor of 1 and the whitespace-preferring splitter had no boundary
+  that fit. `overlapChars` is now capped at half of `maxChars`, so at least half
+  of every window is new content. `IndexManager` passes no `ChunkOptions`, so
+  the shipped app always used the defaults (150 of 2000, far under the cap) and
+  default output is byte-identical — this was a precondition of an exported pure
+  function rather than a live defect.
 - A summary could come back **empty, with no error**, if any sentence vector
   held a non-finite component. One `NaN` poisons the shared centroid, so every
   cosine is `NaN`, so MMR's `val > bestVal` is false on the very first pick and
