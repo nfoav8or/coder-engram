@@ -79,6 +79,27 @@ describe("LocalServer.validateConfig", () => {
     expect(() => LocalServer.validateConfig(base)).not.toThrow();
   });
 
+  it("treats a whitespace-only host as unset rather than as a wildcard bind", () => {
+    // A whitespace-only host is truthy, so it survived the `||` fallback and
+    // trimmed to "" — which Node binds as EVERY interface, the exact exposure
+    // `allowNonLocalhost` exists to gate. It also left `boundHost` empty, which
+    // the Host-header guard then compared equal to an empty header hostname.
+    const s = { ...base, server: { ...base.server, host: "   " } };
+    expect(LocalServer.validateConfig(s).host).toBe("127.0.0.1");
+    // A missing host falls back to loopback; a corrupt non-string one is
+    // refused as the non-loopback value it stringifies to, rather than
+    // throwing a TypeError out of `.trim()` or being quietly read as
+    // localhost. Refusing to bind is the conservative reading of a host
+    // nobody can have meant.
+    for (const missing of [undefined, null]) {
+      const s2 = { ...base, server: { ...base.server, host: missing } } as unknown as EngramSettings;
+      expect(LocalServer.validateConfig(s2).host).toBe("127.0.0.1");
+    }
+    const corrupt = { ...base, server: { ...base.server, host: 42 } } as unknown as EngramSettings;
+    expect(() => LocalServer.validateConfig(corrupt)).toThrow(ConfigError);
+    expect(() => LocalServer.validateConfig(corrupt)).not.toThrow(TypeError);
+  });
+
   it("refuses a non-localhost host without explicit opt-in", () => {
     // A token is set on purpose, and the MESSAGE is asserted rather than the
     // error class: with the default empty token the token guard below throws

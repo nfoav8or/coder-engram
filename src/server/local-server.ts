@@ -119,7 +119,10 @@ export class LocalServer {
    */
   static validateConfig(settings: EngramSettings): ServerAddress {
     const s = settings.server;
-    const host = (s.host || "127.0.0.1").trim();
+    // Trim BEFORE the fallback: a whitespace-only host is truthy, so it used to
+    // survive as "" and bind every interface — which Node treats as a wildcard
+    // bind, the exact exposure `allowNonLocalhost` exists to gate.
+    const host = String(s.host ?? "").trim() || "127.0.0.1";
     // Port 0 is a valid request meaning "let the OS assign a free port"; the
     // actual bound port is reported back via getAddress().
     const rawPort = Math.trunc(Number(s.port));

@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The DNS-rebinding guard could compare two empty strings and call it a
+  match.** `Host: :1234` is all port, so its hostname parses as `""`, and a
+  whitespace-only configured host trimmed to an empty bound host — equal, so
+  allowed. Reaching it required the non-localhost opt-in (which also forces a
+  token) and no browser can be aimed at a URL with an empty host, so there was
+  no practical attack; a guard still has to fail closed on a degenerate input
+  rather than read it as agreement. Both sides must now be non-empty.
+- **A whitespace-only server host bound every interface.** It is truthy, so it
+  survived the `|| "127.0.0.1"` fallback and trimmed to `""`, which Node binds
+  as a wildcard — the exact exposure `allowNonLocalhost` exists to gate. The
+  host is trimmed before the fallback now. A corrupt non-string host is refused
+  as the non-loopback value it stringifies to, rather than throwing a
+  `TypeError` out of `.trim()` or being quietly read as localhost.
+
 - A corrupt `data.json` holding a non-string `defaultProject` migrated cleanly
   and then crashed at first use. `migrateSettings` coerces every other field but
   merged this one through the blind spread, and both commands that read it guard

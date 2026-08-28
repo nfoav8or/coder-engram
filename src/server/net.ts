@@ -41,7 +41,15 @@ export function isHostHeaderAllowed(hostHeader: string | undefined, boundHost: s
   if (name === null) return false;
   const lower = name.toLowerCase();
   if (isLoopbackHost(lower)) return true;
-  return lower === stripBrackets(boundHost.trim().toLowerCase());
+  const bound = stripBrackets(boundHost.trim().toLowerCase());
+  // Neither side may be empty. `Host: :1234` yields an empty hostname (the
+  // header is all port), and a whitespace-only configured host trims to an
+  // empty bound host — so without this the two compared equal and the
+  // rebinding guard passed anything shaped that way. Comparing empty to empty
+  // is never a real match, and a guard has to fail closed on a degenerate
+  // input rather than treat it as agreement.
+  if (lower === "" || bound === "") return false;
+  return lower === bound;
 }
 
 /**

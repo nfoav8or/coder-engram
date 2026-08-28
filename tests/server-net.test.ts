@@ -47,6 +47,34 @@ describe("isHostHeaderAllowed", () => {
   });
 });
 
+describe("isHostHeaderAllowed empty-name handling", () => {
+  it("never treats an empty hostname as agreeing with an empty bound host", () => {
+    // `Host: :1234` is all port, so the hostname parses as ""; a whitespace-only
+    // configured host trims to an empty bound host. Comparing the two for
+    // equality made the rebinding guard pass anything shaped that way. A guard
+    // has to fail closed on a degenerate input, not read it as a match.
+    expect(isHostHeaderAllowed(":1234", "")).toBe(false);
+    expect(isHostHeaderAllowed("", "")).toBe(false);
+    expect(isHostHeaderAllowed("::1", "")).toBe(false);
+    // A real bound host still matches, case-insensitively, and a foreign name
+    // is still rejected.
+    expect(isHostHeaderAllowed("Engram.local", "engram.local")).toBe(true);
+    expect(isHostHeaderAllowed("evil.com", "engram.local")).toBe(false);
+  });
+
+  it("normalizes an Origin the way a browser does before checking it", () => {
+    // `new URL` applies IDNA mapping, so these reduce to a real hostname rather
+    // than being compared as raw text: U+2460 maps to "1" and U+3002 to ".".
+    // Both directions matter — the first two ARE loopback and must pass, the
+    // rest only look like it and must not.
+    expect(isOriginAllowed("http://\u246027.0.0.1")).toBe(true);
+    expect(isOriginAllowed("http://0x7f.0.0.1")).toBe(true);
+    expect(isOriginAllowed("http://127.0.0.1\u3002evil.com")).toBe(false);
+    expect(isOriginAllowed("http://localhost\u3002evil.com")).toBe(false);
+    expect(isOriginAllowed("http://127.0.0.1%2eevil.com")).toBe(false);
+  });
+});
+
 describe("isOriginAllowed", () => {
   it("allows only a genuinely absent Origin (non-browser clients send none)", () => {
     expect(isOriginAllowed(undefined)).toBe(true);
