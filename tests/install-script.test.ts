@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -85,15 +85,40 @@ describe.skipIf(!HAVE_TOOLS)("scripts/install.sh", () => {
 
   it("refuses to install when no sha256 tool is available", () => {
     // Same failure class: "no tool" used to skip verification entirely.
+    //
+    // The PATH given here must still contain everything the script needs
+    // EXCEPT the hash tools. An earlier version of this test used
+    // PATH=/nonexistent, which stopped Node resolving `bash` at all — the
+    // script never ran, and the assertions passed no matter what the
+    // fail-closed branch did.
     const { root, release, vault } = scaffold();
     try {
+      const bin = join(root, "bin");
+      mkdirSync(bin);
+      const needed = ["bash", "curl", "awk", "mkdir", "cp", "rm", "mktemp", "uname", "sed", "cat"];
+      let linked = 0;
+      for (const tool of needed) {
+        const found = spawnSync("bash", ["-c", `command -v ${tool}`], { encoding: "utf8" });
+        if (found.status === 0) {
+          symlinkSync(found.stdout.trim(), join(bin, tool));
+          linked++;
+        }
+      }
+      expect(linked, "the sandbox PATH must actually contain the tools").toBeGreaterThan(5);
+      // Sanity-check the sandbox itself: bash runs, and no hash tool resolves.
+      const probe = spawnSync("bash", ["-c", "command -v sha256sum shasum openssl"], {
+        encoding: "utf8",
+        env: { PATH: bin },
+      });
+      expect(probe.status, "no sha256 tool may resolve on the sandbox PATH").not.toBe(0);
+
       const run = spawnSync("bash", ["scripts/install.sh", "--vault", vault], {
         encoding: "utf8",
-        // An empty PATH plus bash builtins: curl is gone too, but the tool
-        // check runs first, so this pins the branch under test.
-        env: { ...process.env, PATH: "/nonexistent", CODER_ENGRAM_BASE_URL: `file://${release}` },
+        env: { PATH: bin, CODER_ENGRAM_BASE_URL: `file://${release}` },
       });
+      expect(run.status, "the script must actually have run").not.toBeNull();
       expect(run.status).not.toBe(0);
+      expect(run.stderr).toMatch(/no sha256 tool found/);
       expect(installedFiles(vault)).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });

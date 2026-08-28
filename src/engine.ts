@@ -504,6 +504,15 @@ export class EngramEngine {
     // new and re-embedded the whole vault. On a paid provider that is real
     // money, charged on an upgrade whose chunk text did not change at all.
     await this.embeddingStore.load();
+    // Rebuild the retriever whenever vectors are loaded, NOT only when the
+    // chunk index also loaded. `entriesMap()` hands out a fresh Map per state
+    // change rather than a live reference, so a retriever built before the
+    // load stays frozen on an empty vector map forever: after an
+    // INDEX_VERSION bump, search silently returned lexical-shaped scores while
+    // `getRetrievalMode()` still said "hybrid" and `hasVectors()` still said
+    // true. It could not self-heal either — the embed pass only rebuilds when
+    // it changed vectors, and on that path every vector is reused.
+    this.retriever = this.buildRetriever();
     if (loaded) {
       // A loaded index's eligibility verdicts only stand if the config that
       // produced them is known AND unchanged — an exclusion added while the app
@@ -512,9 +521,6 @@ export class EngramEngine {
       // when it matches and fall back to re-reading every note when it does
       // not (or when the index predates the record).
       this.lastScanConfigKey = this.index.getScanConfigKey() ?? "";
-      // Rebuild the retriever so a reloaded index can serve vector/hybrid
-      // results immediately from the cache loaded above.
-      this.retriever = this.buildRetriever();
     }
     return loaded;
   }
@@ -572,8 +578,12 @@ export class EngramEngine {
 
   private async doRefresh(): Promise<RefreshResult> {
     if (!this.index.getIndex()) {
-      await this.doReindex();
-      return { added: this.index.getChunks().length, updated: 0, removed: 0, unchanged: 0 };
+      // Report what the build actually produced. Re-reading `this.index` here
+      // is the same hazard the bindings below close: a settings change landing
+      // during the bootstrap build swaps in an empty manager, and the caller
+      // was then told `added: 0` right after a full index was built.
+      const { chunkCount } = await this.doReindex();
+      return { added: chunkCount, updated: 0, removed: 0, unchanged: 0 };
     }
     // Bound to one manager for the whole pass — see doReindex for why.
     const index = this.index;

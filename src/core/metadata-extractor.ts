@@ -100,6 +100,8 @@ function parseFrontmatter(lines: string[]): Frontmatter {
   if (end !== -1) result.bodyStartLine = end + 1;
 
   const unterminated = end === -1;
+  /** Whether a real `key: value` line has been seen yet (see the break below). */
+  let sawKey = false;
   let currentListKey: "tags" | "aliases" | null = null;
   for (let i = 1; i < parseTo; i++) {
     const line = lines[i];
@@ -126,12 +128,19 @@ function parseFrontmatter(lines: string[]): Frontmatter {
       // trade-off this block is meant to make. Only unindented, non-blank,
       // non-comment prose ends the scan. A truncated write also cuts at the
       // END of the block, so the keys before the cut stay contiguous.
-      const frontmatterShaped =
-        line.trim() === "" || /^\s/.test(line) || /^\s*#/.test(line);
-      if (unterminated && !frontmatterShaped) break;
+      // A blank line is neutral either way. An indented line or a YAML comment
+      // only counts as frontmatter once a real `key: value` has actually been
+      // seen — before that there is nothing identifying the block as
+      // frontmatter at all, and letting those extend the scan let a document
+      // that merely opens with `---`, a blank, and an indented paragraph run on
+      // and swallow a later `title:`/`tags:` line out of its own body prose.
+      const blank = line.trim() === "";
+      const continuesBlock = blank || (sawKey && (/^\s/.test(line) || /^\s*#/.test(line)));
+      if (unterminated && !continuesBlock) break;
       currentListKey = null;
       continue;
     }
+    sawKey = true;
     const key = kv[1].toLowerCase();
     const value = kv[2].trim();
     if (key === "tags" || key === "tag") {

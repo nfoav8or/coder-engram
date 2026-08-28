@@ -137,6 +137,29 @@ describe("extractMetadata", () => {
     expect(meta.bodyStartLine).toBe(0);
   });
 
+  it("stops at an indented line that precedes any real key (the trade-off, recorded)", () => {
+    // A list item or indented line BEFORE any `key: value` is not recognizable
+    // as frontmatter — YAML cannot open a sequence and then a mapping key in
+    // one document — and admitting it is exactly what let a note that merely
+    // opens with `---`, a blank, and an indented paragraph run on and swallow a
+    // `title:`/`tags:` line out of its own body prose. An earlier version of
+    // this suite asserted the tag survived here; that expectation was wrong,
+    // because the shape it protects is malformed either way while the hole it
+    // opens corrupts ordinary documents.
+    expect(extractMetadata("---\n  - loose item\ntags: private\nBody.").tags).toEqual([]);
+  });
+
+  it("does not let body prose set the title when the block opens with a blank line", () => {
+    // The break must not be escapable by putting a blank or indented line
+    // first: without requiring a real key to have been seen, the scan stayed
+    // alive and adopted `title:` from the body.
+    const meta = extractMetadata(
+      "---\n\n    an indented paragraph\ntitle: Wrong Title From Body\nmore prose\n# Real Title\n",
+    );
+    expect(meta.title).toBe("Real Title");
+    expect(meta.tags).toEqual([]);
+  });
+
   it("does not read a whole document as YAML when `---` opens a horizontal rule", () => {
     // Scanning to EOF for an unterminated block must stop at the first line
     // that is not frontmatter-shaped. Otherwise a note that merely opens with
@@ -157,7 +180,7 @@ describe("extractMetadata", () => {
     const cases: [string, string][] = [
       ["a YAML comment", "---\ntitle: Foo\n# a yaml comment\ntags: private\nBody."],
       ["an indented nested key", "---\ntitle: Foo\n  nested: value\ntags: private\nBody."],
-      ["a bare list item", "---\n  - loose item\ntags: private\nBody."],
+      ["a bare list item under a key", "---\ntags:\n  - private\ntitle: Foo\nBody."],
       ["a blank line", "---\ntitle: Foo\n\ntags: private\nBody."],
     ];
     for (const [name, text] of cases) {

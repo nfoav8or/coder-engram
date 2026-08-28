@@ -71,6 +71,41 @@ describe("an INDEX_VERSION bump must not force a re-embed", () => {
   });
 });
 
+describe("vectors loaded without a chunk index still reach the retriever", () => {
+  it("serves hybrid scores after an index-version mismatch, not silently lexical ones", async () => {
+    // Loading the vector cache unconditionally (so an INDEX_VERSION bump does
+    // not force a paid re-embed) is only half the job: `entriesMap()` returns
+    // a fresh Map per state change rather than a live reference, so a
+    // retriever built before that load stays frozen on an empty vector map.
+    // Search then quietly returned pure-lexical scores while the reported mode
+    // still said "hybrid" — and it never self-healed, because the embed pass
+    // only rebuilds the retriever when it actually changed vectors.
+    const settings: EngramSettings = { ...DEFAULT_SETTINGS, embeddingProvider: "mock" };
+    const adapter = new InMemoryVaultAdapter("v", { ...SEED });
+    let t = 10_000;
+    const first = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++);
+    await first.reindex();
+    const healthy = await first.search({ query: "indexing pipeline" });
+
+    const meta = JSON.parse(await adapter.read("Claude Code/Index/metadata.json")) as {
+      version: number;
+    };
+    meta.version -= 1;
+    await adapter.write("Claude Code/Index/metadata.json", JSON.stringify(meta));
+
+    const upgraded = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++);
+    expect(await upgraded.loadIndex()).toBe(false);
+    await upgraded.reindex();
+
+    expect(upgraded.getRetrievalMode()).toBe("hybrid");
+    const after = await upgraded.search({ query: "indexing pipeline" });
+    expect(after.length).toBeGreaterThan(0);
+    // A vector-less hybrid collapses to the lexical-only RRF constant (1/61).
+    // Matching the healthy engine's score is what proves vectors contributed.
+    expect(after[0].score).toBeCloseTo(healthy[0].score, 6);
+  });
+});
+
 describe("EngramEngine M3 embeddings integration", () => {
   it("reports lexical mode with the 'none' provider", () => {
     const { engine } = makeEngine({ ...DEFAULT_SETTINGS, embeddingProvider: "none" });

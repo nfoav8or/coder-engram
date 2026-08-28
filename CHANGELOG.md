@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Hybrid search silently degraded to lexical after an index-version bump.**
+  Loading the vector cache unconditionally (so an upgrade no longer forces a
+  paid re-embed) was only half the job: `entriesMap()` hands out a fresh Map
+  per state change rather than a live reference, so the retriever built before
+  that load stayed frozen on an empty vector map. Search returned
+  lexical-shaped scores while the reported retrieval mode still said "hybrid"
+  and `hasVectors()` still said true — and it never self-healed, because the
+  embedding pass only rebuilds the retriever when it actually changed vectors,
+  and on that path every vector is reused. The retriever is now rebuilt
+  whenever vectors are loaded.
+- A note opening with `---` as a horizontal rule could still have a `title:`
+  or `tags:` line adopted out of its own body prose, if a blank or indented
+  line came first. An indented line or a YAML comment now extends the
+  unterminated-frontmatter scan only once a real `key: value` has been seen —
+  before that there is nothing identifying the block as frontmatter at all.
+- The bootstrap branch of a refresh reported `added: 0` when a full index had
+  just been built, if a settings change landed mid-build. It now reports what
+  the build actually produced.
+
+### Fixed
+
 - **A blank entry in Excluded folders silently excluded the entire vault.** An
   empty folder key matches every path, and the exclusion list — unlike the
   inclusion list — did not drop blanks, so `excludedFolders: [""]` indexed
