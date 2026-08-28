@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A new memory could be silently dropped as a "duplicate".** The inbox dedup
+  cache added in 0.11.1 was invalidated only by the inbox file's mtime, on the
+  assumption that any change the writer did not make would move it. That does
+  not hold: mtime resolution is coarse on some filesystems, and a discard
+  followed immediately by a proposal can land in the same tick — after which
+  the stale cache reported a genuinely new memory as already pending and it was
+  never written. Apply and discard now clear the cache outright; the mtime
+  check remains for edits made outside the plugin. The in-memory test adapter's
+  mtime is a strictly increasing counter and so structurally could not
+  reproduce this, which is why it shipped — the regression test freezes mtime
+  to force the collision.
+- A note that merely *opens* with `---` as a horizontal rule had the rest of it
+  read as YAML, so any later `tags:` or `title:` line in ordinary prose — or
+  inside a fenced code block — silently became real metadata, wrongly excluding
+  the note or overriding its heading. The unterminated-frontmatter scan added
+  in 0.11.1 now stops at the first line that is not frontmatter-shaped.
+- A JSON-RPC request carrying an `id` member that is not a valid id (`null`, a
+  boolean, an object, `NaN`) was treated as a notification and silently given
+  no response at all, leaving the client waiting forever. Only a genuinely
+  absent `id` is a notification now; a malformed one gets `InvalidRequest`.
+- The failed-auth lockout survived a server restart, so an attacker could lock
+  the owner out and rotating the token — the recovery the UI offers — did not
+  clear it. A real rebind now resets the window.
+
+### Changed
+
+- `ObsidianHttpClient` uses the shared `withTimeout` guard instead of its own
+  copy of the same `Promise.race` + timer. That guard exists precisely so the
+  pattern is not written out per call site, and this was the third copy; the
+  semantics are now covered by `withTimeout`'s own tests rather than being
+  duplicated and untested.
+- The **Discard** button in the review UI is styled as the destructive action
+  it is. Three identically-styled buttons made a mis-click indistinguishable
+  from intent, and a discard is permanent.
+- Clearing the edit box and clicking Apply used to do nothing at all, silently:
+  the modal could not tell an emptied field from a cancellation. It now says so.
+
+### Tests
+
+634 → 645, and every fix above is covered by a test confirmed to fail without it.
+
+- New: `ObsidianVaultAdapter.write`'s temp-file → backup → rename dance, whose
+  whole purpose is that a failed write is never a destructive one, had **no
+  unit coverage** — it was reachable only from the e2e harness, which needs a
+  real Obsidian install and does not run in CI. Fault-injection tests now drive
+  the real adapter against a controllable fake `vault.adapter`; 3 of the 5 fail
+  against a naive delete-then-write. This needed a small `obsidian` alias in
+  the vitest config, because the real package ships types only and the file
+  cannot otherwise be loaded at all.
+- The sharded-index corruption tests asserted only that `load()` returned
+  `null` — detection, never recovery. They now rebuild and verify the affected
+  note comes back.
+- "re-embeds only the chunk whose text changed" asserted counts, which a bug
+  that re-embeds the *wrong* chunk would satisfy. It now pins which texts
+  reached the provider and that the untouched vectors are byte-identical.
+
 ## [0.11.1] — 2026-08-24
 
 A hardening release: four review passes over the subsystems 0.11.0's sharded

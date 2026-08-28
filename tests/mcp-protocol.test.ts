@@ -89,6 +89,27 @@ describe("handleRpcMessage", () => {
     expect(res).toBeNull();
   });
 
+  it("errors rather than hangs when an id member is present but malformed", async () => {
+    // A Notification is a request WITHOUT an id member. `"id": null` (or a
+    // boolean/object/NaN) is a malformed REQUEST and owes an error response —
+    // treating it as a notification means a client that sent one waits forever
+    // for a reply the server silently decided not to send.
+    for (const badId of [null, true, {}, [], Number.NaN]) {
+      const res = await handleRpcMessage(
+        { jsonrpc: "2.0", id: badId, method: "tools/list" },
+        makeDeps(),
+      );
+      expect(res, `id ${JSON.stringify(badId)} must get a response`).not.toBeNull();
+      expect(res?.error?.code).toBe(JsonRpcErrorCode.InvalidRequest);
+      expect(res?.id).toBeNull();
+    }
+  });
+
+  it("still treats a genuinely absent id as a notification", async () => {
+    const res = await handleRpcMessage({ jsonrpc: "2.0", method: "tools/list" }, makeDeps());
+    expect(res).toBeNull();
+  });
+
   it("returns null when a request-only method is sent as a notification", async () => {
     // No id => notification => no response, even for tools/list or tools/call.
     expect(await handleRpcMessage({ jsonrpc: "2.0", method: "tools/list" }, makeDeps())).toBeNull();

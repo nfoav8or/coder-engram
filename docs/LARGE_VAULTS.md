@@ -7,13 +7,43 @@ development machine; treat them as one-machine evidence, not guarantees.
 
 ## Where the envelope stands after P1 (0.10.7)
 
-Measured at 10k synthetic notes (~73k chunks): full build ~230 ms, hybrid query p50
-~120 ms, filtered lexical p50 ~80 ms. Scaling is linear through 20k notes / 145k chunks;
-the binding constraint is **heap** (~2.5 GB at 20k notes with dim-384 vectors), then the
+The binding constraint is **heap** (~2.5 GB at 20k notes with dim-384 vectors), then the
 **main-thread cost** of parsing/serializing single-file caches, then **first-pass
 embedding time** (checkpointed and resumable since 0.10.7, but still linear in corpus
 size). A 5 GB vault is roughly 2–5M chunks — 15–30× past the tested envelope — so P2/P3
 are structural, not tuning.
+
+Re-measured on the 0.11.1 code (`npm run bench` plus targeted probes), superseding the
+first-pass figures taken before the inverted postings index and the binary vector format
+landed:
+
+| | 73k chunks (10k notes) | 145k chunks (20k notes) |
+| --- | --- | --- |
+| Full build | 685 ms | 624 ms |
+| Hybrid query p50 | 143 ms | 360 ms (p95 688 ms) |
+| Lexical query p50 | 106 ms (filtered) | 195 ms (p95 451 ms) |
+| Incremental refresh (10 notes touched) | — | 30 ms |
+
+**Read the lexical numbers with the benchmark's vocabulary in mind.** `scale.bench.ts`
+draws from a 40-word vocabulary, so nearly every query term appears in nearly every
+chunk — the exact worst case for an inverted index, whose entire purpose is to bound the
+candidate set to actual matches. Re-measured at the same 145k-chunk scale against a
+realistic Zipfian ~3000-word vocabulary, a query with genuinely selective terms
+(document frequency ~1%) runs at **p50 10.3 ms**, ~22× faster than the 229 ms the
+synthetic corpus produces, and hybrid becomes purely vector-bound (~121 ms). The bench
+numbers above are therefore a pessimistic bound rather than a prediction for a real
+vault, and most of the apparent regression against the older ~120 ms hybrid figure is
+this artifact rather than the 0.11.x retrieval changes. That was not separated by an
+A/B against a pre-0.11.x build, so it is the likely explanation, not a proven one.
+
+**Evidence for P3.1's sizing:** decomposing a vector query at 145k chunks gives dot
+products 39.8 ms, per-candidate object allocation +4 ms, and the final full
+`Array.prototype.sort` of ~73k scored candidates **+22 ms — about a third of the
+65.7 ms total** — all to then keep the top 8 (or the top 32 deep candidates hybrid asks
+for). A bounded top-K selection would reclaim an estimated 15–18 ms per query on its
+own. It is deliberately *not* being done as a patch-release change: it reorders results
+whenever scores tie, and P3.1 replaces this scan wholesale. The measurement is recorded
+here so that work starts with a number rather than an intuition.
 
 ## P2 — unlocks ~500k chunks
 

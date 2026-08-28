@@ -100,6 +100,7 @@ function parseFrontmatter(lines: string[]): Frontmatter {
   const parseTo = end === -1 ? lines.length : end;
   if (end !== -1) result.bodyStartLine = end + 1;
 
+  const unterminated = end === -1;
   let currentListKey: "tags" | "aliases" | null = null;
   for (let i = 1; i < parseTo; i++) {
     const line = lines[i];
@@ -112,6 +113,13 @@ function parseFrontmatter(lines: string[]): Frontmatter {
     }
     const kv = line.match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
     if (!kv) {
+      // With no closing fence there is nothing to bound the block, so stop at
+      // the first line that is not frontmatter-shaped rather than reading the
+      // whole document as YAML. A note that opens with `---` as a horizontal
+      // rule would otherwise have any later `tags:`/`title:` line in its prose
+      // — or inside a fenced code block, since this runs before fences are
+      // stripped — silently become real metadata.
+      if (unterminated && line.trim() !== "") break;
       currentListKey = null;
       continue;
     }

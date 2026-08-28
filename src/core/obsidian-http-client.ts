@@ -9,10 +9,18 @@
  * We pass `throw: false` so non-2xx responses come back as values (the caller
  * branches on status); transport failures still reject, which callers treat as
  * "provider unavailable".
+ *
+ * TESTING: `requestUrl` is an Obsidian VALUE import, and the `obsidian` package
+ * ships types only — there is no runtime binding for it outside the Electron
+ * host, so this file cannot be loaded by the Node test suite at all. The
+ * timeout semantics it relies on are unit-tested where they live, in
+ * `utils/timeout.ts` (`tests/timeout.test.ts`); everything below that is
+ * covered only by the Playwright e2e harness in `tests/e2e/`.
  */
 
 import { requestUrl } from "obsidian";
 import { HttpClient, HttpRequest, HttpResponse } from "./http-client";
+import { withTimeout } from "../utils/timeout";
 
 export class ObsidianHttpClient implements HttpClient {
   async request(req: HttpRequest): Promise<HttpResponse> {
@@ -35,25 +43,16 @@ export class ObsidianHttpClient implements HttpClient {
 
     // `requestUrl` cannot be aborted and has no timeout of its own, so a stalled
     // endpoint would otherwise hang search/indexing forever (the callers' graceful
-    // degrade only catches REJECTIONS, never a never-resolving promise). Race the
-    // request against a rejecting timer; the underlying request is abandoned (it
-    // resolves into the void and is GC'd) and callers treat the rejection as
-    // "provider unavailable" and fall back to lexical.
+    // degrade only catches REJECTIONS, never a never-resolving promise). The
+    // request is bounded by the shared `withTimeout` guard — which exists
+    // precisely so this pattern is not written out per call site — and the
+    // underlying request is abandoned (it resolves into the void and is GC'd);
+    // callers treat the rejection as "provider unavailable" and fall back to
+    // lexical. The label is host-only: a timeout message must never carry the
+    // path or query, which can hold sensitive material.
     const timeoutMs = req.timeoutMs;
     if (!timeoutMs || timeoutMs <= 0) return send;
-
-    let timer: number | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = window.setTimeout(
-        () => reject(new Error(`HTTP request to ${hostOnly(req.url)} timed out after ${timeoutMs}ms`)),
-        timeoutMs,
-      );
-    });
-    try {
-      return await Promise.race([send, timeout]);
-    } finally {
-      if (timer) window.clearTimeout(timer);
-    }
+    return withTimeout(send, timeoutMs, hostOnly(req.url));
   }
 }
 

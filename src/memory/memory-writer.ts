@@ -152,10 +152,12 @@ export function formatMemoryEntry(entry: MemoryEntry): string {
 export class MemoryWriter {
   private readonly logger: Logger;
   /**
-   * Dedup keys of the inbox as of `mtime`. Valid only while the file's mtime
-   * still matches — any write this cache did not make (apply, discard, a
-   * hand-edit in Obsidian) moves it and forces a re-parse. See
-   * {@link proposeToInbox}.
+   * Dedup keys of the inbox as of `mtime`. Invalidated two ways: this class
+   * clears it outright whenever IT rewrites the inbox (apply/discard), and the
+   * mtime check in {@link proposeToInbox} catches every other writer. The
+   * mtime alone is not enough — it can repeat when two writes land in the same
+   * tick or the filesystem's resolution is coarse, and a stale hit would
+   * report a genuinely new memory as a duplicate and silently drop it.
    */
   private dedupCache: { mtime: number; keys: Set<string> } | null = null;
 
@@ -214,11 +216,12 @@ export class MemoryWriter {
       // left unreviewed makes every later add_memory slower. The parsed dedup
       // keys are cached against the file's mtime instead.
       //
-      // Staleness is handled by construction rather than by invalidation
-      // calls: apply/discard run under this same lock and change the file, and
-      // a user editing the inbox in Obsidian changes it too, so any mutation
-      // this cache did not make moves the mtime and the next propose re-reads.
-      // A null mtime here simply means no cache hit, so the full parse runs.
+      // Two layers of invalidation, because neither alone is enough. The
+      // plugin's own rewrites (apply/discard) clear the cache outright, since
+      // an mtime can repeat when two writes land in the same tick or the
+      // filesystem's resolution is coarse. Everything else — a user editing
+      // the inbox in Obsidian, another tool touching the file — is caught by
+      // the mtime check here. A null mtime simply means no cache hit.
       const mtime = await this.adapter.getMtime(target);
       let keys = mtime !== null && this.dedupCache?.mtime === mtime ? this.dedupCache.keys : null;
       if (!keys) {
@@ -306,6 +309,13 @@ export class MemoryWriter {
     }
     return this.inboxLock.run(async () => {
       const target = this.paths.pendingMemoryFile;
+      // This method rewrites the inbox, so the dedup cache is invalid from
+      // here on. Cleared explicitly rather than relying on the mtime moving:
+      // mtime resolution is coarse on some filesystems, and an apply followed
+      // immediately by a propose can land in the same tick — in which case a
+      // stale cache would report a genuinely new memory as a duplicate and
+      // silently drop it.
+      this.dedupCache = null;
       if (!(await this.adapter.exists(target))) {
         throw new ConfigError("The pending-memory inbox no longer exists.");
       }
@@ -339,6 +349,8 @@ export class MemoryWriter {
   async discardPending(entry: PendingEntry): Promise<void> {
     await this.inboxLock.run(async () => {
       const target = this.paths.pendingMemoryFile;
+      // See applyPending: the cache cannot outlive a rewrite of the inbox.
+      this.dedupCache = null;
       if (!(await this.adapter.exists(target))) {
         throw new ConfigError("The pending-memory inbox no longer exists.");
       }

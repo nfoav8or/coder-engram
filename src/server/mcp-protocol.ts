@@ -99,12 +99,22 @@ export async function handleRpcMessage(
   }
 
   const method = message.method;
+  // "no id member" and "an id member that is not a valid id" are different
+  // things. Per JSON-RPC 2.0 a Notification is a request object WITHOUT an id;
+  // a message carrying `"id": null` (or a boolean/object/NaN) is a malformed
+  // REQUEST and owes an error response. Collapsing the two meant such a client
+  // got no reply at all and simply hung, waiting on a response the server had
+  // silently decided not to send.
+  const idPresent = "id" in message;
   const hasId = isId(message.id);
+  if (idPresent && !hasId) {
+    return fail(null, JsonRpcErrorCode.InvalidRequest, "Request id must be a string or a finite number.");
+  }
   const id = hasId ? (message.id as string | number) : null;
   const params = message.params;
 
-  // Notifications (no id) never get a response.
-  const isNotification = !hasId;
+  // Notifications (no id member) never get a response.
+  const isNotification = !idPresent;
 
   // These are request methods; per JSON-RPC a notification (no id) gets no
   // response at all, even for otherwise-valid calls.

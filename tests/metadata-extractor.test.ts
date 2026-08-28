@@ -137,6 +137,23 @@ describe("extractMetadata", () => {
     expect(meta.bodyStartLine).toBe(0);
   });
 
+  it("does not read a whole document as YAML when `---` opens a horizontal rule", () => {
+    // Scanning to EOF for an unterminated block must stop at the first line
+    // that is not frontmatter-shaped. Otherwise a note that merely opens with
+    // a horizontal rule has any later `tags:` line in its PROSE — or inside a
+    // fenced code block, since this runs before fences are stripped — silently
+    // become real metadata, wrongly excluding the note from the index.
+    const meta = extractMetadata(
+      "---\nJust a horizontal rule above; this is ordinary prose.\ntags: confidential, secret-project\n",
+    );
+    expect(meta.tags).toEqual([]);
+  });
+
+  it("does not let a `title:` line in body prose override the real heading", () => {
+    const meta = extractMetadata("---\nProse, not frontmatter.\ntitle: Wrong Title\n\n# Real Title\n");
+    expect(meta.title).toBe("Real Title");
+  });
+
   it("still honors an unterminated inline frontmatter tag list", () => {
     expect(extractMetadata("---\ntags: private, secret\nbody text\n").tags).toEqual(
       expect.arrayContaining(["private", "secret"]),

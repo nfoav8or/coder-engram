@@ -168,6 +168,28 @@ describe("LocalServer over a real socket", () => {
     expect(locked.status).toBe(429);
   });
 
+  it("clears the auth lockout on a restart with a new token", async () => {
+    // The lockout is global, so an attacker can lock the owner out. Rotating
+    // the token and restarting is the recovery the UI offers — it has to
+    // actually work, rather than leaving the owner refused with a valid token.
+    const { server, addr } = await startServer({ token: "s3cret" });
+    for (let i = 0; i < 10; i++) {
+      await raw(addr.port, { headers: { authorization: `Bearer wrong-${i}` }, body: RPC("ping") });
+    }
+    expect(
+      (await raw(addr.port, { headers: { authorization: "Bearer s3cret" }, body: RPC("ping") })).status,
+    ).toBe(429);
+
+    const rotated: EngramSettings = {
+      ...DEFAULT_SETTINGS,
+      server: { ...DEFAULT_SETTINGS.server, enabled: true, host: "127.0.0.1", port: 0, token: "rotated-token" },
+    };
+    await server.start(rotated);
+    const after = server.getAddress()!.port;
+    const res = await raw(after, { headers: { authorization: "Bearer rotated-token" }, body: RPC("ping") });
+    expect(res.status, "the owner must be able to recover by rotating the token").toBe(200);
+  });
+
   it("rejects a foreign Host header (DNS-rebinding guard)", async () => {
     const { addr } = await startServer();
     const res = await raw(addr.port, { headers: { host: "evil.example.com" }, body: RPC("tools/list") });

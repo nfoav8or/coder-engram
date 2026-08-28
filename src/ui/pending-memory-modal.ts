@@ -95,7 +95,7 @@ export class PendingMemoryModal extends Modal {
     const row = card.createDiv({ cls: "engram-button-row" });
     this.button(row, "Apply", () => this.apply(entry));
     this.button(row, "Edit & apply", () => this.editAndApply(entry));
-    this.button(row, "Discard", () => this.discard(entry));
+    this.button(row, "Discard", () => this.discard(entry), { warning: true });
   }
 
   private async apply(entry: PendingEntry): Promise<void> {
@@ -114,7 +114,12 @@ export class PendingMemoryModal extends Modal {
 
   private editAndApply(entry: PendingEntry): void {
     new EditContentModal(this.app, entry.content, (edited) => {
+      // `null` now means cancelled, and only that.
       if (edited === null) return;
+      if (edited.trim() === "") {
+        new Notice("Memory content is empty — nothing applied.");
+        return;
+      }
       // Keep the original `raw` so removal still matches; only the applied block
       // uses the edited content.
       void this.apply({ ...entry, content: edited });
@@ -144,8 +149,18 @@ export class PendingMemoryModal extends Modal {
     this.button(actions, "Refresh", () => this.renderList());
   }
 
-  private button(parent: HTMLElement, label: string, onClick: () => void | Promise<void>): void {
+  private button(
+    parent: HTMLElement,
+    label: string,
+    onClick: () => void | Promise<void>,
+    opts: { warning?: boolean } = {},
+  ): void {
     const btn = parent.createEl("button", { text: label });
+    // Discard permanently removes a proposal and there is no undo. Three
+    // identically-styled buttons in a row made a mis-click indistinguishable
+    // from an intentional one; Obsidian's own warning styling is the standard
+    // way to mark the destructive member of a group.
+    if (opts.warning) btn.classList.add("mod-warning");
     btn.addEventListener("click", () => void onClick());
   }
 
@@ -188,8 +203,12 @@ class EditContentModal extends Modal {
   }
 
   private submit(): void {
+    // Pass the trimmed value even when it is empty. Collapsing "" to null here
+    // made "cleared the box and clicked Apply" indistinguishable from
+    // "cancelled", so the caller silently did nothing; null now means
+    // cancelled and nothing else.
     this.resolved = true;
-    this.onSubmit(this.value.trim() || null);
+    this.onSubmit(this.value.trim());
     this.close();
   }
 

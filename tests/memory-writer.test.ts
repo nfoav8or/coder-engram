@@ -92,6 +92,35 @@ describe("MemoryWriter.proposeToInbox", () => {
       expect(reads).toEqual([]);
     });
 
+    it("does not report a duplicate after a discard that reused the same mtime", async () => {
+      // The dedup cache is keyed on mtime, but mtime is NOT a reliable change
+      // signal: resolution is coarse on some filesystems, and a discard
+      // followed immediately by a propose can land in the same tick. If the
+      // cache survived that, a genuinely new proposal would be reported as a
+      // duplicate and silently dropped — data loss, not a slow path.
+      //
+      // InMemoryVaultAdapter's mtime is a strictly increasing counter, so it
+      // can never produce the collision this guards against; the adapter is
+      // subclassed here to freeze mtime and make the hazard reproducible.
+      class CoarseMtimeAdapter extends InMemoryVaultAdapter {
+        async getMtime(): Promise<number | null> {
+          return 1;
+        }
+      }
+      const adapter = new CoarseMtimeAdapter("v", {});
+      const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+
+      const first = await writer.proposeToInbox(entry());
+      expect(first.duplicate).toBe(false);
+
+      const [pending] = (await writer.readInbox()).entries;
+      await writer.discardPending(pending);
+
+      const again = await writer.proposeToInbox(entry({ timestamp: 1_800_000_000_000 }));
+      expect(again.duplicate, "a discarded memory must be proposable again").toBe(false);
+      expect((await adapter.read(first.path)).match(/## Pending Memory:/g)?.length).toBe(1);
+    });
+
     it("re-reads and stays correct after the inbox is edited outside the writer", async () => {
       const adapter = new InMemoryVaultAdapter("v", {});
       const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });

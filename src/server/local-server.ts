@@ -164,6 +164,13 @@ export class LocalServer {
       this.settings = snapshot;
       return this.address;
     }
+    // A real rebind clears the failed-auth window. The lockout is global by
+    // design (an attacker rotates addresses; the only legitimate client is the
+    // user's own agent), which means an attacker can lock the OWNER out — and
+    // rotating the token and restarting the server is exactly the recovery the
+    // UI offers. Carrying the counter across that restart would leave the
+    // owner refused with a freshly generated, valid token.
+    this.authFailures = [];
 
     // Stop BEFORE validating, not after: a settings change that would expose
     // memory without auth must leave nothing serving. Validating first reads as

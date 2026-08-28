@@ -121,10 +121,39 @@ describe("EmbeddingStore.embedIndex", () => {
     await store.load();
     await store.embedIndex(chunks, new MockEmbeddingProvider());
 
+    // Snapshot the vectors so we can prove WHICH chunk was recomputed. Counts
+    // alone are blind to the bug that actually matters here: an id/index
+    // misalignment that re-embeds the wrong chunk still reports
+    // {embedded:1, reused:2} while silently corrupting a cached vector.
+    const before = new Map(
+      [...store.entriesMap()].map(([id, e]) => [id, Array.from(e.vec)] as const),
+    );
+
     const edited = [...chunks];
     edited[1] = { id: "c1", text: "completely different text now" };
-    const result = await store.embedIndex(edited, new MockEmbeddingProvider());
+    const seen: string[][] = [];
+    const mock = new MockEmbeddingProvider();
+    const spy: EmbeddingProvider = {
+      id: mock.id,
+      model: mock.model,
+      dimensions: mock.dimensions,
+      embed: (texts) => (seen.push([...texts]), mock.embed(texts)),
+      isAvailable: () => mock.isAvailable(),
+    };
+    const result = await store.embedIndex(edited, spy);
     expect(result).toMatchObject({ embedded: 1, reused: 2 });
+
+    // Only the edited text was ever sent to the provider.
+    expect(seen.flat()).toEqual(["completely different text now"]);
+
+    const after = store.entriesMap();
+    // The untouched chunks keep their exact original vectors.
+    expect(Array.from(after.get("c0")!.vec)).toEqual(before.get("c0"));
+    expect(Array.from(after.get("c2")!.vec)).toEqual(before.get("c2"));
+    // The edited one changed, and matches a fresh embedding of its new text.
+    expect(Array.from(after.get("c1")!.vec)).not.toEqual(before.get("c1"));
+    const [fresh] = await new MockEmbeddingProvider().embed(["completely different text now"]);
+    expect(Array.from(after.get("c1")!.vec)).toEqual(Array.from(fresh));
   });
 
   it("removes vectors for chunks dropped from the list", async () => {

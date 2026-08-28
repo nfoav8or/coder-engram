@@ -45,6 +45,23 @@ async function mtimes(adapter: InMemoryVaultAdapter, files: string[]): Promise<M
   return out;
 }
 
+/** What the engine actually does when load() returns null: rebuild from the
+ * vault. Asserting only `load() === null` proves DETECTION but not RECOVERY —
+ * a persist that failed to overwrite the damaged shard, or a build that
+ * dropped the affected notes, would leave the corpus permanently short and the
+ * old assertion would still pass. */
+async function rebuildAndVerify(adapter: InMemoryVaultAdapter, expectedCount: number) {
+  const mgr = new IndexManager(adapter, PATHS, { singleFileMaxChunks: 10, logger: NULL_LOGGER });
+  await mgr.build(await new VaultScanner(adapter).scan(scanConfig()));
+  await mgr.persist();
+  const reloaded = await new IndexManager(adapter, PATHS, {
+    singleFileMaxChunks: 10,
+    logger: NULL_LOGGER,
+  }).load();
+  expect(reloaded?.chunks).toHaveLength(expectedCount);
+  return reloaded;
+}
+
 describe("size-adaptive sharded chunk persistence", () => {
   const opts = { singleFileMaxChunks: 10, logger: NULL_LOGGER };
 
@@ -135,6 +152,10 @@ describe("size-adaptive sharded chunk persistence", () => {
     meta.shardCount = 64;
     await adapter.write(PATHS.metadataFile, JSON.stringify(meta));
     expect(await new IndexManager(adapter, PATHS, opts).load()).toBeNull();
+
+    // ...and the rebuild that follows actually restores every note.
+    const reloaded = await rebuildAndVerify(adapter, 15);
+    expect(reloaded?.chunks.some((c) => c.notePath === "Notes/n0.md")).toBe(true);
   });
 
   it("rebuilds when a shard file is missing rather than loading its notes as gone", async () => {
@@ -149,6 +170,11 @@ describe("size-adaptive sharded chunk persistence", () => {
 
     adapter.removeFile(chunkShardFile(fnv1a32("Notes/n0.md") % 256));
     expect(await new IndexManager(adapter, PATHS, opts).load()).toBeNull();
+
+    // The note whose shard vanished must come back, not just "load stops
+    // returning null" — that is the whole point of forcing the rebuild.
+    const reloaded = await rebuildAndVerify(adapter, 15);
+    expect(reloaded?.chunks.some((c) => c.notePath === "Notes/n0.md")).toBe(true);
   });
 
   it("a persist that dies mid layout switch leaves a loadable index either side of the metadata write", async () => {
