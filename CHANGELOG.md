@@ -7,190 +7,159 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-08-28
+
+A correctness and honesty release. Three of the fixes below close ways the
+**tag-exclusion privacy control could fail open** — a note the user had marked
+to keep away from the agent was indexed and served anyway — and two fix real
+costs that 0.11.1 itself introduced for anyone who upgraded to it.
+
+**On upgrade:** `INDEX_VERSION` goes to 5, so the index rebuilds once. That
+rebuild re-chunks but does **not** re-embed — cached vectors are reused, which
+is itself one of the fixes below.
+
 ### Security
 
-- **A tag in a truncated frontmatter block was lost when a YAML comment came
-  before the first key.** The bound added in the previous pass only let a
-  comment continue the block once a real `key: value` had been seen, so a file
-  opening `---` then `# TODO fill metadata` then `tags: private` extracted
-  nothing — the fail-open direction, which leaks an excluded note to the agent.
-  A comment is never body prose wherever it sits; only indentation is genuinely
-  ambiguous before a key, so only that still requires one. This is the third
-  correction to the same bound, and each earlier one over-corrected in the
-  opposite direction.
-- **A UTF-8 byte-order mark hid a note's entire frontmatter block**, including
-  a `tags:` entry that may have been its only exclusion marker — so a note the
-  user had excluded was indexed and served over the local server. A BOM is
-  invisible but is a real character at offset 0, so `^---` never matched; the
+Tag extraction decides whether an excluded note stays out of the index and away
+from the local MCP server, so a tag the parser misses is a note that leaks.
+Three separate misses, all in the same parser:
+
+- **A UTF-8 byte-order mark hid a note's entire frontmatter block** — including
+  a `tags:` entry that may have been its only exclusion marker. A BOM is
+  invisible but is a real character at offset 0, so `^---` never matched. The
   same miss cost the note its first heading (`^#`). Windows editors, PowerShell
-  redirection and several export tools emit one routinely. `INDEX_VERSION` is
-  raised to 5 to evict the affected notes, since a parser fix alone only
-  changes what happens the next time a note is re-read. That rebuild re-chunks
-  but does **not** re-embed.
+  redirection and several export tools emit one routinely.
+- **An unterminated frontmatter block discarded its `tags:` list.** A truncated
+  write or a sync conflict was enough to trigger it, and since those tags carry
+  no `#`, nothing was left for the inline pattern to find. Such a block is now
+  scanned for tags, bounded so it stops once the content stops looking like
+  frontmatter — a blank line is neutral and a YAML comment never ends the
+  block, while an indented line extends it only after a real `key: value` has
+  established that the block is YAML at all. That bound took three attempts:
+  the first two over-corrected, once into reading a whole prose document as
+  YAML and once into dropping tags that sat behind a comment. Every shape is
+  now pinned by its own test rather than as a group.
+- **An inline tag was only recognized after whitespace or `(`**, so any other
+  punctuation in front of it dropped the tag: `**#private**` (bold — an
+  ordinary way to write one), `urgent,#private,todo`, and `"#private"` all
+  extracted nothing. The rule is now stated as what a tag may *not* follow,
+  which also fixed a live false positive — `[text](#section)` used to register
+  `section` as a tag.
 
-### Changed
-
-- **The plugin no longer claims an embedding update it did not perform.** Every
-  failure in an embedding pass is non-fatal by design — retrieval degrades to
-  lexical — which meant they all reached the UI indistinguishable from success:
-  a user whose Ollama simply was not running was told "Embeddings updated" and
-  could only learn otherwise by opening devtools. A pass now reports its
-  outcome, and the notice says what actually happened and what to check.
-- **Search distinguishes "nothing is indexed" from "nothing matched."** Both
-  showed the same sentence, and since nothing indexes automatically on install,
-  an empty index is the expected state on a first run — making it the most
-  likely reason a new user sees no results.
-
-### Changed
-
-- The `search_vault_memory` tool description sent to the calling agent claimed
-  results are "de-duplicated so the same memory isn't returned twice". Near-
-  duplicate collapsing and per-note capping are opt-in and **off by default**,
-  so that promised the agent something the default configuration does not do.
-  The description now says so.
-
-### Fixed
-
-- **Hybrid search silently degraded to lexical after an index-version bump.**
-  Loading the vector cache unconditionally (so an upgrade no longer forces a
-  paid re-embed) was only half the job: `entriesMap()` hands out a fresh Map
-  per state change rather than a live reference, so the retriever built before
-  that load stayed frozen on an empty vector map. Search returned
-  lexical-shaped scores while the reported retrieval mode still said "hybrid"
-  and `hasVectors()` still said true — and it never self-healed, because the
-  embedding pass only rebuilds the retriever when it actually changed vectors,
-  and on that path every vector is reused. The retriever is now rebuilt
-  whenever vectors are loaded.
-- A note opening with `---` as a horizontal rule could still have a `title:`
-  or `tags:` line adopted out of its own body prose, if a blank or indented
-  line came first. An indented line or a YAML comment now extends the
-  unterminated-frontmatter scan only once a real `key: value` has been seen —
-  before that there is nothing identifying the block as frontmatter at all.
-- The bootstrap branch of a refresh reported `added: 0` when a full index had
-  just been built, if a settings change landed mid-build. It now reports what
-  the build actually produced.
-
-### Fixed
-
-- **A blank entry in Excluded folders silently excluded the entire vault.** An
-  empty folder key matches every path, and the exclusion list — unlike the
-  inclusion list — did not drop blanks, so `excludedFolders: [""]` indexed
-  nothing at all with no error to say why. The settings tab already trimmed on
-  the way in, but a hand-edited `data.json` or a restored settings backup took
-  a path that did not. Blanks are now dropped both in settings migration and in
-  the scanner.
-- **A `folder` search filter and an Excluded folders entry did not normalize
-  the same way.** Two separate normalizers had drifted: the scanner dropped
-  empty and `.` segments, the search filter only stripped leading and trailing
-  slashes. So `./Notes` correctly excluded a folder but matched nothing as a
-  filter — zero results, indistinguishable from "nothing matched", the same
-  silent-failure shape as comparing without folding case. Both now share
-  `normalizeFolder` in `utils/text.ts`.
-- A memory file that exists but cannot be read (permissions, disk error, a
-  corrupt file) was treated as empty with no log, making it indistinguishable
-  from a file that was never created. It now warns and still degrades
-  gracefully.
-
-### Fixed
-
-- **An index-version bump forced a full re-embed of the vault.** The vector
-  cache was loaded only when the chunk index loaded successfully, so any
-  `INDEX_VERSION` mismatch — which 0.11.1's bump to 4 causes for every existing
-  user — started from an empty store and treated every chunk as new. Vectors
-  are keyed by chunk id and content hash and gated on provider identity, so
-  they were always safe to reuse across a rebuild; they are now loaded
-  regardless. On a paid embedding provider this was real money charged on
-  upgrade for chunk text that had not changed. Pre-existing since 0.9.0, but
-  0.11.1 is the release that triggered it for everyone.
-- **A settings change landing mid-pass could silently discard an entire
-  reindex.** `updateSettings` is synchronous and runs off the engine's index
-  chain, and on a memory-root change it replaces the index manager outright.
-  Because `build`/`refresh` yield to the event loop mid-pass, the code that
-  resumed afterwards could re-read the engine field and reach a fresh, empty
-  manager — where `persist()` returns silently. The completed build was thrown
-  away while the log still reported success. Index, embedding and attachment
-  passes now bind the manager, store and cache they started with, and check
-  before writing engine-level bookkeeping. The same class of bug cost an
-  embedding pass its work and could leave vector search stuck on lexical.
-- **A tag in a truncated frontmatter block could still be missed.** The bound
-  added to the unterminated-frontmatter scan in the previous pass stopped at
-  the first line that was not `key: value`, which dropped the tags when a YAML
-  comment, an indented nested key, or a bare list item appeared before them.
-  That is the fail-open direction — the one that leaks an excluded note to the
-  agent. The scan now ends only on unindented, non-blank, non-comment prose,
-  which still keeps a note that merely opens with `---` from being read as
-  YAML.
-
-### Security
+Other hardening:
 
 - **`scripts/install.sh` now fails closed.** Checksum verification degraded to
   a printed note and installed anyway when the `SHA256SUMS` manifest could not
   be fetched, or when no sha256 tool was found. Whoever can tamper with
   `main.js` in transit can equally make one request fail, so an absent manifest
-  is indistinguishable from interference and must not be assumed benign. Both
-  paths now refuse to install. `--skip-verify` is the explicit opt-out for
-  releases before v0.6.0, which predate the manifest. Tool detection uses
-  `command -v` rather than running the tool against downloaded data, so a
-  permissions or disk error can no longer be mistaken for "no tool installed",
-  and a plain-`http://` asset source is now called out as unprotected.
-
-### Fixed
-
-- **A new memory could be silently dropped as a "duplicate".** The inbox dedup
-  cache added in 0.11.1 was invalidated only by the inbox file's mtime, on the
-  assumption that any change the writer did not make would move it. That does
-  not hold: mtime resolution is coarse on some filesystems, and a discard
-  followed immediately by a proposal can land in the same tick — after which
-  the stale cache reported a genuinely new memory as already pending and it was
-  never written. Apply and discard now clear the cache outright; the mtime
-  check remains for edits made outside the plugin. The in-memory test adapter's
-  mtime is a strictly increasing counter and so structurally could not
-  reproduce this, which is why it shipped — the regression test freezes mtime
-  to force the collision.
-- A note that merely *opens* with `---` as a horizontal rule had the rest of it
-  read as YAML, so any later `tags:` or `title:` line in ordinary prose — or
-  inside a fenced code block — silently became real metadata, wrongly excluding
-  the note or overriding its heading. The unterminated-frontmatter scan added
-  in 0.11.1 now stops at the first line that is not frontmatter-shaped.
-- A JSON-RPC request carrying an `id` member that is not a valid id (`null`, a
-  boolean, an object, `NaN`) was treated as a notification and silently given
-  no response at all, leaving the client waiting forever. Only a genuinely
-  absent `id` is a notification now; a malformed one gets `InvalidRequest`.
+  is indistinguishable from interference. Both paths now refuse;
+  `--skip-verify` is the explicit opt-out for releases before v0.6.0, which
+  predate the manifest. Tool detection uses `command -v` rather than running a
+  tool against downloaded data, and a plain-`http://` asset source is called
+  out as unprotected.
+- A session note's filename stem is resolved via `resolveInVault` rather than
+  concatenated; pending-inbox single-line fields also collapse U+2028/U+2029,
+  which some Markdown renderers draw as a line break; a stored (uncompressed)
+  ZIP entry's real byte length is checked against the decompression cap, not
+  just its declared size; and a whitespace-only provider config degrades to
+  lexical immediately instead of failing on first request. None were reachable
+  through a live path — each is closed as defense in depth.
 - The failed-auth lockout survived a server restart, so an attacker could lock
   the owner out and rotating the token — the recovery the UI offers — did not
   clear it. A real rebind now resets the window.
 
+### Fixed
+
+- **An index-version bump forced a full re-embed of the whole vault.** The
+  vector cache was loaded only when the chunk index loaded *successfully*, so
+  any `INDEX_VERSION` mismatch — which 0.11.1's own bump caused for every
+  existing user — started from an empty store and treated every chunk as new.
+  Vectors are keyed by chunk id and content hash and gated on provider
+  identity, so they were always safe to reuse across a rebuild. On a paid
+  embedding provider this was real money charged on upgrade for text that had
+  not changed.
+- **Hybrid search then silently degraded to lexical.** Loading the vector cache
+  unconditionally was only half the fix: the retriever built before that load
+  stayed frozen on an empty vector map, so search returned lexical-shaped
+  scores while the reported mode still said "hybrid". It never self-healed,
+  because the embedding pass only rebuilds the retriever when it changed
+  vectors — and on that path every vector is reused.
+- **A settings change landing mid-pass could silently discard an entire
+  reindex.** `updateSettings` runs off the engine's index chain and replaces the
+  index manager outright on a memory-root change; because `build`/`refresh`
+  yield to the event loop, the code resuming afterwards could reach a fresh,
+  empty manager where `persist()` returns silently. The completed build was
+  thrown away while the log reported success. Index, embedding and attachment
+  passes now bind the objects they started with.
+- **A blank entry in Excluded folders silently excluded the entire vault.** An
+  empty folder key matches every path, and the exclusion list — unlike the
+  inclusion list — did not drop blanks. Reachable from a hand-edited
+  `data.json` or a restored settings backup.
+- **A new memory could be silently dropped as a "duplicate".** The inbox dedup
+  cache added in 0.11.1 relied on the inbox file's mtime moving whenever
+  something else changed it. Mtime resolution is coarse on some filesystems, so
+  a discard followed immediately by a proposal could land in the same tick and
+  the stale cache reported a genuinely new memory as already pending. Apply and
+  discard now clear the cache outright.
+- **A `folder` search filter and an Excluded folders entry normalized
+  differently**, so `./Notes` correctly excluded a folder but matched nothing as
+  a filter — zero results, indistinguishable from "nothing matched". Both now
+  share one normalizer.
+- `summarize_note`'s sentence splitter treated every abbreviation's period
+  ("Dr.", "U.S.", "etc.") as a sentence boundary, so fragments like "S." could
+  be surfaced as a "sentence" — breaking the module's promise that a summary is
+  only ever the note's own sentences.
+- A note ending in a newline gave its last chunk an `endLine` one past the end,
+  so "open at line" and `get_note_context` landed just past the content.
+- A JSON-RPC request carrying an `id` that is not a valid id (`null`, a
+  boolean, an object, `NaN`) was treated as a notification and given no
+  response at all, leaving the client waiting forever.
+- A memory-root change did not reset the one-shot attachment-cache-clear flag,
+  so a stale extracted-attachment cache at the new root was never pruned.
+- A memory file that exists but cannot be read was treated as empty with no
+  log, indistinguishable from one that was never created.
+
 ### Changed
 
-- `ObsidianHttpClient` uses the shared `withTimeout` guard instead of its own
-  copy of the same `Promise.race` + timer. That guard exists precisely so the
-  pattern is not written out per call site, and this was the third copy; the
-  semantics are now covered by `withTimeout`'s own tests rather than being
-  duplicated and untested.
+- **The plugin no longer claims an embedding update it did not perform.** Every
+  failure in an embedding pass is non-fatal by design — retrieval degrades to
+  lexical — so they all reached the UI indistinguishable from success: a user
+  whose Ollama simply was not running was told "Embeddings updated" and could
+  only learn otherwise by opening devtools. A pass now reports its outcome and
+  the notice says what happened and what to check.
+- **Search distinguishes "nothing is indexed" from "nothing matched."** Nothing
+  indexes automatically on install, so an empty index is the expected first-run
+  state and the likeliest reason a new user sees no results.
+- The `search_vault_memory` description sent to the calling agent claimed
+  results are "de-duplicated so the same memory isn't returned twice".
+  Near-duplicate collapsing and per-note capping are opt-in and **off by
+  default**, so that promised something the default configuration does not do.
 - The **Discard** button in the review UI is styled as the destructive action
-  it is. Three identically-styled buttons made a mis-click indistinguishable
-  from intent, and a discard is permanent.
-- Clearing the edit box and clicking Apply used to do nothing at all, silently:
-  the modal could not tell an emptied field from a cancellation. It now says so.
+  it is, and clearing the edit box then clicking Apply no longer does nothing
+  in silence.
+- Shared helpers replace drifted duplicates: `normalizeFolder` and
+  `foldForCompare` in `utils/text.ts`, the sharding rules in `utils/sharding.ts`,
+  one `MEMORY_TYPES` list, and `ObsidianHttpClient` now uses the shared
+  `withTimeout` guard rather than a third copy of the same race.
 
 ### Tests
 
-634 → 664 across this section's review-loop passes. Every fix above is covered by a test confirmed to fail without it — with one exception found and repaired later in the cycle: the installer's "no sha256 tool" test originally passed vacuously, because the PATH it used also stopped `bash` from resolving.
+634 → 672. Every fix above is covered by a test confirmed to fail without it.
+Two of those tests were themselves found defective during the cycle and
+repaired — one passed vacuously because its `PATH` stopped `bash` from
+resolving, and one used a tautological predicate that exercised the wrong
+branch. Both are recorded here rather than quietly corrected.
 
-- New: `ObsidianVaultAdapter.write`'s temp-file → backup → rename dance, whose
-  whole purpose is that a failed write is never a destructive one, had **no
-  unit coverage** — it was reachable only from the e2e harness, which needs a
-  real Obsidian install and does not run in CI. Fault-injection tests now drive
-  the real adapter against a controllable fake `vault.adapter`; 3 of the 5 fail
-  against a naive delete-then-write. This needed a small `obsidian` alias in
-  the vitest config, because the real package ships types only and the file
-  cannot otherwise be loaded at all.
-- The sharded-index corruption tests asserted only that `load()` returned
-  `null` — detection, never recovery. They now rebuild and verify the affected
-  note comes back.
-- "re-embeds only the chunk whose text changed" asserted counts, which a bug
-  that re-embeds the *wrong* chunk would satisfy. It now pins which texts
-  reached the provider and that the untouched vectors are byte-identical.
+- `ObsidianVaultAdapter.write`'s temp-file → backup → rename dance, whose whole
+  purpose is that a failed write is never a destructive one, had **no unit
+  coverage** — it was reachable only from the e2e harness, which needs a real
+  Obsidian install and does not run in CI. Fault-injection tests now drive the
+  real adapter; 3 of the 5 fail against a naive delete-then-write.
+- The layering guard now detects a host/Node dependency in every form that
+  creates one — single- or double-quoted, `require()`, dynamic `import()`, and
+  a bare builtin — not just double-quoted `from "node:`.
+- Sharded-index corruption tests asserted only that `load()` returned `null`;
+  they now rebuild and verify the affected note comes back.
 
 ## [0.11.1] — 2026-08-24
 
@@ -1095,7 +1064,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.11.1...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.11.2...HEAD
+[0.11.2]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.2
 [0.11.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.1
 [0.11.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.0
 [0.10.7]: https://github.com/nfoav8or/coder-engram/releases/tag/0.10.7

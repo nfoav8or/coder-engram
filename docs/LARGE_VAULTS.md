@@ -167,9 +167,10 @@ here that alters scores.
 1. **0.11.0 (shipped)**: P2.1 shards + the yielding half of P2.3. The Worker itself
    slipped: it needs in-Obsidian verification, and yielding already caps the harm. It
    lands in whichever 0.11.x step first has that verification.
-2. **0.11.1 (shipped)**: no large-vault work — a hardening pass over the subsystems
-   P2.1 had not touched, which turned up two fail-open bugs in tag extraction. Listed
-   here only so the numbering below is not read as slipped scope.
+2. **0.11.1 and 0.11.2 (shipped)**: no large-vault work — hardening passes over the
+   subsystems P2.1 had not touched, which turned up several fail-open bugs in tag
+   extraction plus the re-embed-on-upgrade cost. Listed here only so the numbering
+   below is not read as slipped scope.
 3. **0.11.2**: P2.2 lazy text behind the chunk-handle accessor (the API-breaking one —
    isolated on purpose).
 4. **0.11.3**: P3.1 IVF behind the existing `Retriever` interface + P3.2 mode switch,
