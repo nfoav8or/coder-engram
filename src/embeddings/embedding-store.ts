@@ -112,6 +112,12 @@ function base64ByteLength(b64: string): number {
  * The base64 payload is validated by charset/length here (cheap, linear) and
  * by finiteness at decode time in `entriesMap`, which preserves the original
  * guarantee that a corrupt vector can never score as NaN and sort into results.
+ *
+ * `n` is checked as a format field, not as a trusted value: it is still part of
+ * the v2 shape and still written on persist, so a file missing it is not our
+ * format — but `entriesMap` recomputes the norm from the bytes rather than
+ * reading it back, so this check is not what keeps a desynced norm out of
+ * scoring. Removing it would loosen format validation, not tighten anything.
  */
 function isVectorMap(value: unknown): value is Record<string, StoredVector> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
