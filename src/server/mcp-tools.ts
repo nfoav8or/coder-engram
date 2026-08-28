@@ -248,8 +248,9 @@ const searchTool: Tool = {
     description:
       "Search the vault's memory index (BM25 lexical by default, or vector/hybrid " +
       "when an embedding provider is configured). Returns query-scoped chunks — note " +
-      "path, heading, line range, modified date, and a snippet — de-duplicated so " +
-      "the same memory isn't returned twice. Never returns whole notes or the full " +
+      "path, heading, line range, modified date, and a snippet. Near-duplicate " +
+      "collapsing and per-note capping are opt-in and off by default, so two chunks " +
+      "of the same passage can both appear. Never returns whole notes or the full " +
       "vault.",
     inputSchema: {
       type: "object",

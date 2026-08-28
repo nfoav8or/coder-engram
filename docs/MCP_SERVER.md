@@ -112,6 +112,13 @@ All enforced in code; see [SECURITY.md](SECURITY.md) for the full model.
   required (`415` otherwise), a **1 MB body cap** (`413`), and a **32-message
   cap on JSON-RPC batches** (`400`) so a single request can't monopolize the
   event loop.
+- **`id` presence is distinguished from `id` validity.** Per JSON-RPC 2.0 a
+  Notification is a request *without* an `id` member, and only those get no
+  response. A message carrying an `id` that is not a string or finite number
+  (`null`, a boolean, an object, `NaN`) is a malformed **request** and is
+  answered with `InvalidRequest` rather than silently dropped — collapsing the
+  two left such a client waiting forever for a reply the server had decided not
+  to send.
 - **Query-scoped only.** No arbitrary file access; the full vault is never
   returned wholesale.
 - **Inbox-first writes.** `add_memory` never overwrites and never writes

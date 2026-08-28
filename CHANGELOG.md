@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The `search_vault_memory` tool description sent to the calling agent claimed
+  results are "de-duplicated so the same memory isn't returned twice". Near-
+  duplicate collapsing and per-note capping are opt-in and **off by default**,
+  so that promised the agent something the default configuration does not do.
+  The description now says so.
+
 ### Fixed
 
 - **Hybrid search silently degraded to lexical after an index-version bump.**
@@ -133,7 +141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-634 → 645, and every fix above is covered by a test confirmed to fail without it.
+634 → 664 across this section's review-loop passes. Every fix above is covered by a test confirmed to fail without it — with one exception found and repaired later in the cycle: the installer's "no sha256 tool" test originally passed vacuously, because the PATH it used also stopped `bash` from resolving.
 
 - New: `ObsidianVaultAdapter.write`'s temp-file → backup → rename dance, whose
   whole purpose is that a failed write is never a destructive one, had **no

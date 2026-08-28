@@ -205,7 +205,7 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing unreleased — 0.11.1 has just been cut.
+- **Four review-loop passes have landed since the 0.11.1 tag and are not yet released.** See CHANGELOG's `Unreleased` section for the full list; the ones that matter most to an existing user are an `INDEX_VERSION`-bump that forced a paid re-embed of the whole vault, hybrid search silently degrading to lexical after that same bump, a settings change mid-pass silently discarding an entire reindex, an inbox dedup cache that could drop a genuinely new memory, a blank Excluded-folders entry that disabled indexing entirely, and `scripts/install.sh` installing unverified builds when its checksum manifest could not be fetched. Two further corrections to the frontmatter tag parser also landed — the first over-corrected into a fail-open, which is why there are two.
 
 **Next, in order**, per [LARGE_VAULTS.md](LARGE_VAULTS.md):
 

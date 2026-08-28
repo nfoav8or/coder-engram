@@ -69,11 +69,17 @@ PDF/docx attachment extraction through Obsidian's own engines. It complements
 the Vitest suite, which covers the pure core but never renders the Obsidian UI
 and never starts a real listener.
 
-It is also the **only** place `ObsidianVaultAdapter` and `ObsidianHttpClient`
-run at all: the `obsidian` package ships types with no runtime, so neither can
-be unit tested — the Vitest suite drives the pure interfaces through
-`InMemoryVaultAdapter` and `FakeHttpClient`, which means `requestUrl` and the
-temp-sibling write dance never execute there. The run therefore checks the
+It is the only place `ObsidianHttpClient` runs at all: the `obsidian` package
+ships types with no runtime, so `requestUrl` never executes under Vitest — the
+suite drives the pure interface through `FakeHttpClient`, and the timeout race
+it depends on is unit-tested where it lives, in `utils/timeout.ts`.
+`ObsidianVaultAdapter` is no longer in that category:
+`tests/obsidian-vault-adapter.test.ts` drives the REAL adapter under Vitest
+against a fake `app.vault.adapter` (via the `obsidian` alias in
+`vitest.config.ts` → `tests/stubs/obsidian.ts`), fault-injecting rename
+failures so the temp-sibling write dance is exercised directly. The e2e run
+complements that rather than being replaced by it — real Obsidian's
+`normalizePath` and actual crash timing still need a real host. The run therefore checks the
 things only a real adapter can get wrong: that a second inbox proposal appends
 rather than replacing the first, that an edit to an indexed note is picked up
 by an *incremental* refresh (which depends on real mtimes being reported), that
