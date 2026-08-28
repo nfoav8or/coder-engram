@@ -474,11 +474,17 @@ export class EmbeddingStore {
     // Normalized to an Error at capture time: a provider that rejects with a
     // non-Error (a string, a response object) would otherwise be rethrown as
     // that value, and every caller here treats a failure as an Error.
-    let failed: Error | null = null;
+    // Held in an array rather than a `let`, because the only writes happen
+    // inside the worker closure below. TypeScript's control-flow analysis does
+    // not track those, so a closure-assigned `let` still reads as its
+    // initialiser here — it typed the rethrow as a thrown `null`, i.e. the
+    // failure path looked unreachable to the checker. An array's element type
+    // is unconditional, so the rethrow is typed as the Error it is.
+    const failures: Error[] = [];
     const worker = async () => {
       // eslint-disable-next-line no-constant-condition -- take-next-batch pool
       while (true) {
-        if (failed !== null) return;
+        if (failures.length > 0) return;
         const index = cursor++;
         if (index >= batches.length) return;
         const batch = batches[index];
@@ -520,7 +526,11 @@ export class EmbeddingStore {
             (opts.logger ?? this.logger).info("Embedding checkpoint", { embedded, remaining: toEmbed.length - embedded });
           }
         } catch (err) {
-          if (failed === null) failed = err instanceof Error ? err : new Error(toMessage(err));
+          // Keep only the first failure: the others are usually the same
+          // cause, and the caller gets one actionable error.
+          if (failures.length === 0) {
+            failures.push(err instanceof Error ? err : new Error(toMessage(err)));
+          }
           return;
         }
       }
@@ -528,7 +538,7 @@ export class EmbeddingStore {
     await Promise.all(
       Array.from({ length: Math.min(concurrency, Math.max(1, batches.length)) }, () => worker()),
     );
-    if (failed !== null) throw failed;
+    if (failures.length > 0) throw failures[0];
 
     this.state = { version: EMBED_STORE_VERSION, model: identity, dim, vectors: nextVectors };
     this.decoded = null;

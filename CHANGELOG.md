@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The embedding worker pool's rethrow was typed as a thrown `null`, not a
+  thrown `Error`. The pool captures its first failure into a closure-assigned
+  variable, and TypeScript does not track writes made inside a closure — so at
+  the rethrow it still believed the variable held its initialiser, and
+  considered the failure path unreachable. Confirmed by making the compiler
+  print the resolved type; annotating the union did not help, because the
+  narrowing re-derives from the initialiser. The failure is now held in an
+  `Error[]`, whose element type is unconditional. Flagged by Obsidian's
+  automated review of 0.11.3 — a second, distinct instance of a rule whose
+  first instance was fixed in 0.11.0.
+
+### Changed
+
+- The plugin-review table in [docs/ROADMAP.md](docs/ROADMAP.md) now spells out,
+  for each finding deliberately left alone, exactly what the trade-off buys —
+  including every one of the nine timer call sites and why the three UI files
+  that *do* own a popout-capable timer correctly use `window.setTimeout` while
+  the rest do not. These findings recur in every review by design; the rows
+  exist so the decision is visible rather than re-derived each time.
+
 ## [0.11.3] — 2026-08-28
 
 Two more ways tag exclusion could fail open, **one of them a regression 0.11.2
