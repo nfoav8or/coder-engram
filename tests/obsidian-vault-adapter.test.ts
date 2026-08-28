@@ -98,12 +98,30 @@ describe("ObsidianVaultAdapter.write crash safety", () => {
     // Worst case: the rename into place fails AND putting the original back
     // fails too. Losing data is not an option, so both copies are kept and the
     // error says exactly where they are.
-    const { app, files } = makeApp({ failRename: (from) => from.includes(".engram-") === false || true });
+    //
+    // The predicate must fail ONLY the renames whose destination is the target
+    // — the into-place move and the restore-back — and must let the
+    // move-the-original-aside rename succeed. An earlier version of this test
+    // used `from.includes(".engram-") === false || true`, which is a tautology:
+    // it failed the very first rename instead, so this test exercised the same
+    // branch as the one below it and the dual-copy path had no coverage at all.
+    const { app, files } = makeApp({ failRename: (_from, to) => to === "Notes/a.md" });
     const adapter = new ObsidianVaultAdapter(app);
     // Seed the target directly so the first write's own rename isn't involved.
     files.set("Notes/a.md", "original");
 
-    await expect(adapter.write("Notes/a.md", "replacement")).rejects.toThrow();
+    await expect(adapter.write("Notes/a.md", "replacement")).rejects.toThrow(
+      /previous content is at.*new content is at/s,
+    );
+
+    // Neither copy may be discarded: the original is parked in the backup and
+    // the new content is parked in the temp file, and the error named both.
+    const backup = [...files.keys()].find((k) => k.includes(".engram-bak-"));
+    const tmp = [...files.keys()].find((k) => k.includes(".engram-tmp-"));
+    expect(backup, "the original must be preserved somewhere").toBeDefined();
+    expect(tmp, "the new content must be preserved somewhere").toBeDefined();
+    expect(files.get(backup!)).toBe("original");
+    expect(files.get(tmp!)).toBe("replacement");
   });
 
   it("cleans up the temp file when moving the old copy aside fails", async () => {
