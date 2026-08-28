@@ -61,6 +61,21 @@ export interface NoteSummary {
   truncated: boolean;
 }
 
+/**
+ * What an embedding pass actually did, so the caller can tell the user the
+ * truth. Every failure here is non-fatal by design (retrieval degrades to
+ * lexical), which previously meant they were all indistinguishable from
+ * success at the call site — the UI reported "Embeddings updated" even when
+ * the provider was unreachable and nothing was computed.
+ */
+export interface EmbedPassResult {
+  outcome: "embedded" | "no-provider" | "unavailable" | "failed" | "superseded";
+  embedded: number;
+  reused: number;
+  /** Provider id, or an error message — whatever makes the outcome actionable. */
+  detail?: string;
+}
+
 export interface AddMemoryInput {
   type: MemoryEntry["type"];
   content: string;
@@ -173,7 +188,7 @@ export class EngramEngine {
   private skippedAttachments = 0;
   /** Serializes embedding passes so overlapping reindex/refresh/sync can't
    * interleave (last-writer-wins persist / mid-pass index mutation). */
-  private embedChain: Promise<void> = Promise.resolve();
+  private embedChain: Promise<unknown> = Promise.resolve();
   /** Serializes reindex/refresh. `IndexManager.build`/`refresh` yield to the
    * event loop mid-pass, so two overlapping calls (auto-index debounce +
    * settings-triggered refresh + the `reindex_vault` tool) would otherwise
@@ -692,7 +707,7 @@ export class EngramEngine {
    * provider is unavailable or errors, we log and keep lexical retrieval — a
    * vector backend is never on the critical path.
    */
-  async embedIndex(): Promise<void> {
+  async embedIndex(): Promise<EmbedPassResult> {
     // Serialize passes: chain onto the previous one so two overlapping calls
     // (manual reindex + debounced refresh + settings-triggered sync) can never
     // interleave their snapshot/persist and clobber each other.
@@ -703,8 +718,8 @@ export class EngramEngine {
     return run;
   }
 
-  private async doEmbedIndex(): Promise<void> {
-    if (!this.embeddingProvider) return;
+  private async doEmbedIndex(): Promise<EmbedPassResult> {
+    if (!this.embeddingProvider) return { outcome: "no-provider", embedded: 0, reused: 0 };
     const provider = this.embeddingProvider;
     // Bind the index and store this pass belongs to, for the same reason
     // doReindex does: `updateSettings` runs off-chain and replaces both on a
@@ -721,7 +736,7 @@ export class EngramEngine {
         this.logger.warn("Embedding provider unavailable; retrieval stays lexical", {
           provider: provider.id,
         });
-        return;
+        return { outcome: "unavailable", embedded: 0, reused: 0, detail: provider.id };
       }
       // Snapshot the ARRAY so a concurrent index swap can't shift it mid-pass,
       // but keep the chunk objects themselves: the store memoizes content
@@ -738,7 +753,9 @@ export class EngramEngine {
       // root this pass ran against. Otherwise the NEW root would be recorded
       // as up to date on the strength of the old root's work, and no later
       // refresh would re-run the pass for it.
-      if (this.index !== index || this.embeddingStore !== store) return;
+      if (this.index !== index || this.embeddingStore !== store) {
+        return { outcome: "superseded", embedded: pass.embedded, reused: pass.reused };
+      }
       this.lastEmbeddedIdentity = identity;
       // Rebuild only when the pass changed vectors: the retriever snapshots the
       // vector map at build time, so an unchanged map needs no rebuild — and a
@@ -747,10 +764,12 @@ export class EngramEngine {
       if (pass.embedded > 0 || pass.removed > 0) {
         this.retriever = this.buildRetriever();
       }
+      return { outcome: "embedded", embedded: pass.embedded, reused: pass.reused };
     } catch (err) {
       this.logger.warn("Embedding pass failed; retrieval stays lexical", {
         error: toMessage(err),
       });
+      return { outcome: "failed", embedded: 0, reused: 0, detail: toMessage(err) };
     }
   }
 
@@ -758,8 +777,8 @@ export class EngramEngine {
    * Called by the host after a settings change: ensure vectors exist for the
    * current provider. A no-op when no provider is configured.
    */
-  async syncEmbeddings(): Promise<void> {
-    await this.embedIndex();
+  async syncEmbeddings(): Promise<EmbedPassResult> {
+    return this.embedIndex();
   }
 
   /** The retrieval mode actually serving results (lexical when no provider). */

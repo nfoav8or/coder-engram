@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **A tag in a truncated frontmatter block was lost when a YAML comment came
+  before the first key.** The bound added in the previous pass only let a
+  comment continue the block once a real `key: value` had been seen, so a file
+  opening `---` then `# TODO fill metadata` then `tags: private` extracted
+  nothing — the fail-open direction, which leaks an excluded note to the agent.
+  A comment is never body prose wherever it sits; only indentation is genuinely
+  ambiguous before a key, so only that still requires one. This is the third
+  correction to the same bound, and each earlier one over-corrected in the
+  opposite direction.
+- **A UTF-8 byte-order mark hid a note's entire frontmatter block**, including
+  a `tags:` entry that may have been its only exclusion marker — so a note the
+  user had excluded was indexed and served over the local server. A BOM is
+  invisible but is a real character at offset 0, so `^---` never matched; the
+  same miss cost the note its first heading (`^#`). Windows editors, PowerShell
+  redirection and several export tools emit one routinely. `INDEX_VERSION` is
+  raised to 5 to evict the affected notes, since a parser fix alone only
+  changes what happens the next time a note is re-read. That rebuild re-chunks
+  but does **not** re-embed.
+
+### Changed
+
+- **The plugin no longer claims an embedding update it did not perform.** Every
+  failure in an embedding pass is non-fatal by design — retrieval degrades to
+  lexical — which meant they all reached the UI indistinguishable from success:
+  a user whose Ollama simply was not running was told "Embeddings updated" and
+  could only learn otherwise by opening devtools. A pass now reports its
+  outcome, and the notice says what actually happened and what to check.
+- **Search distinguishes "nothing is indexed" from "nothing matched."** Both
+  showed the same sentence, and since nothing indexes automatically on install,
+  an empty index is the expected state on a first run — making it the most
+  likely reason a new user sees no results.
+
 ### Changed
 
 - The `search_vault_memory` tool description sent to the calling agent claimed

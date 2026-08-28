@@ -40,7 +40,21 @@ import { Logger, NULL_LOGGER } from "../utils/logger";
 // evicts the notes that should never have been indexed. It also corrects the
 // last chunk's `endLine` on any note ending in a newline, which is a chunk
 // boundary change and would qualify on its own.
-export const INDEX_VERSION = 4;
+//
+// Raised to 5 for the third instance of the same class, in the same parser: a
+// leading UTF-8 byte-order mark is invisible but is a real character at offset
+// 0, so `^---` did not match and the ENTIRE frontmatter block was skipped —
+// including a `tags:` entry that was the note's only exclusion marker. It cost
+// the first heading the same way (`^#` missed), which is a chunk-boundary
+// change and would qualify on its own. Windows editors, PowerShell redirection
+// and some export tools all emit one. As before, the bump is what actually
+// evicts the notes that should never have been indexed; the fix alone only
+// changes what happens the next time a note is re-read.
+//
+// The cost of a bump is lower than it used to be: since the vector cache is
+// now loaded regardless of whether the chunk index loaded, a forced rebuild
+// re-chunks but does NOT re-embed.
+export const INDEX_VERSION = 5;
 
 export interface IndexedChunk {
   id: string;

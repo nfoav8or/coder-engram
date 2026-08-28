@@ -38,3 +38,20 @@ export function normalizeFolder(folder: string): string {
     .filter((segment) => segment !== "" && segment !== ".")
     .join("/");
 }
+
+/**
+ * Strip a leading UTF-8 byte-order mark.
+ *
+ * A BOM is invisible but it is a real character at offset 0, so every
+ * start-anchored pattern misses on the first line: `^---` did not match, and
+ * the whole frontmatter block — including a `tags:` entry — was skipped, which
+ * makes it a privacy fail-open (an excluded note gets indexed and served). It
+ * cost the first heading too, since `^#` missed the same way. Windows editors,
+ * PowerShell redirection and some export tools all emit one.
+ *
+ * Removing it shifts no LINE index: the BOM lives inside line 0, so chunk line
+ * spans are unaffected.
+ */
+export function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}

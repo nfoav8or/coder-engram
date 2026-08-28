@@ -106,6 +106,75 @@ describe("vectors loaded without a chunk index still reach the retriever", () =>
   });
 });
 
+describe("an embedding pass reports what actually happened", () => {
+  // Every failure here is non-fatal by design (retrieval degrades to lexical),
+  // which used to make them indistinguishable from success at the call site:
+  // the UI said "Embeddings updated" even when the provider was unreachable
+  // and nothing had been computed. The outcome is now part of the contract.
+  const endpoint = "http://127.0.0.1:11434";
+  const ollama = (): EngramSettings => ({
+    ...DEFAULT_SETTINGS,
+    embeddingProvider: "ollama",
+    embeddingModel: "nomic",
+    embeddingEndpoint: endpoint,
+  });
+
+  it("reports `unavailable` when the provider does not answer its liveness check", async () => {
+    const http = new FakeHttpClient().on(
+      () => true,
+      (r) => (r.url.endsWith("/api/tags") ? { status: 500, body: "" } : { status: 200, body: "{}" }),
+    );
+    const adapter = new InMemoryVaultAdapter("v", { ...SEED });
+    let t = 10_000;
+    const engine = new EngramEngine(adapter, ollama(), NULL_LOGGER, () => t++, { http });
+    await engine.reindex();
+    const pass = await engine.syncEmbeddings();
+    expect(pass.outcome).toBe("unavailable");
+    expect(pass.embedded).toBe(0);
+  });
+
+  it("reports `failed` when the embed call itself throws", async () => {
+    const http = new FakeHttpClient().on(
+      () => true,
+      (r) => {
+        if (r.url.endsWith("/api/tags")) return { status: 200, body: "{}" };
+        throw new Error("connection reset");
+      },
+    );
+    const adapter = new InMemoryVaultAdapter("v", { ...SEED });
+    let t = 10_000;
+    const engine = new EngramEngine(adapter, ollama(), NULL_LOGGER, () => t++, { http });
+    await engine.reindex();
+    const pass = await engine.syncEmbeddings();
+    expect(pass.outcome).toBe("failed");
+    expect(pass.detail ?? "").toMatch(/connection reset/);
+  });
+
+  it("reports `embedded` with counts on a healthy pass", async () => {
+    const adapter = new InMemoryVaultAdapter("v", { ...SEED });
+    let t = 10_000;
+    const engine = new EngramEngine(
+      adapter,
+      { ...DEFAULT_SETTINGS, embeddingProvider: "mock" },
+      NULL_LOGGER,
+      () => t++,
+    );
+    await engine.reindex();
+    const pass = await engine.syncEmbeddings();
+    expect(pass.outcome).toBe("embedded");
+    // The reindex already embedded everything, so a follow-up pass reuses.
+    expect(pass.embedded + pass.reused).toBeGreaterThan(0);
+  });
+
+  it("reports `no-provider` rather than pretending to have run", async () => {
+    const adapter = new InMemoryVaultAdapter("v", { ...SEED });
+    let t = 10_000;
+    const engine = new EngramEngine(adapter, { ...DEFAULT_SETTINGS }, NULL_LOGGER, () => t++);
+    await engine.reindex();
+    expect((await engine.syncEmbeddings()).outcome).toBe("no-provider");
+  });
+});
+
 describe("EngramEngine M3 embeddings integration", () => {
   it("reports lexical mode with the 'none' provider", () => {
     const { engine } = makeEngine({ ...DEFAULT_SETTINGS, embeddingProvider: "none" });

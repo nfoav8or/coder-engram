@@ -7,6 +7,8 @@
  * malformed frontmatter is ignored rather than throwing.
  */
 
+import { stripBom } from "../utils/text";
+
 export interface NoteMetadata {
   tags: string[];
   aliases: string[];
@@ -135,7 +137,18 @@ function parseFrontmatter(lines: string[]): Frontmatter {
       // that merely opens with `---`, a blank, and an indented paragraph run on
       // and swallow a later `title:`/`tags:` line out of its own body prose.
       const blank = line.trim() === "";
-      const continuesBlock = blank || (sawKey && (/^\s/.test(line) || /^\s*#/.test(line)));
+      // A comment never ends the block, wherever it sits: `# ...` is not body
+      // prose, and gating it on `sawKey` lost the tags outright when the
+      // comment was the FIRST line after the fence — the fail-open direction.
+      // Indentation is the genuinely ambiguous one, so it still requires a real
+      // key to have established that the block is YAML at all.
+      //
+      // The residual cost is over-exclusion in one narrow shape: a document
+      // opening with `---` as a horizontal rule, then a markdown H1, then a
+      // `key: value`-looking line, adopts that line as metadata. Over-excluding
+      // is the safe direction here; under-excluding leaks a note to the agent.
+      const comment = /^\s*#/.test(line);
+      const continuesBlock = blank || comment || (sawKey && /^\s/.test(line));
       if (unterminated && !continuesBlock) break;
       currentListKey = null;
       continue;
@@ -286,7 +299,7 @@ function stripFencedCode(body: string): string {
 }
 
 export function extractMetadata(content: string): NoteMetadata {
-  const lines = content.split(/\r?\n/);
+  const lines = stripBom(content).split(/\r?\n/);
   const fm = parseFrontmatter(lines);
   const body = lines.slice(fm.bodyStartLine).join("\n");
   const prose = stripFencedCode(body);

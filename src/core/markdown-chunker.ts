@@ -10,6 +10,8 @@
  * heading, so we don't split code.
  */
 
+import { stripBom } from "../utils/text";
+
 export interface Chunk {
   /** Nearest heading text for this chunk ("" for preamble before any heading). */
   heading: string;
@@ -308,7 +310,7 @@ export function chunkMarkdown(content: string, options: ChunkOptions = {}): Chun
   const overlapChars = options.overlapChars ?? DEFAULTS.overlapChars;
   const bodyStartLine = options.bodyStartLine ?? 0;
 
-  const lines = content.split(/\r?\n/);
+  const lines = stripBom(content).split(/\r?\n/);
   // A file ending in a newline splits to a phantom trailing "" that is not a
   // real line. The windowed path already trims it, but a section that fits in
   // one chunk (the common case for ordinary notes) returns its span straight

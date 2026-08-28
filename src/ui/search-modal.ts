@@ -78,8 +78,17 @@ export class SearchModal extends Modal {
     if (seq !== this.searchSeq) return; // a newer search superseded this one
     this.resultsEl.empty(); // clear anything an interleaved run left behind
     if (results.length === 0) {
+      // "Nothing is indexed" and "nothing matched" are completely different
+      // problems with completely different fixes, and they used to render the
+      // same sentence. Nothing indexes automatically on install, so an empty
+      // index is the expected state on a first run — the single most likely
+      // reason a new user sees no results.
+      const indexed = this.engine.getIndexStats().noteCount;
       this.resultsEl.createEl("p", {
-        text: "No results. Try reindexing the vault, or a different query.",
+        text:
+          indexed === 0
+            ? "Nothing is indexed yet. Run \"Reindex vault\" from the command palette or the control panel, then search again."
+            : `No results for that query (${indexed} notes indexed). Try different terms.`,
         cls: "engram-stat-row",
       });
       return;

@@ -160,6 +160,32 @@ describe("extractMetadata", () => {
     expect(meta.tags).toEqual([]);
   });
 
+  describe("a UTF-8 BOM must not hide frontmatter", () => {
+    // A BOM is invisible but is a real character at offset 0, so every
+    // start-anchored pattern missed on line 1: `^---` did not match and the
+    // WHOLE frontmatter block was skipped. When a note's only exclusion marker
+    // is a frontmatter `tags:` entry, that is a fail-open — the note is indexed
+    // and served despite being excluded. Windows editors, PowerShell
+    // redirection and some export tools all emit one.
+    const BOM = "\uFEFF";
+    const doc = "---\ntags: [secret]\naliases: [Alias]\ntitle: T\n---\n# Head\nbody";
+
+    it("finds frontmatter tags behind a BOM", () => {
+      expect(extractMetadata(BOM + doc).tags).toContain("secret");
+    });
+
+    it("matches the same note without a BOM, field for field", () => {
+      const plain = extractMetadata(doc);
+      const bommed = extractMetadata(BOM + doc);
+      expect(bommed.tags).toEqual(plain.tags);
+      expect(bommed.aliases).toEqual(plain.aliases);
+      expect(bommed.title).toEqual(plain.title);
+      // Stripping the BOM must not shift any LINE index — it lives inside
+      // line 0, so chunk line spans stay correct.
+      expect(bommed.bodyStartLine).toBe(plain.bodyStartLine);
+    });
+  });
+
   it("does not read a whole document as YAML when `---` opens a horizontal rule", () => {
     // Scanning to EOF for an unterminated block must stop at the first line
     // that is not frontmatter-shaped. Otherwise a note that merely opens with
@@ -179,6 +205,9 @@ describe("extractMetadata", () => {
     // is the direction that leaks a note to the agent, so these matter more.
     const cases: [string, string][] = [
       ["a YAML comment", "---\ntitle: Foo\n# a yaml comment\ntags: private\nBody."],
+      // A comment BEFORE any key is the case the sawKey gate originally broke:
+      // it ended the scan before `tags:` was ever reached, losing the tag.
+      ["a comment before any key", "---\n# TODO fill metadata\ntags: private\nBody."],
       ["an indented nested key", "---\ntitle: Foo\n  nested: value\ntags: private\nBody."],
       ["a bare list item under a key", "---\ntags:\n  - private\ntitle: Foo\nBody."],
       ["a blank line", "---\ntitle: Foo\n\ntags: private\nBody."],

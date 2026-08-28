@@ -159,11 +159,35 @@ export default class EngramPlugin
     if (this.settings.embeddingProvider === "none") return;
     try {
       new Notice("Coder Engram: updating embeddings…");
-      await this.engine.syncEmbeddings();
-      new Notice(`Embeddings updated. Retrieval mode: ${this.engine.getRetrievalMode()}.`);
+      const pass = await this.engine.syncEmbeddings();
       this.refreshControlPanel();
+      // Report what actually happened. Every failure in an embedding pass is
+      // non-fatal by design (retrieval degrades to lexical), which meant they
+      // all used to arrive here indistinguishable from success — so a user
+      // whose Ollama simply was not running was told "Embeddings updated" and
+      // had no way to learn otherwise short of opening devtools.
+      switch (pass.outcome) {
+        case "unavailable":
+          new Notice(
+            `Embedding provider "${pass.detail}" is not reachable — search stays lexical. ` +
+              "Check that it is running and that the endpoint and model are right in settings.",
+          );
+          break;
+        case "failed":
+          new Notice(`Embedding pass failed — search stays lexical. ${pass.detail ?? ""}`.trim());
+          break;
+        case "no-provider":
+        case "superseded":
+          break; // nothing the user needs to act on
+        default:
+          new Notice(
+            `Embeddings updated (${pass.embedded} new, ${pass.reused} reused). ` +
+              `Retrieval mode: ${this.engine.getRetrievalMode()}.`,
+          );
+      }
     } catch (err) {
       this.logger.warn("Embedding sync failed", { error: toMessage(err) });
+      new Notice(`Embedding sync failed — search stays lexical. ${toMessage(err)}`);
     }
   }
 

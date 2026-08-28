@@ -154,6 +154,18 @@ describe("chunkMarkdown", () => {
     expect(chunks.map((c) => c.heading)).toEqual(["Body"]);
   });
 
+  it("finds the first heading behind a UTF-8 BOM", () => {
+    // Same root cause as the frontmatter case: `^#` missed on line 1, so the
+    // note's first heading was lost and its chunk had an empty breadcrumb.
+    const withBom = chunkMarkdown("\uFEFF# Title\nbody text here");
+    const plain = chunkMarkdown("# Title\nbody text here");
+    expect(withBom.map((c) => c.heading)).toEqual(["Title"]);
+    // And no line index shifts.
+    expect(withBom.map((c) => [c.startLine, c.endLine])).toEqual(
+      plain.map((c) => [c.startLine, c.endLine]),
+    );
+  });
+
   describe("a trailing newline does not extend the last chunk's span", () => {
     // `split(/\r?\n/)` yields a phantom "" for a file ending in a newline —
     // which is how files normally end. A section small enough to fit one chunk
