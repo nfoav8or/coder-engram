@@ -39,14 +39,19 @@ export class VectorRetriever implements Retriever {
 
     const queryTerms = Array.from(new Set(tokenize(query.query)));
     // Same math as cosineSimilarity with both norms hoisted: the query's is
-    // computed once per call, each stored vector's was computed at embed time
-    // and travels with the vector — the per-candidate work is the dot product.
+    // computed once per call, each stored vector's is computed once per decode
+    // in `EmbeddingStore.entriesMap` — the per-candidate work is the dot
+    // product.
+    //
+    // Both norm guards are `> 0` rather than `!== 0` so a NaN norm exits here
+    // too. A NaN score does not survive `score <= 0` (every comparison against
+    // NaN is false), so it would sort into results at an arbitrary rank.
     const qNorm = vectorNorm(qv);
-    if (qNorm === 0) return [];
+    if (!(qNorm > 0)) return [];
     const scored: Array<{ chunk: IndexedChunk; score: number }> = [];
     for (const chunk of filtered) {
       const entry = this.options.vectors.get(chunk.id);
-      if (!entry || entry.vec.length !== qv.length || entry.norm === 0) continue;
+      if (!entry || entry.vec.length !== qv.length || !(entry.norm > 0)) continue;
       const vec = entry.vec;
       let dot = 0;
       for (let i = 0; i < qv.length; i++) dot += qv[i] * vec[i];

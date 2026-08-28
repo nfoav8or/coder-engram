@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A summary could come back **empty, with no error**, if any sentence vector
+  held a non-finite component. One `NaN` poisons the shared centroid, so every
+  cosine is `NaN`, so MMR's `val > bestVal` is false on the very first pick and
+  selection stops having chosen zero sentences — while still reporting
+  `method: "embedding"`. `extractiveSummary` now uses the embedding backend only
+  when handed one non-empty, all-finite, uniform-width row per unit, and falls
+  back to lexical otherwise. The shipped providers cannot produce such a vector
+  (`parseVectorMatrix` rejects non-finite cells and ragged rows before they
+  leave the HTTP layer), and a probe through the real engine confirmed the
+  existing path already degrades correctly; this makes the guarantee a property
+  of the summarizer rather than of whichever caller supplied the vectors — the
+  same check `EmbeddingStore.entriesMap` already performs for retrieval.
+- The stored vector norm in `embeddings.json` was read back and used as-is.
+  `n` is a cache of a value derived from `v`, and nothing on the load path could
+  prove the pair was still in sync — `embeddings.json` lives in the vault, where
+  a sync conflict can merge one field and not the other. A norm smaller than the
+  true one inflates that entry's cosine past 1, and no downstream filter rejects
+  a score above 1, so a single corrupt entry would outrank every honest match.
+  `entriesMap` now recomputes the norm from the decoded bytes, at the cost of one
+  multiply-add per component inside the finiteness loop that already walks every
+  component, memoized with the decoded map. The on-disk format is unchanged.
+- `VectorRetriever`'s two norm guards were `=== 0`, which a `NaN` norm passes.
+  A `NaN` score then survives the `score <= 0` filter (every comparison against
+  `NaN` is false) and sorts into results at an arbitrary rank. Both guards are
+  now `> 0`. Not reachable through `entriesMap`, which filters non-finite
+  vectors — this is the retriever holding its own invariant rather than
+  inheriting it from its caller.
 - The embedding worker pool's rethrow was typed as a thrown `null`, not a
   thrown `Error`. The pool captures its first failure into a closure-assigned
   variable, and TypeScript does not track writes made inside a closure — so at

@@ -124,6 +124,30 @@ describe("extractiveSummary", () => {
     expect(summary.sentences).toEqual(summary.indices.map((i) => units[i]));
   });
 
+  it("falls back to lexical rather than returning nothing when a vector is unusable", () => {
+    // A single non-finite component poisons the shared centroid, so every
+    // cosine is NaN, so MMR's `val > bestVal` is false on the first pick and
+    // selection stops having chosen zero sentences — while still reporting
+    // `method: "embedding"`. An empty summary with no error is the worst
+    // possible answer here, so the vectors are checked before they are used.
+    const units = ["one alpha", "two beta", "three gamma"];
+    const poisoned = [
+      [1, 0, 0],
+      [0, Number.NaN, 0],
+      [0, 0, 1],
+    ];
+    const summary = extractiveSummary({ units, maxSentences: 2, vectors: poisoned });
+    expect(summary.method).toBe("lexical");
+    expect(summary.sentences.length).toBe(2);
+
+    // Ragged rows are equally unusable: `scoreByCentroid` sizes the centroid
+    // from the first row, so a shorter one silently scores against padding.
+    const ragged = [[1, 0, 0], [0, 1], [0, 0, 1]];
+    const raggedSummary = extractiveSummary({ units, maxSentences: 2, vectors: ragged });
+    expect(raggedSummary.method).toBe("lexical");
+    expect(raggedSummary.sentences.length).toBe(2);
+  });
+
   it("falls back to lexical without aligned vectors and returns all units when maxSentences exceeds count", () => {
     const units = ["first thing", "second thing", "third thing"];
     const summary = extractiveSummary({ units, maxSentences: 10 });

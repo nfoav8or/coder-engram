@@ -87,6 +87,20 @@ describe("VectorRetriever", () => {
     expect(results[0].chunk.id).toBe("c");
   });
 
+  it("returns nothing rather than a NaN ranking when a norm is not a positive number", () => {
+    // A NaN score is not filtered by `score <= 0` — every comparison against
+    // NaN is false — so it would sort into results at an arbitrary rank. Both
+    // norm guards are `> 0` rather than `!== 0` so NaN exits at the guard.
+    const r = new VectorRetriever({ vectors });
+    expect(r.retrieve({ query: "x", queryVector: [Number.NaN, 0, 0] }, corpus)).toEqual([]);
+
+    const poisoned = new Map(vectors);
+    poisoned.set("a", { vec: new Float32Array([1, 0, 0]), norm: Number.NaN });
+    const withPoison = new VectorRetriever({ vectors: poisoned });
+    const results = withPoison.retrieve({ query: "alpha", queryVector: [1, 0, 0] }, corpus);
+    expect(results.some((res) => res.chunk.id === "a")).toBe(false);
+  });
+
   it("honors the limit", () => {
     const r = new VectorRetriever({ vectors });
     const results = r.retrieve({ query: "x", queryVector: [1, 1, 1], limit: 1 }, corpus);

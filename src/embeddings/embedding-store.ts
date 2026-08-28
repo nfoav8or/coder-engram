@@ -352,7 +352,9 @@ export class EmbeddingStore {
    * unchanged store decode the corpus once. An entry whose bytes decode to the
    * wrong dimensionality or to non-finite components is dropped (with a log),
    * never served — a NaN score survives the retriever's `score <= 0` filter and
-   * would sort into results at an arbitrary rank.
+   * would sort into results at an arbitrary rank. The norm is recomputed from
+   * those same bytes rather than read from the file, so a desynced norm cannot
+   * inflate an entry's cosine past 1.
    */
   entriesMap(): Map<string, VectorEntry> {
     if (!this.state) return new Map();
@@ -366,17 +368,27 @@ export class EmbeddingStore {
         continue;
       }
       let finite = true;
+      let sumSquares = 0;
       for (let i = 0; i < vec.length; i++) {
-        if (!Number.isFinite(vec[i])) {
+        const component = vec[i];
+        if (!Number.isFinite(component)) {
           finite = false;
           break;
         }
+        sumSquares += component * component;
       }
       if (!finite) {
         dropped++;
         continue;
       }
-      map.set(id, { vec, norm: sv.n });
+      // The norm is RECOMPUTED, not read from `sv.n`. The stored norm is a
+      // cache of a value derived from bytes we are already walking, and
+      // nothing on the load path can prove the pair is still in sync: a norm
+      // smaller than the true one inflates every cosine for that entry past 1,
+      // which no downstream filter rejects, so it outranks honest matches.
+      // Deriving it here costs one multiply-add per component in a loop that
+      // already runs, and the result is memoized with the decoded map.
+      map.set(id, { vec, norm: Math.sqrt(sumSquares) });
     }
     if (dropped > 0) {
       this.logger.warn("Dropped corrupt embedding entries", { dropped });

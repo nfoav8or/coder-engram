@@ -370,6 +370,31 @@ describe("EmbeddingStore v2 format", () => {
     }
   });
 
+  it("recomputes the norm instead of trusting the one on disk", async () => {
+    // `n` is a cache of a value derived from `v`, and nothing on the load path
+    // can prove the pair is still in sync — `embeddings.json` lives in the
+    // vault, where a sync conflict can merge one field and not the other. A
+    // norm smaller than the true one inflates that entry's cosine past 1, and
+    // no downstream filter rejects a score above 1, so the corrupt entry
+    // outranks every honest match.
+    const adapter = new InMemoryVaultAdapter("v");
+    await adapter.write(
+      FILE,
+      JSON.stringify({
+        version: 2,
+        model: "mock:m",
+        dim: 3,
+        // True norm is 1; the file claims 0.2, which would scale scores by 5.
+        vectors: { c0: { h: "abc", n: 0.2, v: b64([1, 0, 0]) } },
+      }),
+    );
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    const entry = store.entriesMap().get("c0");
+    expect(entry).toBeDefined();
+    expect(entry!.norm).toBeCloseTo(1, 6);
+  });
+
   it("drops entries whose bytes decode to the wrong width or to non-finite floats", async () => {
     const adapter = new InMemoryVaultAdapter("v");
     await adapter.write(

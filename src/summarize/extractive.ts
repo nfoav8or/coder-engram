@@ -207,8 +207,31 @@ export function selectSentences(
 }
 
 /**
+ * True if `vectors` can actually be scored: one non-empty, all-finite row per
+ * unit, every row the same width.
+ *
+ * A single non-finite component is not a degraded summary, it is an EMPTY one:
+ * it poisons the shared centroid, so every cosine is `NaN`, so MMR's
+ * `val > bestVal` is false on the first pick and selection stops with zero
+ * sentences — while still reporting `method: "embedding"`. Silent and total.
+ *
+ * The shipped providers can't produce that (`parseVectorMatrix` rejects
+ * non-finite cells and ragged rows before they leave the HTTP layer), and
+ * `EmbeddingStore.entriesMap` re-checks finiteness for the retrieval path. This
+ * is the same check for the summarize path, so the guarantee doesn't depend on
+ * which caller supplied the vectors.
+ */
+function usableVectors(vectors: number[][], units: number): boolean {
+  if (vectors.length !== units || units === 0) return false;
+  const dim = vectors[0].length;
+  if (dim === 0) return false;
+  return vectors.every((v) => v.length === dim && v.every((x) => Number.isFinite(x)));
+}
+
+/**
  * Produce an extractive summary from pre-split units. Uses the embedding
- * backend when aligned per-unit `vectors` are supplied; otherwise lexical.
+ * backend when aligned, usable per-unit `vectors` are supplied; otherwise
+ * lexical.
  */
 export function extractiveSummary(input: {
   units: string[];
@@ -216,7 +239,7 @@ export function extractiveSummary(input: {
   vectors?: number[][];
 }): ExtractiveSummary {
   const { units, maxSentences } = input;
-  const useEmbedding = !!input.vectors && input.vectors.length === units.length && units.length > 0;
+  const useEmbedding = !!input.vectors && usableVectors(input.vectors, units.length);
   const method: SummaryMethod = useEmbedding ? "embedding" : "lexical";
   const scores = useEmbedding ? scoreByCentroid(input.vectors!) : scoreLexical(units);
   const indices = selectSentences(units, scores, maxSentences, {
