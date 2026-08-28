@@ -4,7 +4,7 @@
 
 import { IndexedChunk } from "../indexing/index-manager";
 import { RetrievalFilters } from "./retriever";
-import { foldForCompare } from "../utils/text";
+import { foldForCompare, normalizeFolder } from "../utils/text";
 
 const STOPWORDS = new Set([
   "the", "a", "an", "and", "or", "of", "to", "in", "is", "are", "was", "were",
@@ -55,10 +55,6 @@ export function tokenizeChunk(chunk: IndexedChunk): string[] {
     chunkTokenCache.set(chunk, tokens);
   }
   return tokens;
-}
-
-function normalizeFolder(folder: string): string {
-  return folder.trim().replace(/^\/+|\/+$/g, "");
 }
 
 /**

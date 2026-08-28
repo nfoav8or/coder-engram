@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A blank entry in Excluded folders silently excluded the entire vault.** An
+  empty folder key matches every path, and the exclusion list — unlike the
+  inclusion list — did not drop blanks, so `excludedFolders: [""]` indexed
+  nothing at all with no error to say why. The settings tab already trimmed on
+  the way in, but a hand-edited `data.json` or a restored settings backup took
+  a path that did not. Blanks are now dropped both in settings migration and in
+  the scanner.
+- **A `folder` search filter and an Excluded folders entry did not normalize
+  the same way.** Two separate normalizers had drifted: the scanner dropped
+  empty and `.` segments, the search filter only stripped leading and trailing
+  slashes. So `./Notes` correctly excluded a folder but matched nothing as a
+  filter — zero results, indistinguishable from "nothing matched", the same
+  silent-failure shape as comparing without folding case. Both now share
+  `normalizeFolder` in `utils/text.ts`.
+- A memory file that exists but cannot be read (permissions, disk error, a
+  corrupt file) was treated as empty with no log, making it indistinguishable
+  from a file that was never created. It now warns and still degrades
+  gracefully.
+
+### Fixed
+
 - **An index-version bump forced a full re-embed of the vault.** The vector
   cache was loaded only when the chunk index loaded successfully, so any
   `INDEX_VERSION` mismatch — which 0.11.1's bump to 4 causes for every existing

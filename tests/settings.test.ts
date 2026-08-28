@@ -64,6 +64,23 @@ describe("migrateSettings", () => {
     expect(migrateSettings({ embeddingProvider: "evil" }).embeddingProvider).toBe("none");
   });
 
+  it("drops blank and whitespace-only entries from list settings", () => {
+    // A blank folder is not an empty filter: an empty folder key matches every
+    // path, so `excludedFolders: [""]` excluded the entire vault. The settings
+    // tab already trims on the way in; this is the path a hand-edited
+    // data.json or a restored backup takes.
+    const migrated = migrateSettings({
+      excludedFolders: ["", "  ", "Private"],
+      includedFolders: ["\t"],
+      excludedTags: ["", "secret"],
+      excludedPathPatterns: ["   "],
+    });
+    expect(migrated.excludedFolders).toEqual(["Private"]);
+    expect(migrated.includedFolders).toEqual([]);
+    expect(migrated.excludedTags).toEqual(["secret"]);
+    expect(migrated.excludedPathPatterns).toEqual([]);
+  });
+
   it("ignores non-array list fields", () => {
     expect(migrateSettings({ excludedFolders: "not-an-array" }).excludedFolders).toEqual([]);
   });

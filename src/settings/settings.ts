@@ -250,7 +250,17 @@ export function migrateSettings(raw: unknown): EngramSettings {
 
 function asStringArray(value: unknown, fallback: string[]): string[] {
   if (!Array.isArray(value)) return [...fallback];
-  return value.filter((v): v is string => typeof v === "string");
+  // Trim and drop blanks, matching what the settings tab's `parseList` already
+  // does on the way in. These lists are scan filters, and a blank entry is not
+  // an empty filter — `isUnderFolderFolded` treats an empty folder as matching
+  // EVERY path, so a single `""` in excludedFolders excluded the whole vault
+  // and indexed nothing, with no error to say why. The UI can no longer
+  // produce one, but a hand-edited data.json or a restored settings backup
+  // can, and this is the path those take.
+  return value
+    .filter((v): v is string => typeof v === "string")
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0);
 }
 
 /** Coerce a persisted value to a strict boolean; non-booleans fall back safely. */

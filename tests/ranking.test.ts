@@ -91,6 +91,19 @@ describe("applyFilters", () => {
     expect(applyFilters([chunk], { folder: nfd })).toHaveLength(1);
   });
 
+  it("normalizes a folder filter the same way the vault scanner does", () => {
+    // The two paths had separate normalizers with different rules: the scanner
+    // dropped empty and "." segments, the search filter only stripped leading
+    // and trailing slashes. So "./Notes" correctly excluded a folder but
+    // matched nothing as a filter — zero results, indistinguishable from
+    // "nothing matched". Both now share one normalizer.
+    const chunk = makeChunk({ id: "d", notePath: "Notes/Sub/a.md" });
+    for (const folder of ["./Notes", "/Notes/", "//Notes//Sub", "Notes//Sub", "Notes"]) {
+      expect(applyFilters([chunk], { folder }), `folder ${JSON.stringify(folder)}`).toHaveLength(1);
+    }
+    expect(applyFilters([chunk], { folder: "Other" })).toHaveLength(0);
+  });
+
   it("matches a tag filter across case and normalization form", () => {
     const chunk = makeChunk({ id: "c", notePath: "Notes/c.md", tags: ["Café"] });
     expect(applyFilters([chunk], { tag: "café" })).toHaveLength(1);

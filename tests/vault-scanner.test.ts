@@ -28,6 +28,26 @@ describe("excludedPathPatterns matching (via isPathEligible)", () => {
   });
 });
 
+describe("a blank folder entry must not exclude the whole vault", () => {
+  // `isUnderFolderFolded` treats an empty folder key as matching EVERY path, so
+  // one blank entry in excludedFolders silently indexed nothing at all — the
+  // plugin's core feature off, with no error to say why. The include list
+  // already filtered blanks; the exclude list did not. Reachable from a
+  // hand-edited data.json or a restored settings backup, since the settings
+  // migration used to preserve blanks.
+  const scanner = new VaultScanner(new InMemoryVaultAdapter("v", {}));
+  for (const blank of ["", "   ", "/", "./"]) {
+    it(`ignores ${JSON.stringify(blank)} in excludedFolders`, () => {
+      expect(scanner.isPathEligible("Notes/a.md", config({ excludedFolders: [blank] }))).toBe(true);
+    });
+  }
+  it("still excludes a real folder listed alongside a blank one", () => {
+    const cfg = config({ excludedFolders: ["", "Private"] });
+    expect(scanner.isPathEligible("Notes/a.md", cfg)).toBe(true);
+    expect(scanner.isPathEligible("Private/s.md", cfg)).toBe(false);
+  });
+});
+
 describe("VaultScanner filtering", () => {
   const adapter = new InMemoryVaultAdapter("v", {
     "Notes/a.md": "# A\ncontent",

@@ -32,10 +32,9 @@ const FRONTMATTER_FENCE = /^---\s*$/;
  * decomposed `#privé` is captured whole rather than truncated at the accent —
  * the scanner folds to NFC before comparing, so both encodings then match the
  * same exclusion. A mark cannot begin a tag, so the first character excludes it.
- */
-/**
- * A tag is a `#` that does not follow a word character, a `/`, or a markdown
- * link's `](`.
+ *
+ * The PREFIX rule — a tag is a `#` that does not follow a word character, a
+ * `/`, or a markdown link's `](`:
  *
  * The prefix used to be an enumerated class (`[\s(]`), which meant any other
  * punctuation before the `#` silently dropped the tag: `**#private**` (bold,

@@ -15,7 +15,7 @@ import { toMessage } from "../utils/errors";
 import { extractMetadata, NoteMetadata } from "../core/metadata-extractor";
 import { normalizeVaultRelativePath } from "../utils/paths";
 import { Logger, NULL_LOGGER } from "../utils/logger";
-import { foldForCompare } from "../utils/text";
+import { foldForCompare, normalizeFolder } from "../utils/text";
 
 export interface ScanConfig {
   /** Allowlist of folders; empty means the entire vault. */
@@ -56,20 +56,6 @@ export type ScanResult = ScannedNote | UnchangedNote;
 
 export function isUnchangedNote(note: ScanResult): note is UnchangedNote {
   return "unchanged" in note && note.unchanged === true;
-}
-
-/**
- * Fold a folder setting to the form the path comparisons use. Drops the empty
- * and `.` segments that `normalizeVaultRelativePath` drops everywhere else, so
- * "./Private", "/Private/" and "Private" all name the same folder here as they
- * do in the rest of the codebase.
- */
-function normalizeFolder(folder: string): string {
-  return folder
-    .trim()
-    .split("/")
-    .filter((segment) => segment !== "" && segment !== ".")
-    .join("/");
 }
 
 /**
@@ -140,7 +126,14 @@ export class VaultScanner {
       .map(normalizeFolder)
       .filter(Boolean)
       .map(foldForCompare);
-    const excluded = config.excludedFolders.map((f) => foldForCompare(normalizeFolder(f)));
+    // `.filter(Boolean)` for the same reason the include list has it: an empty
+    // folder key matches every path (see isUnderFolderFolded), so a blank entry
+    // here would exclude the entire vault. Defense in depth — settings
+    // migration also drops blanks now.
+    const excluded = config.excludedFolders
+      .map((f) => normalizeFolder(f))
+      .filter(Boolean)
+      .map(foldForCompare);
     const patterns = config.excludedPathPatterns.map(compilePathPattern);
     return (path) => {
       const p = foldForCompare(path);

@@ -17,3 +17,24 @@
 export function foldForCompare(value: string): string {
   return value.normalize("NFC").toLowerCase();
 }
+
+/**
+ * Fold a folder setting to the form the path comparisons use. Drops the empty
+ * and `.` segments that `normalizeVaultRelativePath` drops everywhere else, so
+ * "./Private", "/Private/" and "Private" all name the same folder here as they
+ * do in the rest of the codebase.
+ *
+ * Shared, because it existed twice with DIFFERENT rules: the vault scanner
+ * split on `/` and dropped empty/`.` segments, while the search-filter path
+ * only stripped leading and trailing slashes. The same string therefore
+ * excluded a folder correctly but matched nothing as a `folder` search filter
+ * — zero results, indistinguishable from "nothing matched", which is the same
+ * silent-failure shape as comparing without folding case.
+ */
+export function normalizeFolder(folder: string): string {
+  return folder
+    .trim()
+    .split("/")
+    .filter((segment) => segment !== "" && segment !== ".")
+    .join("/");
+}

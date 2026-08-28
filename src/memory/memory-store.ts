@@ -10,6 +10,7 @@ import { VaultAdapter } from "../core/vault-adapter";
 import { MemoryPaths, resolveProjectPaths } from "./memory-types";
 import { ProjectMemory } from "./project-memory";
 import { Logger, NULL_LOGGER } from "../utils/logger";
+import { toMessage } from "../utils/errors";
 
 export interface SessionNote {
   path: string;
@@ -68,7 +69,16 @@ export class MemoryStore {
     if (!(await this.adapter.exists(path))) return null;
     try {
       return await this.adapter.read(path);
-    } catch {
+    } catch (err) {
+      // The file EXISTS but could not be read — a permission problem, a disk
+      // error, a corrupt file. Degrading to null keeps context assembly
+      // working, but returning it silently made that indistinguishable from
+      // "this memory file was never created", so the context rendered empty
+      // with nothing anywhere to say why.
+      this.logger.warn("Could not read memory file; treating it as empty", {
+        path,
+        error: toMessage(err),
+      });
       return null;
     }
   }
