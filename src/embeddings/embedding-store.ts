@@ -22,7 +22,7 @@
  */
 
 import { VaultAdapter } from "../core/vault-adapter";
-import { toMessage } from "../utils/errors";
+import { asError, toMessage } from "../utils/errors";
 import { fnv1a32 } from "../utils/hash";
 import { Layout, SHARD_COUNT, chooseLayout, shardOf, shardPath } from "../utils/sharding";
 import { Logger, NULL_LOGGER } from "../utils/logger";
@@ -639,7 +639,7 @@ export class EmbeddingStore {
       this.layout = layout;
     } catch (err) {
       this.allShardsDirty = true;
-      throw err;
+      throw asError(err);
     }
   }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { withTimeout } from "../src/utils/timeout";
+import { clearTimer, setTimer, withTimeout } from "../src/utils/timeout";
 
 /**
  * The guard itself is finally testable. Both places that need it — PDF parsing
@@ -39,5 +39,42 @@ describe("withTimeout", () => {
     await withTimeout(Promise.resolve(1), 60_000, "x");
     expect(clear.mock.calls.length).toBeGreaterThan(before);
     clear.mockRestore();
+  });
+});
+
+describe("setTimer / clearTimer", () => {
+  it("uses the window's timers when a window exists, and the global otherwise", async () => {
+    // Obsidian wants a timer owned by the window that scheduled it, so it dies
+    // with a popout instead of firing into a detached document. The core and
+    // server layers also run under Node — which is where these tests run — so
+    // the helper resolves the host per call instead of naming `window`
+    // directly, which would need a browser global shimmed into the test env.
+    expect(typeof globalThis.window).toBe("undefined");
+
+    await new Promise<void>((resolve) => setTimer(resolve, 0));
+
+    const windowSetTimeout = vi.fn((fn: () => void) => {
+      fn();
+      return 7;
+    });
+    const windowClearTimeout = vi.fn();
+    (globalThis as { window?: unknown }).window = {
+      setTimeout: windowSetTimeout,
+      clearTimeout: windowClearTimeout,
+    };
+    try {
+      const handle = setTimer(() => undefined, 0);
+      expect(windowSetTimeout).toHaveBeenCalledTimes(1);
+      expect(handle).toBe(7);
+      clearTimer(handle);
+      expect(windowClearTimeout).toHaveBeenCalledWith(7);
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  });
+
+  it("treats a null or undefined handle as a no-op", () => {
+    expect(() => clearTimer(null)).not.toThrow();
+    expect(() => clearTimer(undefined)).not.toThrow();
   });
 });

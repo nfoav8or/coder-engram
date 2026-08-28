@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every rethrow now throws a provable `Error`.** `@typescript-eslint/no-throw-literal`
+  defaults `allowThrowingAny` and `allowThrowingUnknown` to **true**, so our lint
+  stayed green over six `throw err` rethrows of a caught `unknown` while
+  Obsidian's review scan kept reporting them — the defaults are exactly what hid
+  the class. Both options are off now, which surfaced five sites
+  (`obsidian-vault-adapter.ts` ×3, `embedding-store.ts`, `index-manager.ts`).
+  Each goes through a new `asError` helper: an existing `Error` is returned
+  unchanged, so subclass identity and stack survive, and only a genuine
+  non-`Error` is wrapped. Not lint appeasement — the vault adapter wraps a host
+  API that can reject with a bare string, which previously propagated as a
+  string to callers that all treat a failure as an `Error`.
+
+### Changed
+
+- **Timers are scheduled through a host-aware helper.** `utils/timeout.ts` gains
+  `setTimer`/`clearTimer`, which use `window.setTimeout` when a window exists and
+  the global otherwise. Obsidian asks plugins to schedule through `window` so a
+  timer belongs to the window that created it and dies with a popout instead of
+  firing into a detached document; calling `window.*` directly was not an option
+  because the core and server layers also run under Node, where `window` does not
+  exist and every unit test lives — it would have meant shimming a browser global
+  into the test environment and giving the pure core a host dependency. All nine
+  reported sites route through the helper, and `src/` now contains no bare
+  `setTimeout`/`clearTimeout` identifier at all: the Node fallback reaches the
+  global as `globalThis.setTimeout`, since a bare call is what the scan matches
+  and writing one would have traded nine warnings for two. The three UI files
+  that own a genuinely popout-scoped timer keep calling `window.setTimeout`.
+
 - **The DNS-rebinding guard could compare two empty strings and call it a
   match.** `Host: :1234` is all port, so its hostname parses as `""`, and a
   whitespace-only configured host trimmed to an empty bound host — equal, so

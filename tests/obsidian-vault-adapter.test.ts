@@ -23,6 +23,8 @@ import type { App } from "obsidian";
 interface FakeOpts {
   /** Return true to make this particular rename throw. */
   failRename?: (from: string, to: string) => boolean;
+  /** Value the failing rename throws. Defaults to a real Error. */
+  rejectWith?: unknown;
 }
 
 function makeApp(opts: FakeOpts = {}) {
@@ -40,7 +42,10 @@ function makeApp(opts: FakeOpts = {}) {
       files.set(p, c);
     },
     async rename(from: string, to: string) {
-      if (opts.failRename?.(from, to)) throw new Error("simulated rename failure");
+      if (opts.failRename?.(from, to)) {
+        // eslint-disable-next-line @typescript-eslint/no-throw-literal -- deliberately models a host API rejecting with a non-Error
+        throw "rejectWith" in opts ? opts.rejectWith : new Error("simulated rename failure");
+      }
       const v = files.get(from);
       if (v === undefined) throw new Error(`ENOENT: ${from}`);
       files.set(to, v);
@@ -135,6 +140,26 @@ describe("ObsidianVaultAdapter.write crash safety", () => {
 
     expect(files.get("Notes/a.md")).toBe("original");
     expect(debris(files), "the temp file must not be left behind").toEqual([]);
+  });
+
+  it("rethrows a non-Error host rejection as an Error", async () => {
+    // Obsidian's adapter is a host API: nothing guarantees it rejects with an
+    // Error, and every caller here treats a failure as one. A bare `throw err`
+    // propagated the raw value, so a rejected string arrived as a string and
+    // `toMessage`/`.message` on it produced nothing useful.
+    const { app, files } = makeApp({
+      failRename: (from) => from === "Notes/a.md",
+      rejectWith: "EPERM: operation not permitted",
+    });
+    const adapter = new ObsidianVaultAdapter(app);
+    files.set("Notes/a.md", "original");
+
+    const err = await adapter.write("Notes/a.md", "replacement").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe("EPERM: operation not permitted");
+    // The crash-safety guarantee is unchanged by the normalization.
+    expect(files.get("Notes/a.md")).toBe("original");
+    expect(debris(files)).toEqual([]);
   });
 
   it("refuses an absolute path at the adapter boundary", async () => {

@@ -11,11 +11,12 @@
  */
 
 import { VaultAdapter } from "../core/vault-adapter";
-import { toMessage } from "../utils/errors";
+import { asError, toMessage } from "../utils/errors";
 import { Layout, SHARD_COUNT, chooseLayout, shardOf, shardPath } from "../utils/sharding";
 import { chunkMarkdown, ChunkOptions } from "../core/markdown-chunker";
 import { ScannedNote, ScanResult, isUnchangedNote } from "./vault-scanner";
 import { Logger, NULL_LOGGER } from "../utils/logger";
+import { setTimer } from "../utils/timeout";
 
 // Bump whenever chunk BOUNDARIES change, not just the file format: a stale
 // index is otherwise kept and silently scored against the old chunking. Raised
@@ -331,7 +332,7 @@ export class IndexManager {
       if (++chunkedSinceYield >= CHUNK_YIELD_EVERY) {
         chunkedSinceYield = 0;
         // eslint-disable-next-line no-await-in-loop -- deliberate cooperative yield
-        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimer(() => r(undefined), 0));
       }
     }
     this.noteMtimes = new Map(notes.map((n) => [n.path, n.mtime]));
@@ -403,7 +404,7 @@ export class IndexManager {
         if (++chunkedSinceYield >= CHUNK_YIELD_EVERY) {
           chunkedSinceYield = 0;
           // eslint-disable-next-line no-await-in-loop -- deliberate cooperative yield
-          await new Promise((r) => setTimeout(r, 0));
+          await new Promise((r) => setTimer(() => r(undefined), 0));
         }
       }
     }
@@ -497,7 +498,7 @@ export class IndexManager {
       await this.adapter.write(this.paths.metadataFile, JSON.stringify(metadata, null, 2));
     } catch (err) {
       this.allShardsDirty = true;
-      throw err;
+      throw asError(err);
     }
     this.metadataStale = false;
     if (switching) {

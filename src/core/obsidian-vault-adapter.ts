@@ -7,7 +7,7 @@
 
 import { App, normalizePath } from "obsidian";
 import { VaultAdapter, VaultFile, assertRelative } from "./vault-adapter";
-import { toMessage } from "../utils/errors";
+import { asError, toMessage } from "../utils/errors";
 
 let tempCounter = 0;
 
@@ -53,7 +53,7 @@ export class ObsidianVaultAdapter implements VaultAdapter {
       if (backup) await adapter.rename(target, backup);
     } catch (err) {
       await adapter.remove(tmp).catch(() => undefined);
-      throw err;
+      throw asError(err);
     }
     try {
       await adapter.rename(tmp, target);
@@ -73,7 +73,7 @@ export class ObsidianVaultAdapter implements VaultAdapter {
         }
       }
       await adapter.remove(tmp).catch(() => undefined);
-      throw err;
+      throw asError(err);
     }
     // The write is durable; the backup is now just garbage.
     if (backup) await adapter.remove(backup).catch(() => undefined);
@@ -140,7 +140,7 @@ export class ObsidianVaultAdapter implements VaultAdapter {
         // eslint-disable-next-line no-await-in-loop -- same ordering: the parent has to land before its child
         await adapter.mkdir(acc).catch(async (err) => {
           // Tolerate races where another operation created it first.
-          if (!(await adapter.exists(acc))) throw err;
+          if (!(await adapter.exists(acc))) throw asError(err);
         });
       }
     }

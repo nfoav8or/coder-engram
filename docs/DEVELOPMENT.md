@@ -34,7 +34,7 @@ Copy or symlink `main.js`, `manifest.json`, and `styles.css` there, then enable 
 | `npm run test:e2e` | Local-only UI smoke test in real Obsidian (see below). |
 | `npm run bench` | Local-only retrieval scale benchmark (`tests/scale.bench.ts`; excluded from `npm test`/CI). Prints build/refresh/query numbers over a large synthetic vault. Override size with `BENCH_NOTES=5000`. Also reports a warm attachment refresh (`BENCH_ATTACHMENTS=300`), the path an idle vault pays on every auto-index. |
 | `npm run eval` | Local-only relevance eval (`tests/relevance.bench.ts`; excluded from `npm test`/CI). Golden-query recall@8 + MRR per query class over planted needle notes — run before/after any ranking change. |
-| `npm run lint` | ESLint over `.ts` sources, **type-aware** (`recommended-requiring-type-checking`, via `tsconfig.eslint.json`), plus `no-throw-literal` named explicitly. This is what catches unchecked `any`, floating promises and un-provable rethrows locally — the class of finding the Obsidian plugin review scan reports, which an untyped config cannot see. See "Lint rules considered and rejected" below for the two type-aware rules deliberately left off. |
+| `npm run lint` | ESLint over `.ts` sources, **type-aware** (`recommended-requiring-type-checking`, via `tsconfig.eslint.json`), plus `no-throw-literal` named explicitly, with `allowThrowingAny`/`allowThrowingUnknown` off. This is what catches unchecked `any`, floating promises and un-provable rethrows locally — the class of finding the Obsidian plugin review scan reports, which an untyped config cannot see. See "Lint rules considered and rejected" below for the two type-aware rules deliberately left off. |
 | `npm run typecheck` | `tsc --noEmit --skipLibCheck`. |
 
 Before committing, run `npm run typecheck`, `npm run test`, and `npm run build`.
@@ -42,10 +42,21 @@ Before committing, run `npm run typecheck`, `npm run test`, and `npm run build`.
 ### Lint rules considered and rejected
 
 `no-throw-literal` is enabled because it caught two real defects — both a rethrow
-of a captured value the type system could not prove was an `Error` — and it
-reports nothing on the current tree. Two neighbouring type-aware options were
-surveyed at the same time and deliberately left off, with the numbers, so the
-question does not get re-opened from scratch:
+of a captured value the type system could not prove was an `Error`.
+
+It runs with **`allowThrowingAny` and `allowThrowingUnknown` both off**, which is
+not the default. With the defaults the rule stayed green over six `throw err`
+rethrows of a caught `unknown` while Obsidian's scan kept reporting them — the
+options are exactly what hid the class from us. Turning them off surfaced five
+sites, all fixed through `asError` in `utils/errors.ts`, which returns an
+existing `Error` unchanged (so subclass identity and stack survive a rethrow)
+and wraps only a genuine non-`Error`. The rule now reports nothing on the
+current tree, and our lint is at least as strict as the scan, so the class
+cannot come back silently.
+
+Two neighbouring type-aware options were surveyed at the same time and
+deliberately left off, with the numbers, so the question does not get re-opened
+from scratch:
 
 - **`@typescript-eslint/no-unnecessary-condition`** reports **31 findings**, and
   every one sampled was a *correct* defensive check that TypeScript's model

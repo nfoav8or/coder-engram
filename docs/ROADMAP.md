@@ -131,8 +131,9 @@ Recorded in full, including the ones deliberately left alone. Reproduced locally
 `eslint-plugin-obsidianmd`, run from the repo root so it can read `manifest.json`.
 
 **The 0.10.0 review carried no errors, and 0.10.1 clears the last false positive.** Everything in the Error and Warning columns of the
-0.9.9 review is resolved except the four entries marked "kept" or "not applicable" below,
-which are deliberate and expected to recur. Build verification passed again: the release
+0.9.9 review is resolved except the entries marked "kept" or "not applicable" below,
+which are deliberate and expected to recur (two of them were later fixed outright — see
+the 0.11.3 review note). Build verification passed again: the release
 `main.js` was reproduced byte-for-byte from the repository, and both it and `styles.css`
 have verified attestations.
 
@@ -146,16 +147,22 @@ finding — a second "expected an error object to be thrown" — was real and is
 its row. Everything else it reported is one of the standing entries below, each of which
 was re-examined at that review rather than waved through:
 
-- The four "kept"/"not applicable"/"inherent" entries were re-confirmed deliberately, with
-  the trade-off each one buys written out in its row. They are expected to recur in every
-  future review, and the rows exist so a reviewer can see the decision instead of
-  re-deriving it.
+- The standing "kept"/"inherent" entries were re-confirmed deliberately, with the trade-off
+  each one buys written out in its row. They are expected to recur in every future review,
+  and the rows exist so a reviewer can see the decision instead of re-deriving it.
+- **Two of them stopped being standing entries after this review.** The maintainer
+  re-opened the set and chose to fix the timer sites rather than keep explaining them, and
+  to close the whole `no-throw-literal` class rather than the one site reported. Three
+  remain deliberate: `SHA256SUMS` (scripted installs verify against it and fail closed
+  without it), the unconditional `warn`/`error` console output (the only channel for
+  degradations, and gating it would restore the silent-failure class this cycle spent
+  releases removing), and vault enumeration (the plugin is a vault indexer).
 - Build verification reproduced the release `main.js` byte-for-byte again, and both it and
   `styles.css` carry verified attestations.
 - **Line numbers in the table are as the review reported them, at the commit named in that
   row's severity column** — they are a record of a report, not a claim about `HEAD`, and
-  ordinary edits move them. The two rows a maintainer actually re-opens each cycle (the
-  timer sites and the logger) also carry their current-tree lines, kept in step by hand.
+  ordinary edits move them. The logger row — the one standing source finding a maintainer
+  still re-opens each cycle — also carries its current-tree line, kept in step by hand.
   Without this convention the citations rot silently and the row stops doing the one job
   it exists for: letting a reviewer check the decision instead of re-deriving it.
 
@@ -166,14 +173,14 @@ was re-examined at that review rather than waved through:
 | Unnecessary type assertion (`settings.ts`) | Warning | **Fixed in 0.10.0.** |
 | PluginSettingTab does not implement `getSettingDefinitions()` | Warning | **Fixed in 0.10.0** — this milestone. |
 | `display` is deprecated since 1.13.0 | Recommendation | **Kept deliberately, re-confirmed at 0.11.3.** Obsidian ignores `display()` entirely as soon as `getSettingDefinitions()` returns anything, so every user on 1.13+ already gets the declarative tab and this code never runs for them. It exists solely as the pre-1.13 fallback. Removing it would require raising `minAppVersion` from 1.7.2 to 1.13.0, which stops delivering updates to anyone on an older Obsidian — a real cost to real users in exchange for silencing a recommendation that has no functional effect. |
-| Use `window.setTimeout()` / `window.clearTimeout()` (9 sites) | Warning | **Not applicable, re-confirmed at 0.11.3.** The rule targets timers whose lifetime is tied to a popout window; none of these are. Every site is listed here so a reviewer does not have to re-derive it: `utils/timeout.ts:20,25` (the shared timeout race, used by the PDF extractor and the HTTP adapter), `utils/debounce.ts:29,30,37` (the auto-index debounce), `server/local-server.ts:261,271` — now `264,274` (the bind timeout), and `indexing/index-manager.ts:334,406` (the two cooperative yields that keep a large rebuild from freezing the renderer). **All nine are unit-tested under the Node test environment, where `window` does not exist**, so qualifying them would mean shimming a browser global into the tests and giving the pure core a `window` dependency — trading a documented architectural property (the core runs anywhere) for a cosmetic warning. The three UI files that *do* own a popout-capable timer — `pending-memory-modal.ts`, `simple-modals.ts`, `search-modal.ts` — correctly call `window.setTimeout`, which is what makes the split deliberate rather than accidental. |
+| Use `window.setTimeout()` / `window.clearTimeout()` (9 sites) | Warning | **Fixed on the 0.11.x track**, superseding the earlier "not applicable" reading. The rule targets timers whose lifetime is tied to a popout window, and calling `window.*` directly was rejected because the core and server layers must also run under Node — where `window` does not exist and every unit test lives — so it would have meant shimming a browser global into the test environment and giving the pure core a host dependency. `utils/timeout.ts` now exports `setTimer`/`clearTimer`, which resolve the host per call: a real window gets window-owned timers, Node gets the global. All nine sites route through it, so `src/` contains no bare `setTimeout`/`clearTimeout` identifier at all — the Node fallback reaches the global as `globalThis.setTimeout`, since a bare call is exactly what the scan matches and writing one would have traded nine warnings for two. The three UI files that own a popout-capable timer keep calling `window.setTimeout` directly. |
 | Avoid using `global` (`memory-types.ts:63`) | Warning | **False positive, silenced anyway.** The line was `global: string;`, a property of the `MemoryPaths` interface rather than Node's `global` — but the rule matches the bare identifier, so it would be reported on every release. The field is now `globalDir` (shipped in 0.10.1), which costs four lines and keeps future reviews signal-only. |
 | Avoid unnecessary logging to console (`logger.ts:61`, now `:65`) | Warning | **Kept deliberately, re-confirmed at 0.11.3.** `debug`/`info` are gated behind the `debugLogging` setting and are silent by default. `warn`/`error` always emit, on purpose: they are the only channel for degradations the user needs to know about — a corrupt index shard being dropped, an embedding provider refusing a request, a memory file that exists but cannot be read. Gating those too would restore exactly the silent-failure class this cycle spent several releases removing. Every context object is redacted for secret-shaped keys before it reaches the console. |
 | Release contains extra unsupported files (`SHA256SUMS`) | Recommendation | **Kept deliberately, re-confirmed at 0.11.3.** Obsidian simply does not download it, so the cost of publishing it is zero. The benefit is not: `scripts/install.sh` verifies every downloaded asset against it and, since 0.11.2, **refuses to install when it cannot be fetched** — removing the file would make every scripted install hit that fail-closed path, and would also break the manual `sha256sum -c SHA256SUMS` step the README documents. Dropping it would mean undoing this cycle's supply-chain hardening to satisfy a recommendation about a file nobody is asked to download. |
 | Vault enumeration (`getMarkdownFiles`) | Recommendation | **Inherent, re-confirmed at 0.11.3.** The plugin is a vault indexer; enumerating notes is the feature, not an incidental capability. What bounds it is what happens next: included/excluded folders, excluded tags and excluded path patterns are applied *before* a note's content is read, the index only ever holds notes that survived those filters, and retrieval can only return chunks that are in the index. There is no way to narrow this without removing search. |
 | Undescribed directive comment (`embedding-store.ts:268`) | Error (0.11.0) | **Fixed on the 0.11.x track.** One `eslint-disable-next-line no-await-in-loop` in the sharded-load path shipped without the `--` rationale every other disable in the repo carries. It now explains itself like the rest; the repo has no bare disables left. |
 | Expected an error object to be thrown (`embedding-store.ts:528`) | Warning (0.11.0) | **Fixed on the 0.11.x track**, and it was a real (if narrow) defect rather than a lint nit. The embedding worker pool captures the first failure into `let failed: unknown` and rethrows it after the pool drains, so a provider rejecting with a non-`Error` (a string, a raw response) propagated that value to callers who all treat a failure as an `Error`. The capture now normalizes with `err instanceof Error ? err : new Error(toMessage(err))`. |
-| Expected an error object to be thrown (`embedding-store.ts:531`) | Warning (0.11.3) | **Fixed. A second, distinct instance of the same rule — and a genuine one, not a repeat of the 0.11.0 fix.** The embedding worker pool captured its first failure into a closure-assigned `let`. TypeScript's control-flow analysis does not track writes made inside a closure, so at the rethrow it still believed the variable held its initialiser: the thrown value typed as `null`, i.e. the checker considered the failure path unreachable. Verified by forcing the compiler to print the resolved type — annotating the union did not help, because narrowing re-derives it from the initialiser. The failure is now held in an `Error[]`, whose element type is unconditional, so the rethrow types as the Error it actually is. |
+| Expected an error object to be thrown (`embedding-store.ts:531`) | Warning (0.11.3) | **Fixed**, and the whole class is now closed rather than the one reported site. The scan kept reporting rethrows our own lint passed, because `@typescript-eslint/no-throw-literal` defaults `allowThrowingAny` and `allowThrowingUnknown` to **true** — so six `throw err` rethrows of a caught `unknown` were invisible to it. Both options are off now, which surfaced five sites (`obsidian-vault-adapter.ts` ×3, `embedding-store.ts`, `index-manager.ts`), each fixed through a new `asError` helper in `utils/errors.ts`. It is not lint appeasement: an existing `Error` is returned unchanged, so subclass identity and stack survive, while a genuine non-`Error` host rejection — a bare string from the vault adapter, say — stops propagating to callers that all treat a failure as an `Error`. |
 | Unsafe `any` in the ZIP inflate loop (`zip.ts`) | Error (locally, under their rule set; never reported in an official review) | **Fixed in 0.10.0.** `pipeThrough` loses the element type, so the inflated chunks were `any` — and the size accounting there is what stands between a crafted archive and an unbounded allocation. The reader is now annotated. |
 | Build reproduced the release `main.js` byte-for-byte; attestations verified | Pass | No action. |
 

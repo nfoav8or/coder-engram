@@ -4,6 +4,8 @@
  * single index refresh instead of one per keystroke.
  */
 
+import { clearTimer, setTimer, TimerHandle } from "./timeout";
+
 export interface Debounced<A extends unknown[]> {
   (...args: A): void;
   cancel(): void;
@@ -13,7 +15,7 @@ export function debounce<A extends unknown[]>(
   fn: (...args: A) => void,
   waitMs: number,
 ): Debounced<A> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
+  let timer: TimerHandle | null = null;
   let pendingArgs: A | null = null;
 
   const invoke = (): void => {
@@ -26,15 +28,15 @@ export function debounce<A extends unknown[]>(
 
   const debounced = ((...args: A): void => {
     pendingArgs = args;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
+    clearTimer(timer);
+    timer = setTimer(() => {
       timer = null;
       invoke();
     }, waitMs);
   }) as Debounced<A>;
 
   debounced.cancel = (): void => {
-    if (timer) clearTimeout(timer);
+    clearTimer(timer);
     timer = null;
     pendingArgs = null;
   };

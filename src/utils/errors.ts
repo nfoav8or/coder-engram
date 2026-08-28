@@ -33,6 +33,26 @@ export function toMessage(err: unknown): string {
 }
 
 /**
+ * Normalize a caught value into an `Error` for rethrowing.
+ *
+ * A bare `throw err` in a `catch` rethrows a value the type system knows only
+ * as `unknown`, and nothing guarantees a host API, a companion plugin, or a
+ * fetch rejection handed us an `Error` at all — every caller here treats a
+ * failure as one, so a rejected string propagated as a string and lost its
+ * message on the way out. An existing `Error` is returned UNCHANGED, so
+ * subclass identity (`PathSecurityError`, `ConfigError`, …) and the original
+ * stack survive an `instanceof` check downstream; only a genuine non-`Error`
+ * is wrapped.
+ *
+ * This is also what makes `@typescript-eslint/no-throw-literal` provable at the
+ * rethrow sites, with `allowThrowingUnknown` off — the same class of finding
+ * Obsidian's review scan reports.
+ */
+export function asError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(toMessage(err));
+}
+
+/**
  * An absolute filesystem path, in the two shapes host errors produce.
  *
  * Node quotes the path in its `errno` messages (`open '/home/u/vault/x.md'`),

@@ -38,6 +38,13 @@ module.exports = {
     // this config could not see: both were a rethrow of a captured value that
     // the type system could not prove was an Error. Enabled here so that class
     // fails our own lint instead of surfacing after a release.
-    "@typescript-eslint/no-throw-literal": "error",
+    // The two `allowThrowing*` options default to TRUE, which is why this rule
+    // stayed green over six `throw err` rethrows of a caught `unknown` while
+    // the scanner kept reporting them. Turned off so our lint is at least as
+    // strict as the scan and the class cannot come back silently.
+    "@typescript-eslint/no-throw-literal": [
+      "error",
+      { allowThrowingAny: false, allowThrowingUnknown: false },
+    ],
   },
 };

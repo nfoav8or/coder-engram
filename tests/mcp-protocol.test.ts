@@ -11,7 +11,7 @@ import {
   DEFAULT_PROTOCOL_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,
 } from "../src/server/mcp-protocol";
-import { redactAbsolutePaths } from "../src/utils/errors";
+import { asError, PathSecurityError, redactAbsolutePaths } from "../src/utils/errors";
 
 function makeDeps(seed: Record<string, string> = {}): ProtocolDeps {
   const adapter = new InMemoryVaultAdapter("v", seed);
@@ -227,6 +227,24 @@ describe("handleRpcMessage", () => {
     expect(result.content[0].text).toContain("EACCES");
     expect(result.content[0].text).not.toContain("realuser");
     expect(result.content[0].text).not.toContain("Финансы");
+  });
+});
+
+describe("asError", () => {
+  it("returns an existing Error unchanged so subclass identity survives a rethrow", () => {
+    const original = new PathSecurityError("nope");
+    expect(asError(original)).toBe(original);
+    expect(asError(original)).toBeInstanceOf(PathSecurityError);
+  });
+
+  it("wraps a non-Error rejection so callers that assume Error still work", () => {
+    // Host APIs and companion plugins can reject with a bare string or object.
+    // A bare `throw err` propagated that value untouched to callers that all
+    // treat a failure as an Error, losing the message on the way out.
+    expect(asError("disk full")).toBeInstanceOf(Error);
+    expect(asError("disk full").message).toBe("disk full");
+    expect(asError({ code: 42 })).toBeInstanceOf(Error);
+    expect(asError(undefined).message).toBe("Unknown error");
   });
 });
 

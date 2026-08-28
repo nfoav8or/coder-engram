@@ -22,6 +22,7 @@ import { Logger } from "../utils/logger";
 import { toMessage, ConfigError } from "../utils/errors";
 import { assertValidPort } from "../utils/validation";
 import { checkAuth } from "./auth";
+import { clearTimer, setTimer } from "../utils/timeout";
 import { isLoopbackHost, isHostHeaderAllowed, isOriginAllowed } from "./net";
 import { ToolRegistry, ToolContext, RateLimiter } from "./mcp-tools";
 import {
@@ -261,7 +262,7 @@ export class LocalServer {
       const cleanup = () => {
         server.removeListener("error", onError);
         server.removeListener("listening", onListening);
-        clearTimeout(timer);
+        clearTimer(timer);
       };
       const onError = (err: Error) => {
         cleanup();
@@ -271,7 +272,7 @@ export class LocalServer {
         cleanup();
         resolve();
       };
-      const timer = setTimeout(() => {
+      const timer = setTimer(() => {
         cleanup();
         // The bind may still be in flight; if it completes after we time out it
         // would become an untracked listener, so close it. Swallow any late
