@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `npm run lint` now enables `@typescript-eslint/no-throw-literal`. It is not
+  part of `recommended-requiring-type-checking`, so it had to be named
+  explicitly — which is why two real defects of the same shape reached Obsidian's
+  review scan instead of failing our own lint first. Verified by restoring the
+  old pattern: the project's lint now reports it. Two neighbouring options were
+  surveyed and deliberately left off, with the counts recorded in
+  [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): `no-unnecessary-condition` (31
+  findings, every one sampled a correct defensive check the type model believes
+  is redundant) and `noUncheckedIndexedAccess` (122 errors, nearly all
+  loop-bounded accesses that are provably safe).
 - The plugin-review table in [docs/ROADMAP.md](docs/ROADMAP.md) now spells out,
   for each finding deliberately left alone, exactly what the trade-off buys —
   including every one of the nine timer call sites and why the three UI files

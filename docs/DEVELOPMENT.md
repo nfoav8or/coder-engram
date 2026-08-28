@@ -34,10 +34,35 @@ Copy or symlink `main.js`, `manifest.json`, and `styles.css` there, then enable 
 | `npm run test:e2e` | Local-only UI smoke test in real Obsidian (see below). |
 | `npm run bench` | Local-only retrieval scale benchmark (`tests/scale.bench.ts`; excluded from `npm test`/CI). Prints build/refresh/query numbers over a large synthetic vault. Override size with `BENCH_NOTES=5000`. Also reports a warm attachment refresh (`BENCH_ATTACHMENTS=300`), the path an idle vault pays on every auto-index. |
 | `npm run eval` | Local-only relevance eval (`tests/relevance.bench.ts`; excluded from `npm test`/CI). Golden-query recall@8 + MRR per query class over planted needle notes — run before/after any ranking change. |
-| `npm run lint` | ESLint over `.ts` sources, **type-aware** (`recommended-requiring-type-checking`, via `tsconfig.eslint.json`). This is what catches unchecked `any` and floating promises locally — the class of finding the Obsidian plugin review scan reports, which an untyped config cannot see. |
+| `npm run lint` | ESLint over `.ts` sources, **type-aware** (`recommended-requiring-type-checking`, via `tsconfig.eslint.json`), plus `no-throw-literal` named explicitly. This is what catches unchecked `any`, floating promises and un-provable rethrows locally — the class of finding the Obsidian plugin review scan reports, which an untyped config cannot see. See "Lint rules considered and rejected" below for the two type-aware rules deliberately left off. |
 | `npm run typecheck` | `tsc --noEmit --skipLibCheck`. |
 
 Before committing, run `npm run typecheck`, `npm run test`, and `npm run build`.
+
+### Lint rules considered and rejected
+
+`no-throw-literal` is enabled because it caught two real defects — both a rethrow
+of a captured value the type system could not prove was an `Error` — and it
+reports nothing on the current tree. Two neighbouring type-aware options were
+surveyed at the same time and deliberately left off, with the numbers, so the
+question does not get re-opened from scratch:
+
+- **`@typescript-eslint/no-unnecessary-condition`** reports **31 findings**, and
+  every one sampled was a *correct* defensive check that TypeScript's model
+  believes is redundant — `rtf-extractor.ts` testing `rtf[i + 1] === undefined`,
+  `main.ts` testing the result of `getLeavesOfType(...)[0] ?? null`. Those checks
+  are right and the type model is optimistic, so the rule would pressure the code
+  toward deleting real guards.
+- **`noUncheckedIndexedAccess`** is the compiler option that would make the model
+  match runtime and turn those 31 into true negatives. It reports **122 errors**,
+  nearly all loop-bounded accesses (`for (let i = 0; i < lines.length; i++)`)
+  that are provably safe. Adopting it would mean scattering that many non-null
+  assertions for very few real findings — assertions that themselves suppress the
+  next genuine one.
+
+The rules that do earn their place report zero findings here: no floating
+promises, no misused promises, no `await` on a non-thenable, no unnecessary type
+assertions.
 
 ## Checking that a test actually holds something
 

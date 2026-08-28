@@ -33,5 +33,11 @@ module.exports = {
     // contract, so requiring an await inside would mean adding a pointless one.
     "@typescript-eslint/require-await": "off",
     "no-console": "off",
+    // Not in `recommended-requiring-type-checking`, so it has to be named
+    // explicitly. Obsidian's review scan runs it and caught two real defects
+    // this config could not see: both were a rethrow of a captured value that
+    // the type system could not prove was an Error. Enabled here so that class
+    // fails our own lint instead of surfacing after a release.
+    "@typescript-eslint/no-throw-literal": "error",
   },
 };
