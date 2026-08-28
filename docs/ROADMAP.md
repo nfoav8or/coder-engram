@@ -220,7 +220,8 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing unreleased — 0.11.3 has just been cut.
+- **Typed-lint gap closed and a second `no-throw-literal` instance fixed.** The rule is not part of `recommended-requiring-type-checking`, so two real defects of the same shape reached Obsidian's review scan instead of failing our own lint; `npm run lint` now names it explicitly. Two neighbouring options were surveyed and left off with counts recorded in [DEVELOPMENT.md](DEVELOPMENT.md).
+- **The vector-math invariants now live at each consumer.** A retrieval-math review verified the core formulas correct (BM25, the Lucene-variant IDF, RRF, MMR, cosine) and turned up three places where a consumer inherited an invariant from its caller rather than holding it: `extractiveSummary` could return an *empty* summary still labelled `method: "embedding"` if one sentence vector held a non-finite component (a probe through the real engine confirmed the shipped providers cannot produce that — the HTTP layer's `parseVectorMatrix` rejects it — so this was latent, not live); `EmbeddingStore.entriesMap` read the persisted norm back on faith, where a desynced norm inflates that entry's cosine past 1 and outranks every honest match; and `VectorRetriever`'s two norm guards were `=== 0`, which a NaN norm passes. Each has a regression test that fails without its fix.
 
 **Next, in order**, per [LARGE_VAULTS.md](LARGE_VAULTS.md):
 
@@ -228,7 +229,7 @@ sees it.
 2. **P3.1 IVF vector search** behind the existing `Retriever` interface, plus the **P3.2 large-vault mode** switch. Gated on a real-vault recall eval added to `npm run eval` — the spike's 43–57× speedup at ≥99.7% recall was measured on a deliberately clustered synthetic corpus, which flatters recall. LARGE_VAULTS.md also records a measured ~22 ms of a 65.7 ms vector query spent on a full sort that a bounded top-K would reclaim; that change is deliberately deferred to this step rather than made as a patch, because it reorders tied results.
 3. **P2.3 Web Worker offload** for initial chunking, wherever in-Obsidian verification is available. The cooperative-yield fallback shipped in 0.11.0 already removes the renderer-freeze failure mode, so this is throughput rather than correctness.
 
-Standing work between releases: the review loop that produced 0.10.1–0.11.3 keeps running — audit what is already shipped, fix what fails open first, and treat a stale document as an unfinished release. Nine passes in, the highest-yield technique has been pointing an adversarial review at the *previous pass's own commits*: it found a real regression in four consecutive ones.
+Standing work between releases: the review loop that produced 0.10.1–0.11.3 keeps running — audit what is already shipped, fix what fails open first, and treat a stale document as an unfinished release. Nine passes in, the highest-yield technique has been pointing an adversarial review at the *previous pass's own commits*: it found a real defect in five consecutive ones.
 
 ## Open questions for the maintainer
 
