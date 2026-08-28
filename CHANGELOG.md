@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.4] — 2026-08-28
+
 ### Fixed
 
 - **Every rethrow now throws a provable `Error`.** `@typescript-eslint/no-throw-literal`
@@ -1229,6 +1231,7 @@ First working local memory + lexical RAG layer.
 - No cloud services or API keys required for the default experience.
 
 [Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.11.3...HEAD
+[0.11.4]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.4
 [0.11.3]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.3
 [0.11.2]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.2
 [0.11.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.1
