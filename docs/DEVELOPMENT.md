@@ -233,6 +233,31 @@ The `src/server/` directory is present: it implements the local MCP/HTTP server 
 
 The unit tests use `InMemoryVaultAdapter`, so most logic can be exercised without Obsidian: `npm run test`.
 
+### After any change to the settings UI
+
+The suite runs against a stubbed `obsidian` module, so it can prove a setting is
+*defined* — `setting-definitions.test.ts` fails if a persisted key has no control
+— but nothing in it proves a row *renders*. That gap is structural, not an
+oversight, and it is why a settings change gets a manual pass in a real vault
+before it is called done. 0.12.0 is the cautionary case: deleting `display()`
+was verified by diffing 35 row labels across both paths, and the diff still
+missed that the top-level "nothing is written outside the vault" paragraph had
+no declarative counterpart — it was a paragraph, not a row, so a label diff
+could not see it. Only reading the rendered tab catches that class.
+
+Open Settings → Coder Engram and confirm:
+
+1. All six sections appear: Indexing, Retrieval & embeddings, Local server,
+   Memory write safety, Context savings, Advanced.
+2. The informational rows render, not just the controls — "Where memory is
+   stored" at the top of Indexing, the server "Security notice", and "About
+   context savings". These carry the security and privacy statements, and they
+   are the rows a key-coverage test cannot check because they write no key.
+3. The two rows that build their own control work: the Token field masks its
+   value and its **Generate** button replaces it, and **Rebuild index** runs.
+4. Settings search finds a row by name — that is the whole payoff for rendering
+   declaratively, and it silently stops working if a definition is malformed.
+
 ## Coding conventions
 
 - **The service and core layers must not import `obsidian` or `node:*`.** Only the UI layer (`main.ts`, `settings/settings-tab.ts`, `ui/*`), the four adapters `core/obsidian-vault-adapter.ts`, `core/obsidian-http-client.ts`, `core/obsidian-pdf-extractor.ts` and `core/obsidian-ocr-extractor.ts`, and the Node-only server layer may. This keeps indexing/retrieval/memory unit-testable and lets the server reuse `EngramEngine`. `tests/architecture.test.ts` holds the allowlist and fails the build on drift, so widening it is a visible code change.
