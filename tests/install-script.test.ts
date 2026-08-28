@@ -39,12 +39,15 @@ function scaffold(): { root: string; release: string; vault: string } {
   return { root, release, vault };
 }
 
-function runInstaller(release: string, vault: string) {
-  return spawnSync("bash", ["scripts/install.sh", "--vault", vault], {
+function runInstaller(release: string, vault: string, extraArgs: string[] = []) {
+  return spawnSync("bash", ["scripts/install.sh", "--vault", vault, ...extraArgs], {
     encoding: "utf8",
     env: { ...process.env, CODER_ENGRAM_BASE_URL: `file://${release}` },
   });
 }
+
+const installedFiles = (vault: string) =>
+  ASSETS.filter((a) => existsSync(join(vault, ".obsidian", "plugins", "coder-engram", a)));
 
 describe.skipIf(!HAVE_TOOLS)("scripts/install.sh", () => {
   it("installs the release assets into the vault after verifying them", () => {
@@ -58,6 +61,53 @@ describe.skipIf(!HAVE_TOOLS)("scripts/install.sh", () => {
       expect(readFileSync(join(dest, "main.js"), "utf8")).toBe("// pretend bundle\n");
       // --enable is opt-in: without it the plugin is installed, not switched on.
       expect(existsSync(join(vault, ".obsidian", "community-plugins.json"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to install when SHA256SUMS cannot be fetched", () => {
+    // The whole verification step used to degrade to a "note:" and install
+    // anyway. Whoever can tamper with main.js in transit can equally make this
+    // one request fail, so a missing manifest is indistinguishable from
+    // interference and must fail closed.
+    const { root, release, vault } = scaffold();
+    try {
+      rmSync(join(release, "SHA256SUMS"));
+      const run = runInstaller(release, vault);
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toMatch(/refusing to install unverified/);
+      expect(installedFiles(vault), "nothing may be installed unverified").toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to install when no sha256 tool is available", () => {
+    // Same failure class: "no tool" used to skip verification entirely.
+    const { root, release, vault } = scaffold();
+    try {
+      const run = spawnSync("bash", ["scripts/install.sh", "--vault", vault], {
+        encoding: "utf8",
+        // An empty PATH plus bash builtins: curl is gone too, but the tool
+        // check runs first, so this pins the branch under test.
+        env: { ...process.env, PATH: "/nonexistent", CODER_ENGRAM_BASE_URL: `file://${release}` },
+      });
+      expect(run.status).not.toBe(0);
+      expect(installedFiles(vault)).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("installs without a manifest only when --skip-verify is explicit", () => {
+    const { root, release, vault } = scaffold();
+    try {
+      rmSync(join(release, "SHA256SUMS"));
+      const run = runInstaller(release, vault, ["--skip-verify"]);
+      expect(run.status).toBe(0);
+      expect(run.stdout).toMatch(/WITHOUT checksum verification/);
+      expect(installedFiles(vault)).toEqual(ASSETS);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -16,10 +16,15 @@
 #   --enable           Also enable the plugin in the vault's config. Only do
 #                      this while Obsidian is CLOSED; otherwise enable it in
 #                      Settings -> Community plugins after a restart.
+#   --skip-verify      Install WITHOUT checking the download against the
+#                      release's SHA256SUMS. Only needed for releases older
+#                      than 0.6.0, which predate the manifest. Anything newer
+#                      publishes one, so if verification cannot be completed
+#                      the safe assumption is interference, not an old release.
 #
 # What it does — nothing else:
-#   1. Downloads main.js, manifest.json, styles.css (and SHA256SUMS when the
-#      release provides one, verifying the files against it).
+#   1. Downloads main.js, manifest.json, styles.css and SHA256SUMS, and
+#      verifies the files against it (see --skip-verify).
 #   2. Copies them to <vault>/.obsidian/plugins/coder-engram/.
 #   3. With --enable: adds "coder-engram" to community-plugins.json.
 set -euo pipefail
@@ -31,13 +36,15 @@ ASSETS=(main.js manifest.json styles.css)
 VAULT=""
 VERSION="latest"
 ENABLE=0
+SKIP_VERIFY=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --vault) VAULT="${2:?--vault needs a path}"; shift 2 ;;
     --version) VERSION="${2:?--version needs x.y.z}"; shift 2 ;;
     --enable) ENABLE=1; shift ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    --skip-verify) SKIP_VERIFY=1; shift ;;
+    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1 (see --help)" >&2; exit 1 ;;
   esac
 done
@@ -104,6 +111,13 @@ fi
 # CODER_ENGRAM_BASE_URL overrides the asset source (mirrors, testing).
 if [ -n "${CODER_ENGRAM_BASE_URL:-}" ]; then
   BASE="$CODER_ENGRAM_BASE_URL"
+  # Plain http:// silently drops TLS, which makes the whole download
+  # MITM-able. Not refused — a local mirror or a file:// source is a
+  # legitimate use, and the checksum step above is the real integrity control
+  # — but never let it pass unremarked.
+  case "$BASE" in
+    http://*) say "WARNING: CODER_ENGRAM_BASE_URL uses plain http:// — the download is not protected in transit." ;;
+  esac
 elif [ "$VERSION" = "latest" ]; then
   BASE="https://github.com/$REPO/releases/latest/download"
 else
@@ -118,36 +132,53 @@ for a in "${ASSETS[@]}"; do
   curl -fsSL "$BASE/$a" -o "$TMP/$a" || die "download failed: $BASE/$a"
 done
 
-# Verify against the release's checksum manifest when it exists (releases
-# older than 0.6.0 don't ship one — the installer says so rather than skipping
-# silently).
+# Verify against the release's checksum manifest.
+#
+# This FAILS CLOSED. Whoever can tamper with main.js in transit can equally
+# make the SHA256SUMS request fail, and the script cannot tell that apart from
+# "this is an old release that never had one" — so treating a missing manifest
+# or a missing hash tool as "skip verification" handed an attacker the whole
+# control for the cost of one blocked request. Every release since 0.6.0 ships
+# a manifest; --skip-verify is the explicit escape hatch for anything older.
+#
 # sha256sum is GNU coreutils and is NOT present on a stock macOS, which this
 # script supports — using it unconditionally made every macOS install die with
 # "verification FAILED", blaming the release for a missing tool. Try each of
 # the three tools a machine plausibly has.
-sha256_of() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
-  elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 "$1" | awk '{print $NF}'
-  else return 1
-  fi
+sha256_tool() {
+  # Probed with command -v rather than by running the tool: hashing can also
+  # fail for reasons that are not "no tool installed" (permissions, disk), and
+  # those must abort rather than silently downgrade to no verification.
+  if command -v sha256sum >/dev/null 2>&1; then echo sha256sum; return 0; fi
+  if command -v shasum >/dev/null 2>&1; then echo shasum; return 0; fi
+  if command -v openssl >/dev/null 2>&1; then echo openssl; return 0; fi
+  return 1
 }
 
-if curl -fsSL "$BASE/SHA256SUMS" -o "$TMP/SHA256SUMS" 2>/dev/null; then
-  if ! sha256_of "$TMP/SHA256SUMS" >/dev/null 2>&1; then
-    say "note: no sha256 tool found (sha256sum, shasum, or openssl); skipping checksum verification."
-  else
-    for a in "${ASSETS[@]}"; do
-      expected="$(awk -v f="$a" '$2 == f || $2 == "*" f {print $1}' "$TMP/SHA256SUMS" | head -1)"
-      [ -n "$expected" ] || die "SHA256SUMS has no entry for $a — refusing to install"
-      actual="$(sha256_of "$TMP/$a")" || die "could not hash $a — refusing to install"
-      [ "$actual" = "$expected" ] \
-        || die "checksum verification FAILED for $a — refusing to install"
-    done
-    say "Checksums verified."
-  fi
+sha256_of() {
+  case "$(sha256_tool)" in
+    sha256sum) sha256sum "$1" | awk '{print $1}' ;;
+    shasum) shasum -a 256 "$1" | awk '{print $1}' ;;
+    openssl) openssl dgst -sha256 "$1" | awk '{print $NF}' ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ "$SKIP_VERIFY" = "1" ]; then
+  say "WARNING: --skip-verify given; installing WITHOUT checksum verification."
 else
-  say "note: this release publishes no SHA256SUMS; skipping checksum verification."
+  sha256_tool >/dev/null \
+    || die "no sha256 tool found (sha256sum, shasum, or openssl) — refusing to install unverified. Install one, or pass --skip-verify to accept the risk."
+  curl -fsSL "$BASE/SHA256SUMS" -o "$TMP/SHA256SUMS" \
+    || die "could not fetch SHA256SUMS from $BASE — refusing to install unverified. Releases before 0.6.0 predate it; for those, pass --skip-verify."
+  for a in "${ASSETS[@]}"; do
+    expected="$(awk -v f="$a" '$2 == f || $2 == "*" f {print $1}' "$TMP/SHA256SUMS" | head -1)"
+    [ -n "$expected" ] || die "SHA256SUMS has no entry for $a — refusing to install"
+    actual="$(sha256_of "$TMP/$a")" || die "could not hash $a — refusing to install"
+    [ "$actual" = "$expected" ] \
+      || die "checksum verification FAILED for $a — refusing to install"
+  done
+  say "Checksums verified."
 fi
 
 # --- install -----------------------------------------------------------------

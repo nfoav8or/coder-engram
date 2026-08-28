@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An index-version bump forced a full re-embed of the vault.** The vector
+  cache was loaded only when the chunk index loaded successfully, so any
+  `INDEX_VERSION` mismatch — which 0.11.1's bump to 4 causes for every existing
+  user — started from an empty store and treated every chunk as new. Vectors
+  are keyed by chunk id and content hash and gated on provider identity, so
+  they were always safe to reuse across a rebuild; they are now loaded
+  regardless. On a paid embedding provider this was real money charged on
+  upgrade for chunk text that had not changed. Pre-existing since 0.9.0, but
+  0.11.1 is the release that triggered it for everyone.
+- **A settings change landing mid-pass could silently discard an entire
+  reindex.** `updateSettings` is synchronous and runs off the engine's index
+  chain, and on a memory-root change it replaces the index manager outright.
+  Because `build`/`refresh` yield to the event loop mid-pass, the code that
+  resumed afterwards could re-read the engine field and reach a fresh, empty
+  manager — where `persist()` returns silently. The completed build was thrown
+  away while the log still reported success. Index, embedding and attachment
+  passes now bind the manager, store and cache they started with, and check
+  before writing engine-level bookkeeping. The same class of bug cost an
+  embedding pass its work and could leave vector search stuck on lexical.
+- **A tag in a truncated frontmatter block could still be missed.** The bound
+  added to the unterminated-frontmatter scan in the previous pass stopped at
+  the first line that was not `key: value`, which dropped the tags when a YAML
+  comment, an indented nested key, or a bare list item appeared before them.
+  That is the fail-open direction — the one that leaks an excluded note to the
+  agent. The scan now ends only on unindented, non-blank, non-comment prose,
+  which still keeps a note that merely opens with `---` from being read as
+  YAML.
+
+### Security
+
+- **`scripts/install.sh` now fails closed.** Checksum verification degraded to
+  a printed note and installed anyway when the `SHA256SUMS` manifest could not
+  be fetched, or when no sha256 tool was found. Whoever can tamper with
+  `main.js` in transit can equally make one request fail, so an absent manifest
+  is indistinguishable from interference and must not be assumed benign. Both
+  paths now refuse to install. `--skip-verify` is the explicit opt-out for
+  releases before v0.6.0, which predate the manifest. Tool detection uses
+  `command -v` rather than running the tool against downloaded data, so a
+  permissions or disk error can no longer be mistaken for "no tool installed",
+  and a plain-`http://` asset source is now called out as unprotected.
+
+### Fixed
+
 - **A new memory could be silently dropped as a "duplicate".** The inbox dedup
   cache added in 0.11.1 was invalidated only by the inbox file's mtime, on the
   assumption that any change the writer did not make would move it. That does

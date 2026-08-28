@@ -219,6 +219,30 @@ describe("EngramEngine end-to-end (M1 acceptance)", () => {
     expect(await adapter.read(file)).toContain("Wrapped up.");
   });
 
+  it("still persists a reindex when a memory-root change lands mid-pass", async () => {
+    // `indexChain` serializes index passes against EACH OTHER, but
+    // `updateSettings` is synchronous and runs off-chain — a settings blur or
+    // its debounce. On a root change it swaps in a fresh, empty IndexManager.
+    // Because build/refresh yield to the event loop mid-pass, re-reading
+    // `this.index` after an await could land on that new instance, and
+    // `persist()` on an empty manager returns silently: the whole completed
+    // build was discarded while the log still reported success.
+    const seed: Record<string, string> = {};
+    for (let i = 0; i < 40; i++) seed[`Notes/n${i}.md`] = `# Note ${i}\nbody ${i}`;
+    const { adapter, engine } = makeEngine(seed);
+
+    const reindexing = engine.reindex();
+    // Land the root change while the pass is in flight.
+    await Promise.resolve();
+    engine.updateSettings({ ...DEFAULT_SETTINGS, memoryRoot: "Brain" });
+    await reindexing;
+
+    // The pass belonged to the original root, so its output must be there —
+    // not silently dropped.
+    const persisted = JSON.parse(await adapter.read("Claude Code/Index/chunks.json")) as unknown[];
+    expect(persisted.length, "the completed build must reach disk").toBeGreaterThan(0);
+  });
+
   it("refuses a session stamp that would escape the project's sessions folder", async () => {
     // The stamp is caller-supplied; nothing upstream sanitizes it. It must be
     // resolved against the sessions root rather than concatenated, so a

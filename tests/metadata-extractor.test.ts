@@ -149,6 +149,24 @@ describe("extractMetadata", () => {
     expect(meta.tags).toEqual([]);
   });
 
+  describe("a truncated frontmatter block keeps its tags past non-key lines", () => {
+    // Bounding the unterminated scan is a trade-off between two wrong answers.
+    // Stopping at the first line that was not `key: value` fixed the
+    // over-inclusion case below but broke these — and a MISSED exclusion tag
+    // is the direction that leaks a note to the agent, so these matter more.
+    const cases: [string, string][] = [
+      ["a YAML comment", "---\ntitle: Foo\n# a yaml comment\ntags: private\nBody."],
+      ["an indented nested key", "---\ntitle: Foo\n  nested: value\ntags: private\nBody."],
+      ["a bare list item", "---\n  - loose item\ntags: private\nBody."],
+      ["a blank line", "---\ntitle: Foo\n\ntags: private\nBody."],
+    ];
+    for (const [name, text] of cases) {
+      it(`survives ${name}`, () => {
+        expect(extractMetadata(text).tags).toContain("private");
+      });
+    }
+  });
+
   it("does not let a `title:` line in body prose override the real heading", () => {
     const meta = extractMetadata("---\nProse, not frontmatter.\ntitle: Wrong Title\n\n# Real Title\n");
     expect(meta.title).toBe("Real Title");

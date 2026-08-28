@@ -102,7 +102,7 @@ This is a desktop-only plugin (`isDesktopOnly: true`, minimum Obsidian 1.7.2).
 
 ### Install script (Linux/macOS)
 
-`scripts/install.sh` automates the steps above: it downloads the release assets, verifies them against the release's `SHA256SUMS` (published from v0.6.0 on), copies them into a vault you pick (auto-detected from Obsidian's vault registry), and — only with `--enable` — turns the plugin on. In keeping with this project's safety posture, please download and read it rather than piping it straight to bash:
+`scripts/install.sh` automates the steps above: it downloads the release assets, verifies them against the release's `SHA256SUMS`, copies them into a vault you pick (auto-detected from Obsidian's vault registry), and — only with `--enable` — turns the plugin on. **Verification fails closed**: if the checksum manifest cannot be fetched, or no sha256 tool is available, it refuses to install rather than continuing unverified — whoever can tamper with a download can also block one request, so an absent manifest is treated as interference rather than assumed benign. Releases before v0.6.0 predate the manifest; `--skip-verify` is the explicit opt-out for those. In keeping with this project's safety posture, please download and read it rather than piping it straight to bash:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nfoav8or/coder-engram/main/scripts/install.sh -o install.sh

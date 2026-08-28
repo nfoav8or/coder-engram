@@ -17,6 +17,60 @@ function makeEngine(settings: EngramSettings, seed = SEED) {
   return { adapter, engine };
 }
 
+describe("an INDEX_VERSION bump must not force a re-embed", () => {
+  it("reuses cached vectors when the chunk index is rejected and rebuilt", async () => {
+    // Vectors are keyed by chunk id and content hash and gated on provider
+    // identity, so they outlive a chunk-index rebuild by design. Loading the
+    // vector cache only when the index loaded meant every INDEX_VERSION bump
+    // (0.11.1 raised it to 4 for every existing user) started from an empty
+    // store and re-embedded the whole vault — real API spend on a paid
+    // provider, for chunk text that never changed.
+    //
+    // Counted by PROVIDER CALLS, not by comparing vectors: a deterministic
+    // provider returns byte-identical vectors whether they were reused or
+    // recomputed, so a value comparison passes either way and proves nothing.
+    let embedCalls = 0;
+    const http = new FakeHttpClient().on(
+      () => true,
+      (r) => {
+        if (!r.url.includes("/api/embed")) return { status: 200, body: "{}" };
+        embedCalls++;
+        const inputs = (JSON.parse(r.body ?? "{}") as { input: string[] }).input ?? [];
+        return {
+          status: 200,
+          body: JSON.stringify({ embeddings: inputs.map(() => [0.1, 0.2, 0.3]) }),
+        };
+      },
+    );
+    const settings: EngramSettings = {
+      ...DEFAULT_SETTINGS,
+      embeddingProvider: "ollama",
+      embeddingModel: "nomic",
+      embeddingEndpoint: "http://127.0.0.1:11434",
+    };
+    const adapter = new InMemoryVaultAdapter("v", { ...SEED });
+    let t = 10_000;
+
+    const first = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++, { http });
+    await first.reindex();
+    expect(embedCalls, "the first pass must actually embed").toBeGreaterThan(0);
+
+    // Simulate a vault last written by an older release: the chunk index is a
+    // version this build refuses, so load() returns null and forces a rebuild.
+    const meta = JSON.parse(await adapter.read("Claude Code/Index/metadata.json")) as {
+      version: number;
+    };
+    meta.version = meta.version - 1;
+    await adapter.write("Claude Code/Index/metadata.json", JSON.stringify(meta));
+
+    embedCalls = 0;
+    const upgraded = new EngramEngine(adapter, settings, NULL_LOGGER, () => t++, { http });
+    expect(await upgraded.loadIndex(), "the stale index must be rejected").toBe(false);
+    await upgraded.reindex();
+    expect(embedCalls, "an index-version bump must not re-embed a single chunk").toBe(0);
+  });
+});
+
 describe("EngramEngine M3 embeddings integration", () => {
   it("reports lexical mode with the 'none' provider", () => {
     const { engine } = makeEngine({ ...DEFAULT_SETTINGS, embeddingProvider: "none" });

@@ -113,13 +113,23 @@ function parseFrontmatter(lines: string[]): Frontmatter {
     }
     const kv = line.match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
     if (!kv) {
-      // With no closing fence there is nothing to bound the block, so stop at
-      // the first line that is not frontmatter-shaped rather than reading the
-      // whole document as YAML. A note that opens with `---` as a horizontal
-      // rule would otherwise have any later `tags:`/`title:` line in its prose
-      // — or inside a fenced code block, since this runs before fences are
-      // stripped — silently become real metadata.
-      if (unterminated && line.trim() !== "") break;
+      // With no closing fence there is nothing to bound the block, so stop
+      // once the content stops looking like frontmatter at all — otherwise a
+      // note that merely opens with `---` as a horizontal rule has any later
+      // `tags:`/`title:` line in its prose (or inside a fenced code block,
+      // since this runs before fences are stripped) silently become metadata.
+      //
+      // "Not frontmatter-shaped" has to be read narrowly. Stopping at the
+      // first line that was not a `key: value` swung too far the other way:
+      // a YAML comment, an indented nested key, or a bare list item ahead of
+      // the `tags:` line dropped the tags entirely — and a missed exclusion
+      // tag is the direction that LEAKS, which is the opposite of the
+      // trade-off this block is meant to make. Only unindented, non-blank,
+      // non-comment prose ends the scan. A truncated write also cuts at the
+      // END of the block, so the keys before the cut stay contiguous.
+      const frontmatterShaped =
+        line.trim() === "" || /^\s/.test(line) || /^\s*#/.test(line);
+      if (unterminated && !frontmatterShaped) break;
       currentListKey = null;
       continue;
     }

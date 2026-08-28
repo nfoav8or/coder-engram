@@ -290,7 +290,12 @@ export class EngramEngine {
     const eligible = files.filter(
       (f) => f.size <= ATTACHMENT_MAX_BYTES && eligibleByPath(f.path),
     );
-    await this.extractionCache.load();
+    // Bound for the whole pass, like the index in doReindex: a root change
+    // mid-scan swaps this.extractionCache, and entries written to the old
+    // instance after that would never be persisted — every attachment
+    // re-extracted on the next pass for nothing.
+    const cache = this.extractionCache;
+    await cache.load();
 
     const out: ScannedNote[] = [];
     const live = new Set<string>();
@@ -305,7 +310,7 @@ export class EngramEngine {
         continue;
       }
       live.add(f.path);
-      let entry = this.extractionCache.get(f.path, f.mtime);
+      let entry = cache.get(f.path, f.mtime);
       if (entry === undefined) {
         const lower = f.path.toLowerCase();
         const extractor = this.extractors.find((x) => x.extensions.some((e) => lower.endsWith(e)));
@@ -326,7 +331,7 @@ export class EngramEngine {
             });
           }
         }
-        this.extractionCache.set(f.path, f.mtime, text);
+        cache.set(f.path, f.mtime, text);
         entry = { mtime: f.mtime, text };
       }
       if (entry.text) {
@@ -338,7 +343,7 @@ export class EngramEngine {
         let metadata = entry.metadata;
         if (metadata === undefined) {
           metadata = extractMetadata(entry.text);
-          this.extractionCache.rememberMetadata(f.path, metadata);
+          cache.rememberMetadata(f.path, metadata);
         }
         // Tag exclusions apply to extracted text exactly as to notes; checked
         // at emit time (not cached), so a tag-config change re-evaluates
@@ -354,8 +359,8 @@ export class EngramEngine {
         { budgetChars: ATTACHMENT_TEXT_BUDGET_CHARS },
       );
     }
-    this.extractionCache.prune(live);
-    await this.extractionCache.persist();
+    cache.prune(live);
+    await cache.persist();
     return out;
   }
 
@@ -490,6 +495,15 @@ export class EngramEngine {
   /** Load a persisted index if present; returns true if one was loaded. */
   async loadIndex(): Promise<boolean> {
     const loaded = (await this.index.load()) !== null;
+    // Load the vector cache REGARDLESS of whether the chunk index loaded.
+    // Vectors are keyed by chunk id and content hash and gated on provider
+    // identity, so they survive a chunk-index rebuild by design — that is the
+    // entire point of the content-hash reuse. Loading them only on the success
+    // path meant any INDEX_VERSION bump (which forces `load()` to return null)
+    // left the store empty, so the rebuild that followed saw every chunk as
+    // new and re-embedded the whole vault. On a paid provider that is real
+    // money, charged on an upgrade whose chunk text did not change at all.
+    await this.embeddingStore.load();
     if (loaded) {
       // A loaded index's eligibility verdicts only stand if the config that
       // produced them is known AND unchanged — an exclusion added while the app
@@ -498,9 +512,8 @@ export class EngramEngine {
       // when it matches and fall back to re-reading every note when it does
       // not (or when the index predates the record).
       this.lastScanConfigKey = this.index.getScanConfigKey() ?? "";
-      // Bring the vector cache back into memory and rebuild the retriever so a
-      // reloaded index can serve vector/hybrid results immediately.
-      await this.embeddingStore.load();
+      // Rebuild the retriever so a reloaded index can serve vector/hybrid
+      // results immediately from the cache loaded above.
       this.retriever = this.buildRetriever();
     }
     return loaded;
@@ -519,22 +532,37 @@ export class EngramEngine {
   }
 
   private async doReindex(): Promise<{ noteCount: number; chunkCount: number }> {
+    // Bind to the manager this pass belongs to. `indexChain` serializes passes
+    // against each other, but `updateSettings` is synchronous, runs off-chain
+    // (a settings blur or its debounce), and on a memory-root change REPLACES
+    // this.index with a fresh empty manager. `build`/`refresh` yield to the
+    // event loop mid-pass, so re-reading `this.index` after an await could
+    // land on that new instance — and `persist()` on an empty manager returns
+    // silently, throwing away the whole completed build while still logging
+    // success. Holding the reference keeps a pass internally consistent.
+    const index = this.index;
     const scanConfig = toScanConfig(this.settings);
     const notes: ScannedNote[] = [
       ...(await this.scanner.scan(scanConfig)),
       ...(await this.scanAttachments(scanConfig)),
     ];
     this.extractionCache.consumeReset(); // a full build re-chunks everything
-    this.lastScanConfigKey = JSON.stringify(scanConfig);
-    this.index.setScanConfigKey(this.lastScanConfigKey);
-    const built = await this.index.build(notes);
-    await this.index.persist();
+    const scanKey = JSON.stringify(scanConfig);
+    index.setScanConfigKey(scanKey);
+    const built = await index.build(notes);
+    await index.persist();
     this.logger.info("Reindexed vault", {
       notes: built.metadata.noteCount,
       chunks: built.metadata.chunkCount,
     });
+    const result = { noteCount: built.metadata.noteCount, chunkCount: built.metadata.chunkCount };
+    // If the engine moved on mid-pass, this result describes the OLD root. It
+    // is safely persisted there, but must not set engine-level bookkeeping or
+    // drive an embedding pass for a root it did not scan.
+    if (this.index !== index) return result;
+    this.lastScanConfigKey = scanKey;
     await this.embedIndex();
-    return { noteCount: built.metadata.noteCount, chunkCount: built.metadata.chunkCount };
+    return result;
   }
 
   /** Incremental refresh (used by auto-index and manual refresh). */
@@ -547,6 +575,8 @@ export class EngramEngine {
       await this.doReindex();
       return { added: this.index.getChunks().length, updated: 0, removed: 0, unchanged: 0 };
     }
+    // Bound to one manager for the whole pass — see doReindex for why.
+    const index = this.index;
     const scanConfig = toScanConfig(this.settings);
     const scanKey = JSON.stringify(scanConfig);
     // Skip-unchanged scanning keeps a debounced refresh O(changed) in file
@@ -554,21 +584,20 @@ export class EngramEngine {
     // mtimes were scanned under (see lastScanConfigKey).
     const mdNotes =
       scanKey === this.lastScanConfigKey
-        ? await this.scanner.scan(scanConfig, this.index.getNoteMtimes())
+        ? await this.scanner.scan(scanConfig, index.getNoteMtimes())
         : await this.scanner.scan(scanConfig);
     // Attachments do their own mtime short-circuit via the extraction cache,
     // so the fast path stays O(changed) for them too.
     const attachmentNotes = await this.scanAttachments(scanConfig);
     const notes = [...mdNotes, ...attachmentNotes];
-    this.lastScanConfigKey = scanKey;
-    this.index.setScanConfigKey(scanKey);
+    index.setScanConfigKey(scanKey);
     // A discarded extraction cache (version bump / corrupt file) means the
     // re-extracted text can differ under an unchanged mtime — force those
     // notes past the index's mtime short-circuit once.
     const force = this.extractionCache.consumeReset()
       ? new Set(attachmentNotes.map((n) => n.path))
       : undefined;
-    const result = await this.index.refresh(notes, force);
+    const result = await index.refresh(notes, force);
     // Persist only when something changed: a no-op persist re-serializes the
     // whole index (tens of MB at scale) on the main thread, and — because the
     // index files live inside the vault — its own writes re-fire the vault
@@ -578,9 +607,13 @@ export class EngramEngine {
     // the file does not have yet (an index written before the mtime map or the
     // scan key existed). Without the second clause an unchanged vault never
     // writes, so the upgrade never lands and every launch re-reads everything.
-    if (result.added + result.updated + result.removed > 0 || this.index.needsMetadataPersist()) {
-      await this.index.persist();
+    if (result.added + result.updated + result.removed > 0 || index.needsMetadataPersist()) {
+      await index.persist();
     }
+    // See doReindex: a settings change mid-pass means this result describes a
+    // root the engine has already left behind.
+    if (this.index !== index) return result;
+    this.lastScanConfigKey = scanKey;
     // Same economy for the embedding pass: it hashes every chunk to find work,
     // so an all-unchanged refresh under an unchanged backend identity has
     // nothing to embed by construction and skips the sweep.
@@ -663,6 +696,13 @@ export class EngramEngine {
   private async doEmbedIndex(): Promise<void> {
     if (!this.embeddingProvider) return;
     const provider = this.embeddingProvider;
+    // Bind the index and store this pass belongs to, for the same reason
+    // doReindex does: `updateSettings` runs off-chain and replaces both on a
+    // root change. Reading `this.index` after the availability await could
+    // otherwise pick up a fresh EMPTY manager, embed nothing, and then record
+    // the new root's identity as fully embedded — leaving vector search
+    // silently stuck on lexical with no later pass willing to retry.
+    const index = this.index;
     // Pessimistic until the pass completes: an early return or throw below
     // leaves vectors possibly missing, and null makes the next refresh retry.
     this.lastEmbeddedIdentity = null;
@@ -676,13 +716,19 @@ export class EngramEngine {
       // Snapshot the ARRAY so a concurrent index swap can't shift it mid-pass,
       // but keep the chunk objects themselves: the store memoizes content
       // hashes by chunk identity, and a fresh wrapper per call would defeat it.
-      const chunks = this.index.getChunks().slice();
+      const chunks = index.getChunks().slice();
       const identity = this.vectorIdentity();
-      const pass = await this.embeddingStore.embedIndex(chunks, provider, {
+      const store = this.embeddingStore;
+      const pass = await store.embedIndex(chunks, provider, {
         batchSize: this.settings.embeddingBatchSize,
         concurrency: this.settings.embeddingConcurrency,
         identity,
       });
+      // Only claim this identity as embedded if the engine is still on the
+      // root this pass ran against. Otherwise the NEW root would be recorded
+      // as up to date on the strength of the old root's work, and no later
+      // refresh would re-run the pass for it.
+      if (this.index !== index || this.embeddingStore !== store) return;
       this.lastEmbeddedIdentity = identity;
       // Rebuild only when the pass changed vectors: the retriever snapshots the
       // vector map at build time, so an unchanged map needs no rebuild — and a
