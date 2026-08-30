@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An excluded path pattern could silently stop excluding.** Patterns past the
+  safety caps (256 characters or 12 wildcards) are not compiled to a RegExp,
+  because the `[^/]*` and `.*` a glob expands to backtrack catastrophically once
+  enough of them combine. The fallback stripped the wildcards and tested
+  `includes` on the remainder — turning `Private/**/*.md` into the literal
+  `Private/.md`, a string essentially no path contains. The exclusion then
+  matched **nothing**, and the notes it was meant to hide were indexed and
+  reachable over the local MCP server, with nothing logged. The fallback now
+  requires the pattern's literal fragments to appear **in order**, which is
+  linear, cannot backtrack, and is a deliberate *superset* of the glob: for a
+  privacy control, matching too much keeps a note out of the index and matching
+  too little hands it to the agent, so only one direction is a safe way to be
+  wrong. The degradation is now logged rather than silent.
+
+  **No index rebuild is needed.** Path eligibility is re-evaluated on every
+  scan, including the mtime fast path, so the first refresh after upgrading
+  drops any note that was wrongly indexed. This is unlike the tag-exclusion
+  fixes, which needed an `INDEX_VERSION` bump because their verdict depended on
+  re-*reading* a note's content and a refresh only re-reads on an mtime change.
+
 ## [0.12.0] — 2026-08-28
 
 ### Changed

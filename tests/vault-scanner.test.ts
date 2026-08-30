@@ -20,6 +20,28 @@ describe("excludedPathPatterns matching (via isPathEligible)", () => {
   it("matches substrings case-insensitively", () => {
     expect(scanner.isPathEligible("Private/Secret.md", config({ excludedPathPatterns: ["secret"] }))).toBe(false);
   });
+  it("still excludes when a pattern is too complex to compile safely", () => {
+    // Patterns past the wildcard/length cap cannot be handed to a RegExp — the
+    // `[^/]*` and `.*` the glob compiles to backtrack catastrophically when
+    // combined. The fallback used to strip the wildcards and test `includes`
+    // on the remainder, which turned `Private/**/*.md` into the literal
+    // `Private/.md`: a string essentially no path contains, so the exclusion
+    // matched NOTHING and the notes it was meant to hide were indexed and
+    // reachable over the MCP server, silently. A privacy control may be wrong
+    // by excluding too much; it may not be wrong by excluding nothing.
+    const many = `Private/${"*".repeat(13)}.md`;
+    expect(scanner.isPathEligible("Private/2026/08/secret.md", config({ excludedPathPatterns: [many] }))).toBe(false);
+
+    // Over the length cap, same fallback, same requirement.
+    const long = `Private/*${"b".repeat(300)}*.md`;
+    expect(scanner.isPathEligible(`Private/${"b".repeat(300)}.md`, config({ excludedPathPatterns: [long] }))).toBe(false);
+
+    // The fallback is a superset of the glob, not a wildcard: an unrelated
+    // path must still be eligible, or a complex pattern would empty the index.
+    expect(scanner.isPathEligible("Notes/ok.md", config({ excludedPathPatterns: [many] }))).toBe(true);
+    expect(scanner.isPathEligible("Private/2026/08/secret.md", config({ excludedPathPatterns: [`Archive/${"*".repeat(13)}.md`] }))).toBe(true);
+  });
+
   it("matches globs", () => {
     expect(scanner.isPathEligible("a/b/secret.md", config({ excludedPathPatterns: ["**/secret.md"] }))).toBe(false);
     // * does not cross '/'

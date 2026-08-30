@@ -85,19 +85,52 @@ function globToRegExp(pattern: string): RegExp {
 const MAX_PATTERN_LENGTH = 256;
 const MAX_WILDCARDS = 12;
 
+/**
+ * Match a folded path against the pattern's literal fragments, in order.
+ *
+ * This is the fallback for a pattern too complex to compile safely, and it is
+ * deliberately a SUPERSET of what the glob would match: the glob anchors its
+ * literals (`^A[^/]*B$`), while this only requires A before B anywhere in the
+ * path. For an exclusion — a privacy control — matching too much keeps a note
+ * out of the index, and matching too little serves it to the agent. Only one of
+ * those is a safe way to be wrong.
+ *
+ * Linear in the path length with no backtracking, which is the whole point:
+ * the patterns that reach here are the ones a RegExp cannot be trusted with.
+ */
+function matchesFragmentsInOrder(foldedPath: string, fragments: string[]): boolean {
+  let at = 0;
+  for (const fragment of fragments) {
+    const found = foldedPath.indexOf(fragment, at);
+    if (found === -1) return false;
+    at = found + fragment.length;
+  }
+  return true;
+}
+
 /** Compile one exclusion pattern into a matcher over an already-folded path,
  * so per-pattern folding and glob→RegExp compilation happen once per scan
  * rather than once per file. */
-function compilePathPattern(pattern: string): (foldedPath: string) => boolean {
+function compilePathPattern(
+  pattern: string,
+  onDegrade?: (pattern: string) => void,
+): (foldedPath: string) => boolean {
   const p = foldForCompare(pattern.trim());
   if (p === "") return () => false;
   if (p.includes("*")) {
     // Guard against pathological patterns (many wildcards → catastrophic
-    // regex backtracking). Overly complex patterns degrade to a literal test.
+    // regex backtracking).
     const wildcards = (p.match(/\*/g) ?? []).length;
     if (p.length > MAX_PATTERN_LENGTH || wildcards > MAX_WILDCARDS) {
-      const literal = p.replace(/\*/g, "");
-      return (foldedPath) => foldedPath.includes(literal);
+      // This used to strip the wildcards and test `includes` on what was left,
+      // which turned `Private/**/*.md` into the literal `Private/.md` — a
+      // string essentially no path contains. The exclusion then matched
+      // NOTHING and the notes it was meant to hide were indexed and served
+      // over the MCP server, with nothing said. Ordered-fragment matching
+      // errs the other way, and the degradation is logged either way.
+      const fragments = p.split("*").filter((f) => f !== "");
+      onDegrade?.(pattern);
+      return (foldedPath) => matchesFragmentsInOrder(foldedPath, fragments);
     }
     const re = globToRegExp(p);
     return (foldedPath) => re.test(foldedPath);
@@ -134,7 +167,16 @@ export class VaultScanner {
       .map((f) => normalizeFolder(f))
       .filter(Boolean)
       .map(foldForCompare);
-    const patterns = config.excludedPathPatterns.map(compilePathPattern);
+    // Not `.map(compilePathPattern)`: `map` passes the index as the second
+    // argument, which would land in `onDegrade`.
+    const patterns = config.excludedPathPatterns.map((pattern) =>
+      compilePathPattern(pattern, (raw) =>
+        this.logger.warn(
+          "Excluded path pattern is too complex to match exactly; falling back to a broader match",
+          { pattern: raw },
+        ),
+      ),
+    );
     return (path) => {
       const p = foldForCompare(path);
       if (included.length > 0 && !included.some((f) => isUnderFolderFolded(p, f))) {
