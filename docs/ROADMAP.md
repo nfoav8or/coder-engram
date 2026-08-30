@@ -235,7 +235,7 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing unreleased — 0.12.0 has just been cut.
+- **An over-complex excluded path pattern stopped excluding anything.** Past the safety caps (256 characters or 12 wildcards) a pattern is not compiled to a RegExp — the `[^/]*` and `.*` a glob expands to backtrack catastrophically once combined — and the fallback stripped the wildcards and tested `includes` on the remainder, turning `Private/**/*.md` into the literal `Private/.md`. The exclusion matched nothing and the notes it was meant to hide were indexed and served over the MCP server, silently. The fallback is now an ordered-literal match that is a deliberate superset of the glob, and it is logged. **No `INDEX_VERSION` bump** — verified, not assumed: path eligibility is re-evaluated on every scan including the mtime fast path, so the first refresh evicts anything wrongly indexed.
 
 **Next, in order**, per [LARGE_VAULTS.md](LARGE_VAULTS.md):
 
