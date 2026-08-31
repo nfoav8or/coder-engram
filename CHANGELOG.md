@@ -33,6 +33,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the consequence landed precisely on this tool's purpose: an agent that
   believes a fact is already pending suppresses a genuine proposal.
 
+- **`get_recent_changes` — a cheap session warm-start.** An agent resuming work
+  needs to know what moved since it last looked, and the only way to ask was a
+  search: it had to invent a query for something that is not a relevance
+  question, then hope ranking surfaced recency. This answers it directly from
+  the note→mtime map the index already holds — no I/O, no embedding call, no
+  scoring — and returns paths and dates rather than content, so the agent
+  chooses what to spend context on and follows up with `get_note_context`.
+
+  `sinceDays` takes fractions (an hour is about 0.04), because "what changed in
+  the last hour" is the question that actually gets asked. An empty index is
+  reported distinctly from "nothing changed": the answer is unknown rather than
+  negative, and conflating them is how an agent concludes a vault is idle when
+  it is merely unindexed. Excluded notes cannot appear — the map holds only
+  what was indexed, so the privacy controls are upstream of this by
+  construction rather than by a filter here.
+
 ### Fixed
 
 - **Memory dedup missed a case-variant project name.** The proposal dedup key

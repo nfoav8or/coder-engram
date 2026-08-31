@@ -93,6 +93,20 @@ export class InMemoryVaultAdapter implements VaultAdapter {
     return this.clock++;
   }
 
+  /**
+   * Test support: set a file's mtime directly.
+   *
+   * Writes tick the clock by one, so files written through the adapter land
+   * milliseconds apart and no realistic time WINDOW can separate them. Tests
+   * that exercise recency need files genuinely days apart, and the alternative
+   * — threading a settable clock through every write — buys nothing else.
+   */
+  setMtime(path: string, mtime: number): void {
+    const file = this.files.get(path);
+    if (!file) throw new Error(`setMtime: no such file: ${path}`);
+    file.mtime = mtime;
+  }
+
   private registerFolders(path: string): void {
     const parts = path.split("/");
     parts.pop();

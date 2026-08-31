@@ -907,6 +907,37 @@ export class EngramEngine {
   }
 
   /**
+   * Notes the index has seen change since `sinceMs`, newest first.
+   *
+   * The point is a cheap session warm-start: an agent returning to a vault
+   * needs to know what moved since it last looked, and asking that as a search
+   * means inventing a query for something that is not a relevance question at
+   * all. This reads the note→mtime map the index already holds, so it costs no
+   * I/O and no scoring.
+   *
+   * Excluded notes are absent by construction rather than by a filter here:
+   * the map holds only what was indexed, and the scanner's exclusions run
+   * before anything reaches the index. There is no path in this method that
+   * could surface a note the privacy controls kept out.
+   */
+  getChangedNotes(
+    sinceMs: number,
+    limit: number,
+  ): { indexed: number; changed: Array<{ path: string; mtime: number }> } {
+    // `indexed` comes from the SAME map the results do, so "the index is empty"
+    // and "nothing changed in this window" can never disagree. Reading the
+    // count from `getIndexStats()` instead would be a second source of truth
+    // for one question, and the two are maintained by different code paths.
+    const mtimes = this.index.getNoteMtimes();
+    const changed: Array<{ path: string; mtime: number }> = [];
+    for (const [path, mtime] of mtimes) {
+      if (mtime >= sinceMs) changed.push({ path, mtime });
+    }
+    changed.sort((a, b) => b.mtime - a.mtime || a.path.localeCompare(b.path));
+    return { indexed: mtimes.size, changed: changed.slice(0, limit) };
+  }
+
+  /**
    * Read + parse the review inbox.
    *
    * `project` filters to one project's proposals, folded for case and Unicode

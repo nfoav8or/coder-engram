@@ -123,6 +123,14 @@ const SUMMARY_MAX_CHARS = 4_000;
 // tells an agent to send.
 const PENDING_MAX_LIMIT = 50;
 const PENDING_DEFAULT_LIMIT = 20;
+// `get_recent_changes` reads an in-memory map and formats it — no I/O, no
+// scoring. The limit exists to bound OUTPUT, not work: a vault where thousands
+// of notes changed in the window would otherwise return a wall of paths that
+// costs the agent more context than the answer is worth.
+const CHANGES_MAX_LIMIT = 200;
+const CHANGES_DEFAULT_LIMIT = 50;
+const CHANGES_DEFAULT_DAYS = 7;
+const CHANGES_MAX_DAYS = 365;
 const NOTE_CONTEXT_MAX_PER_MINUTE = 60;
 const NOTE_CONTEXT_DEFAULT_MAX_CHARS = 12_000;
 const NOTE_CONTEXT_MAX_CHARS = 50_000;
@@ -950,6 +958,78 @@ const listPendingMemoryTool: Tool = {
   },
 };
 
+/**
+ * `get_recent_changes` — what moved since the agent last looked.
+ *
+ * Paths and dates, never content: the follow-up is `get_note_context` on
+ * whichever paths matter, which keeps the agent in control of what it spends
+ * context on. See `EngramEngine.getChangedNotes` for why this is a map read
+ * rather than a search, and for the exclusion property it rests on.
+ */
+const getRecentChangesTool: Tool = {
+  definition: {
+    name: "get_recent_changes",
+    description:
+      "List indexed notes changed recently, newest first, as paths and dates. " +
+      "Use at the start of a session to see what moved since you last worked here, " +
+      "then read the ones that matter with get_note_context. Returns no note content.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sinceDays: {
+          type: "number",
+          description: `Look back this many days (0–${CHANGES_MAX_DAYS}, default ${CHANGES_DEFAULT_DAYS}). Fractions are allowed: 1 hour is about 0.04. 0 means no lower bound, matching search_vault_memory.`,
+        },
+        limit: {
+          type: "number",
+          description: `Max notes (1–${CHANGES_MAX_LIMIT}, default ${CHANGES_DEFAULT_LIMIT}).`,
+        },
+        maxChars: MAX_CHARS_SCHEMA,
+      },
+      additionalProperties: false,
+    },
+  },
+  async handler(args, ctx) {
+    ctx.rateLimiter.enforceWindow("get_recent_changes", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
+    const obj = requireObject(args, "arguments");
+    // Fractional days on purpose: "what changed in the last hour" is the
+    // question a resuming agent actually has, and a whole-day floor would make
+    // it unaskable. `0` is accepted and means no lower bound, because that is
+    // what it already means to `search_vault_memory` — the same argument name
+    // advertising two incompatible domains across one tool surface is how an
+    // agent carries a value over and gets a validation error instead of the
+    // widest window.
+    const sinceDays = optionalNumber(obj, "sinceDays", CHANGES_DEFAULT_DAYS, {
+      min: 0,
+      max: CHANGES_MAX_DAYS,
+    });
+    const limit = Math.trunc(
+      optionalNumber(obj, "limit", CHANGES_DEFAULT_LIMIT, { min: 1, max: CHANGES_MAX_LIMIT }),
+    );
+    const maxChars = contextMaxChars(obj);
+
+    // `0` is "no lower bound", not "a cutoff at this instant" — the arithmetic
+    // alone would make it the emptiest possible window rather than the widest,
+    // which is the opposite of what it means to `search_vault_memory`.
+    const sinceMs = sinceDays === 0 ? Number.NEGATIVE_INFINITY : ctx.clock() - sinceDays * MS_PER_DAY;
+    const { indexed, changed } = ctx.engine.getChangedNotes(sinceMs, limit);
+    if (indexed === 0) {
+      // Distinguished from "nothing changed": an empty index means the answer
+      // is unknown, not negative, and the fix is a reindex rather than a wider
+      // window. Conflating them is how an agent concludes a vault is idle.
+      // Both facts come from one call so they cannot disagree.
+      return "The index is empty, so no change history is available. Run reindex_vault first.";
+    }
+    const window = sinceDays === 0 ? "ever recorded" : `in the last ${sinceDays} day(s)`;
+    if (changed.length === 0) {
+      return `No indexed notes changed ${window}.`;
+    }
+    const lines = changed.map((c) => `${c.path} — ${formatModifiedDate(c.mtime)}`);
+    const body = `${changed.length} changed ${window}, newest first:\n\n${lines.join("\n")}`;
+    return clipContext(body, maxChars, "narrow `sinceDays` or lower `limit`");
+  },
+};
+
 const ALL_TOOLS: Tool[] = [
   searchTool,
   addMemoryTool,
@@ -960,6 +1040,7 @@ const ALL_TOOLS: Tool[] = [
   getGlobalContextTool,
   listProjectsTool,
   listPendingMemoryTool,
+  getRecentChangesTool,
   getRecentSessionsTool,
   reindexTool,
 ];

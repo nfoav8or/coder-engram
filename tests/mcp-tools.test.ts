@@ -5,11 +5,22 @@ import { DEFAULT_SETTINGS, EngramSettings } from "../src/settings/settings";
 import { NULL_LOGGER } from "../src/utils/logger";
 import { ToolRegistry, ToolContext, RateLimiter } from "../src/server/mcp-tools";
 
-function makeContext(seed: Record<string, string> = {}, overrides: Partial<EngramSettings> = {}) {
-  const adapter = new InMemoryVaultAdapter("v", seed);
+/**
+ * `startClock` seeds the fake adapter's mtimes and pins the tool clock just
+ * after them. The default (1 000) sits so close to the epoch that every
+ * `sinceDays` window covers every file, which silently made window filtering
+ * untestable through the tools — a `sinceMs = 0` mutation passed the whole
+ * suite. Tests that care about time pass a realistic epoch.
+ */
+function makeContext(
+  seed: Record<string, string> = {},
+  overrides: Partial<EngramSettings> = {},
+  opts: { startClock?: number; now?: number } = {},
+) {
+  const adapter = new InMemoryVaultAdapter("v", seed, opts.startClock ?? 1_000);
   const settings: EngramSettings = { ...DEFAULT_SETTINGS, ...overrides };
-  let t = 1_000;
-  const clock = () => t++;
+  let t = opts.now ?? 1_000;
+  const clock = () => (opts.now === undefined ? t++ : opts.now);
   const engine = new EngramEngine(adapter, settings, NULL_LOGGER, clock);
   const ctx: ToolContext = {
     engine,
@@ -72,6 +83,7 @@ describe("ToolRegistry", () => {
         "get_global_context",
         "get_note_context",
         "get_project_context",
+        "get_recent_changes",
         "get_recent_sessions",
         "list_pending_memory",
         "list_projects",
@@ -899,6 +911,134 @@ describe("list_pending_memory", () => {
   });
 });
 
+describe("get_recent_changes", () => {
+  const seed = {
+    "Notes/old.md": "# Old\n\nold body",
+    "Notes/new.md": "# New\n\nnew body",
+  };
+
+  it("distinguishes an empty index from nothing having changed", async () => {
+    // Conflating the two is how an agent concludes a vault is idle when it is
+    // actually unindexed — and the fix differs: reindex, versus a wider window.
+    const { ctx } = makeContext(seed);
+    const registry = new ToolRegistry();
+    expect(await registry.call("get_recent_changes", {}, ctx)).toMatch(/index is empty/i);
+
+    await ctx.engine.reindex();
+    const out = await registry.call("get_recent_changes", {}, ctx);
+    expect(out).toContain("Notes/new.md");
+    expect(out).toContain("Notes/old.md");
+  });
+
+  it("returns paths and dates but never note content", async () => {
+    // The agent chooses what to spend context on: this answers "what moved",
+    // and get_note_context answers "what does it say".
+    const { ctx } = makeContext(seed);
+    await ctx.engine.reindex();
+    const out = await new ToolRegistry().call("get_recent_changes", {}, ctx);
+    expect(out).toContain("Notes/new.md");
+    expect(out).not.toContain("new body");
+    expect(out).not.toContain("old body");
+  });
+
+  it("derives its window from sinceDays, inclusively at the cutoff", async () => {
+    // End-to-end through the tool, with a realistic clock. This is what the
+    // engine-level test below cannot reach: the `sinceDays * MS_PER_DAY`
+    // arithmetic, its units, and the sign. Without it, replacing the whole
+    // derivation with `sinceMs = 0` passed the entire suite.
+    const DAY = 86_400_000;
+    const now = 1_800_000_000_000;
+    // Three files, seeded one clock tick apart, then aged by rewriting below.
+    const { ctx, adapter } = makeContext({}, {}, { now });
+    await adapter.write("Notes/old.md", "# Old\n\nbody");
+    await adapter.write("Notes/edge.md", "# Edge\n\nbody");
+    await adapter.write("Notes/fresh.md", "# Fresh\n\nbody");
+    // Age them explicitly: 10 days, exactly 2 days, and 1 hour. Writes tick the
+    // adapter clock by one, so files land milliseconds apart and no realistic
+    // window could tell them apart.
+    adapter.setMtime("Notes/old.md", now - 10 * DAY);
+    adapter.setMtime("Notes/edge.md", now - 2 * DAY);
+    adapter.setMtime("Notes/fresh.md", now - DAY / 24);
+    await ctx.engine.reindex();
+    const registry = new ToolRegistry();
+
+    const narrow = await registry.call("get_recent_changes", { sinceDays: 2 }, ctx);
+    // Exactly at the cutoff must be INCLUDED — `>=`, not `>`. A note modified
+    // precisely on the boundary otherwise vanishes with nothing to say why.
+    expect(narrow).toContain("Notes/edge.md");
+    expect(narrow).toContain("Notes/fresh.md");
+    expect(narrow).not.toContain("Notes/old.md");
+
+    // A wider window reaches the older note; a narrower one drops the edge.
+    expect(await registry.call("get_recent_changes", { sinceDays: 30 }, ctx)).toContain(
+      "Notes/old.md",
+    );
+    const hour = await registry.call("get_recent_changes", { sinceDays: 0.1 }, ctx);
+    expect(hour).toContain("Notes/fresh.md");
+    expect(hour).not.toContain("Notes/edge.md");
+
+    // Dates are rendered, not just paths — the tool's name promises both.
+    expect(narrow).toMatch(/Notes\/fresh\.md — \d{4}-\d{2}-\d{2}/);
+
+    // 0 means no lower bound, the same as it does to search_vault_memory.
+    expect(await registry.call("get_recent_changes", { sinceDays: 0 }, ctx)).toContain(
+      "Notes/old.md",
+    );
+  });
+
+  it("enforces its argument bounds and the character budget", async () => {
+    const { ctx } = makeContext(seed);
+    await ctx.engine.reindex();
+    const registry = new ToolRegistry();
+    for (const bad of [{ limit: 0 }, { limit: 999 }, { sinceDays: -1 }, { sinceDays: 400 }]) {
+      await expect(
+        registry.call("get_recent_changes", bad, ctx),
+        `accepted out-of-range ${JSON.stringify(bad)}`,
+      ).rejects.toThrow();
+    }
+    const clipped = await registry.call("get_recent_changes", { maxChars: 1000 }, ctx);
+    expect(clipped.length).toBeLessThanOrEqual(1100);
+  });
+
+  it("filters by the window and orders newest first", async () => {
+    // Exercised on the engine rather than through the tool: the tool derives
+    // `sinceMs` from the injected clock, and this harness's clock starts near
+    // the seeded mtimes, so every window covers everything. Testing the cutoff
+    // where it is actually applied keeps the assertion about the rule instead
+    // of about the fixture's clock.
+    const { ctx } = makeContext(seed);
+    await ctx.engine.reindex();
+    const all = ctx.engine.getChangedNotes(0, 50).changed;
+    expect(all.length).toBe(2);
+    // Newest first, and every entry at or after the cutoff.
+    expect(all[0].mtime).toBeGreaterThanOrEqual(all[1].mtime);
+    const cutoff = all[0].mtime;
+    const recent = ctx.engine.getChangedNotes(cutoff, 50).changed;
+    expect(recent.length).toBeGreaterThan(0);
+    expect(recent.every((c) => c.mtime >= cutoff)).toBe(true);
+    // A cutoff past everything returns nothing rather than falling back to all.
+    expect(ctx.engine.getChangedNotes(cutoff + 1_000_000, 50).changed).toEqual([]);
+    // Emptiness and the results come from one call, so they cannot disagree.
+    expect(ctx.engine.getChangedNotes(cutoff + 1_000_000, 50).indexed).toBe(2);
+    // And the limit bounds the output.
+    expect(ctx.engine.getChangedNotes(0, 1).changed.length).toBe(1);
+  });
+
+  it("never lists a note the exclusions kept out of the index", async () => {
+    // Not a filter in the tool: the mtime map holds only what was indexed, so
+    // an excluded note has no way to appear. Asserted because that is the
+    // property, not the implementation.
+    const { ctx } = makeContext(
+      { ...seed, "Private/secret.md": "# Secret\n\nhidden" },
+      { excludedFolders: ["Private"] },
+    );
+    await ctx.engine.reindex();
+    const out = await new ToolRegistry().call("get_recent_changes", {}, ctx);
+    expect(out).toContain("Notes/new.md");
+    expect(out).not.toContain("Private/secret.md");
+  });
+});
+
 describe("the exposed tool surface", () => {
   it("is exactly the curated read/propose set — nothing that writes memory directly", () => {
     // SECURITY.md promises promotion of an inbox entry is UI-only and never
@@ -914,6 +1054,7 @@ describe("the exposed tool surface", () => {
         "get_global_context",
         "get_note_context",
         "get_project_context",
+        "get_recent_changes",
         "get_recent_sessions",
         "list_pending_memory",
         "list_projects",
