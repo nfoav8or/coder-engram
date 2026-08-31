@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-08-31
+
 > **This release rebuilds your index once, on first load.** `INDEX_VERSION` moved
 > from 6 to 7 because chunks now carry the symbols their fenced code declares —
 > a derived field, so an older index cannot be repaired by a refresh: only notes
@@ -1676,7 +1678,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.11.3...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.14.0...HEAD
+[0.14.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.14.0
 [0.13.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.13.0
 [0.12.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.12.1
 [0.12.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.12.0
