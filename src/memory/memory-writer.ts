@@ -211,6 +211,7 @@ export function formatMemoryEntry(entry: MemoryEntry): string {
     originTool: entry.originTool,
     confidence: entry.confidence,
     supersedes: entry.supersedes,
+    similarTo: entry.similarTo,
     tags: entry.tags,
     content: entry.content,
     relatedPaths: entry.relatedPaths,

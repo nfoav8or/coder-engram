@@ -509,6 +509,23 @@ describe("the Supersedes field", () => {
     expect(renderPendingBlock(parsed)).toBe(rendered);
   });
 
+  it("round-trips the engine-computed Similar field alongside it", () => {
+    const fields: PendingBlockFields = {
+      timestampLabel: "2026-07-03 14:22",
+      type: "decision",
+      source: "MCP",
+      similarTo: "Claude Code/Memory/Projects/Engram/decisions.md#Decision — storage",
+      tags: [],
+      content: "We chose Postgres.",
+      relatedPaths: [],
+      status: "pending",
+    };
+    const rendered = renderPendingBlock(fields);
+    const [parsed] = parsePendingInbox(INBOX_HEADER + rendered).entries;
+    expect(parsed.similarTo).toBe(fields.similarTo);
+    expect(renderPendingBlock(parsed)).toBe(rendered);
+  });
+
   it("cannot be forged from content, which the parser reads after the landmark", () => {
     // Header fields are only read before `Content:`, so a Supersedes line in
     // the body stays body — otherwise any proposal could retire any memory.

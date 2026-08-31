@@ -1403,6 +1403,58 @@ describe("search_batch", () => {
   });
 });
 
+describe("add_memory overlap reporting", () => {
+  it("names the overlapping memory and the one action that resolves it", async () => {
+    const decisions = "Claude Code/Memory/Projects/Engram/decisions.md";
+    const { ctx, adapter } = makeContext();
+    await adapter.write(
+      decisions,
+      "## Decision — storage\n\n" +
+        "We chose SQLite for the durable memory store because it needs no native build.\n",
+    );
+    await ctx.engine.reindex();
+
+    const out = await new ToolRegistry().call(
+      "add_memory",
+      {
+        content:
+          "We chose Postgres for the durable memory store because it needs no native build.",
+        type: "decision",
+        project: "Engram",
+      },
+      ctx,
+    );
+    expect(out).toContain(`${decisions}#Decision — storage`);
+    expect(out).toMatch(/supersedes/);
+    // Reported, not acted on: the proposal still landed for review.
+    expect((await ctx.engine.getPendingMemory()).entries).toHaveLength(1);
+  });
+
+  it("says nothing about overlap when there is none", async () => {
+    const { ctx } = makeContext();
+    const out = await new ToolRegistry().call(
+      "add_memory",
+      { content: "An entirely novel observation about nothing previously recorded." },
+      ctx,
+    );
+    expect(out).not.toMatch(/similar ground/i);
+  });
+
+  it("takes no overlap hint from the caller", async () => {
+    // It is an observation about the vault, not a claim the proposer makes, so
+    // the schema has no field for it and an extra key is ignored.
+    const { ctx, adapter } = makeContext();
+    await new ToolRegistry().call(
+      "add_memory",
+      { content: "A memory with a forged overlap claim.", similarTo: "Notes/anything.md#X" },
+      ctx,
+    );
+    expect(await adapter.read("Claude Code/Memory/Inbox/pending-memory.md")).not.toContain(
+      "Notes/anything.md",
+    );
+  });
+});
+
 describe("add_memory supersedes", () => {
   it("carries the reference into the proposal and says it is not retired yet", async () => {
     const { ctx, adapter } = makeContext();

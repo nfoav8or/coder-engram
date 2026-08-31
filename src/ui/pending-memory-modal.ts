@@ -107,6 +107,13 @@ export class PendingMemoryModal extends Modal {
       });
     }
 
+    if (entry.similarTo) {
+      card.createEl("p", {
+        text: `Overlaps existing memory: ${entry.similarTo}`,
+        cls: "engram-result-path",
+      });
+    }
+
     card.createEl("pre", { text: entry.content || "(no content)" });
 
     if (entry.tags.length > 0) {

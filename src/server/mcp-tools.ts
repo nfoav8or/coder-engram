@@ -461,7 +461,7 @@ const addMemoryTool: Tool = {
     const supersedes = optionalString(obj, "supersedes", "", 1_000) || undefined;
 
     // Network path is inbox-only by construction: no `direct` option is passed.
-    const { path, duplicate, rejection } = await ctx.engine.addMemory({
+    const { path, duplicate, rejection, similarTo } = await ctx.engine.addMemory({
       type,
       content,
       project,
@@ -483,9 +483,20 @@ const addMemoryTool: Tool = {
       );
     }
     if (duplicate) return `An identical memory is already pending review in ${path}; not added again.`;
-    return supersedes
-      ? `Proposed memory appended to ${path} for review. It claims to replace ${supersedes}; ` +
-          `that memory is retired only if a reviewer applies this entry.`
+    if (supersedes) {
+      return (
+        `Proposed memory appended to ${path} for review. It claims to replace ${supersedes}; ` +
+        `that memory is retired only if a reviewer applies this entry.`
+      );
+    }
+    // Reported, never acted on. Deciding that two memories disagree is a
+    // judgement this cannot make offline, so it names the candidate and the one
+    // action that resolves it.
+    return similarTo
+      ? `Proposed memory appended to ${path} for review. An existing memory covers similar ` +
+          `ground: ${similarTo}. If this REPLACES it, propose again with ` +
+          `supersedes: "${similarTo}" so the old one is retired instead of contradicting this ` +
+          `one. If it only adds detail, leave it as proposed.`
       : `Proposed memory appended to ${path} for review.`;
   },
 };

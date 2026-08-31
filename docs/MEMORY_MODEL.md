@@ -89,6 +89,41 @@ Status: pending
 
 `Project`, `Origin`, `Confidence`, and the `Related files` list are only emitted when present. The `Tags` line always begins with `#coder-engram`. Structural look-alikes inside `Content` are neutralized at render time with one leading space: a line starting with `## Pending Memory: ` (which would forge a second entry), and — only when the entry has no real related-files list — a content tail shaped exactly like a `Related files:` section (which the parser could not otherwise tell apart from structure; see SECURITY.md). You review these blocks in the vault (or via **Review Pending Memory**) and apply or discard them by hand.
 
+## Overlap at propose time
+
+Dedup answers "is this the same memory?" — exactly, and only. Nothing answered
+"is there already a memory about this?", so a proposal that changed a recorded
+fact landed beside the old one and retrieval returned both, with nothing to say
+which was current.
+
+Every proposal is now scored against memory-root chunks by **term containment**:
+the share of the proposal's own distinct terms that also appear in an existing
+memory, thresholded at 0.6. Containment rather than Jaccard, because a two-line
+proposal about the same decision as a long-standing memory should match it, and
+Jaccard punishes that pairing for the length difference alone. Proposals under
+four terms are skipped — any ratio there is a coin flip, and a false "this
+already exists" invites suppression, which is the worse error.
+
+The strongest match is written to the block as `Similar: <path>#<heading>`,
+returned to the agent, and shown on the review card. It is **reported, never
+acted on**: deciding that two memories disagree is not something an offline
+check can do, so it names the candidate and the one action that resolves it —
+re-propose with `supersedes` if this replaces the old memory, leave it as
+proposed if it only adds detail.
+
+The check sits in a write path, so it is bounded accordingly: no query embedding
+(the retriever degrades to its lexical component without one), and any failure
+yields "no overlap" rather than failing the proposal. Pending proposals and the
+ledgers are excluded — overlapping something nobody has approved is not news,
+and `supersedes` cannot name something that is not memory yet. The field is
+engine-computed and has no schema entry: it is an observation about the vault,
+not a claim the proposer gets to make.
+
+It is also skipped entirely on a **direct write**. The annotation exists to be
+read at review time, and a direct write has no review — writing it there would
+leave a permanent `Similar:` line in a memory file nobody was given the chance to
+act on, which is reporting turned into an unreviewed edit.
+
 ## Superseding a stale memory
 
 Memory used to be write-once. Dedup deliberately keeps a restatement that adds

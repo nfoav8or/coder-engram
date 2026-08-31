@@ -47,6 +47,9 @@ export interface MemoryEntry {
   confidence?: Confidence;
   /** `<vault path>#<heading>` of the memory this entry replaces, if any. */
   supersedes?: string;
+  /** `<vault path>#<heading>` of an existing memory this one overlaps. Set by
+   * the engine at propose time; never accepted from a caller. */
+  similarTo?: string;
   tags: string[];
   relatedPaths: string[];
   /** ms since epoch. */

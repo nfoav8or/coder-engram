@@ -97,6 +97,12 @@ export interface PendingBlockFields {
    * it is ever acted on; see `memory/supersession.ts`.
    */
   supersedes?: string;
+  /**
+   * `<vault path>#<heading>` of an existing memory this proposal overlaps.
+   * Computed by the engine at propose time and never accepted from a caller —
+   * it is an observation about the vault, not a claim the proposer gets to make.
+   */
+  similarTo?: string;
   /** Tags WITHOUT the leading `#`; the base tag is added on render. */
   tags: string[];
   content: string;
@@ -181,6 +187,7 @@ export function renderPendingBlock(
   const confidence = oneLine(f.confidence ?? "");
   const reason = oneLine(f.reason ?? "");
   const supersedes = oneLine(f.supersedes ?? "");
+  const similarTo = oneLine(f.similarTo ?? "");
   const relatedPaths = f.relatedPaths.map(oneLine).filter((p) => p !== "");
   lines.push(`${headingPrefix}${oneLine(f.timestampLabel)}`);
   lines.push("");
@@ -190,6 +197,7 @@ export function renderPendingBlock(
   if (originTool) lines.push(`Origin: ${originTool}`);
   if (confidence) lines.push(`Confidence: ${confidence}`);
   if (supersedes) lines.push(`Supersedes: ${supersedes}`);
+  if (similarTo) lines.push(`Similar: ${similarTo}`);
   if (reason) lines.push(`Reason: ${reason}`);
   lines.push(`Tags: ${formatTags(f.tags)}`);
   lines.push("");
@@ -359,6 +367,7 @@ function parseBlock(raw: string, index: number, headingPrefix: string): PendingE
     confidence: fields.get("confidence") || undefined,
     reason: fields.get("reason") || undefined,
     supersedes: fields.get("supersedes") || undefined,
+    similarTo: fields.get("similar") || undefined,
     tags,
     content,
     relatedPaths,

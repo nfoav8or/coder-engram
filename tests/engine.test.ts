@@ -616,3 +616,146 @@ describe("a memory with an unbalanced code fence cannot hide its neighbours", ()
     expect(after.content).toContain("Storage is now a JSON index.");
   });
 });
+
+describe("overlap with existing memory, flagged at propose time", () => {
+  const DECISIONS = "Claude Code/Memory/Projects/Engram/decisions.md";
+
+  async function seeded() {
+    const made = makeEngine({
+      [DECISIONS]:
+        "## Decision — storage\n\n" +
+        "We chose SQLite for the durable memory store because it needs no native build.\n",
+      "Notes/blog.md":
+        "# Blog\nWe chose SQLite for the durable memory store because it needs no native build.",
+    });
+    await made.engine.reindex();
+    return made;
+  }
+
+  it("names the memory a contradicting proposal covers, and records it on the block", async () => {
+    const { engine, adapter } = await seeded();
+    const { similarTo } = await engine.addMemory({
+      type: "decision",
+      content: "We chose Postgres for the durable memory store because it needs no native build.",
+      project: "Engram",
+    });
+
+    expect(similarTo).toBe(`${DECISIONS}#Decision — storage`);
+    expect(await adapter.read("Claude Code/Memory/Inbox/pending-memory.md")).toContain(
+      `Similar: ${DECISIONS}#Decision — storage`,
+    );
+  });
+
+  it("looks only inside memory, not at ordinary vault notes", async () => {
+    // A blog post repeating a decision is not a memory this could ever
+    // supersede, so pointing at it would be advice the agent cannot act on.
+    const { engine } = await seeded();
+    const { similarTo } = await engine.addMemory({
+      type: "decision",
+      content: "We chose Postgres for the durable memory store because it needs no native build.",
+    });
+    expect(similarTo).not.toContain("Notes/blog.md");
+  });
+
+  it("ignores unreviewed proposals sitting in the inbox", async () => {
+    // Overlapping a proposal nobody has approved is not news, and `supersedes`
+    // cannot name something that is not memory yet.
+    const { engine } = await seeded();
+    const first = "Retrieval fuses lexical and vector lists with reciprocal rank fusion always.";
+    await engine.addMemory({ type: "decision", content: first, project: "Engram" });
+    await engine.reindex();
+
+    const { similarTo } = await engine.addMemory({
+      type: "decision",
+      content: `${first} And the constant is sixty.`,
+      project: "Engram",
+    });
+    expect(similarTo === undefined || !similarTo.includes("Inbox")).toBe(true);
+  });
+
+  it("stays quiet when the proposal already says what it replaces", async () => {
+    const { engine } = await seeded();
+    const { similarTo } = await engine.addMemory({
+      type: "decision",
+      content: "We chose Postgres for the durable memory store because it needs no native build.",
+      project: "Engram",
+      supersedes: `${DECISIONS}#Decision — storage`,
+    });
+    expect(similarTo).toBeUndefined();
+  });
+
+  it("never fails a proposal when the check cannot run", async () => {
+    // It sits in a write path. A memory that reaches the inbox is worth more
+    // than an advisory that did not.
+    const { engine } = await seeded();
+    const broken = engine as unknown as { retriever: { retrieve: () => never } };
+    const original = broken.retriever;
+    broken.retriever = {
+      retrieve: () => {
+        throw new Error("retriever exploded");
+      },
+    };
+    const result = await engine.addMemory({ type: "note", content: "A perfectly good memory." });
+    broken.retriever = original;
+
+    expect(result.duplicate).toBe(false);
+    expect(result.similarTo).toBeUndefined();
+    expect((await engine.getPendingMemory()).entries).toHaveLength(1);
+  });
+});
+
+describe("a direct write carries no review-time annotation", () => {
+  it("does not bake the overlap note into a memory file nobody reviews", async () => {
+    // The annotation exists to be read at review time. A direct write has no
+    // review, so writing it there would leave a permanent "Similar: …" line in
+    // a memory file that nobody was given the chance to act on — reporting
+    // turned into an unreviewed edit.
+    const decisions = "Claude Code/Memory/Projects/Engram/decisions.md";
+    const adapter = new InMemoryVaultAdapter("v", {
+      [decisions]:
+        "## Decision — storage\n\n" +
+        "We chose SQLite for the durable memory store because it needs no native build.\n",
+    });
+    let t = 10_000;
+    const engine = new EngramEngine(
+      adapter,
+      { ...DEFAULT_SETTINGS, allowDirectWrites: true },
+      NULL_LOGGER,
+      () => t++,
+    );
+    await engine.reindex();
+
+    const target = "Memory/Projects/Engram/decisions.md";
+    const { path } = await engine.addMemory(
+      {
+        type: "decision",
+        content:
+          "We chose Postgres for the durable memory store because it needs no native build.",
+        project: "Engram",
+      },
+      { direct: true, subpath: target },
+    );
+
+    expect(path).toBe(decisions);
+    const written = await adapter.read(decisions);
+    expect(written).toContain("We chose Postgres");
+    expect(written).not.toContain("Similar:");
+  });
+
+  it("still annotates the same proposal when it goes to the inbox", async () => {
+    // The guard is on the direct path only — the review path must keep it.
+    const decisions = "Claude Code/Memory/Projects/Engram/decisions.md";
+    const { engine } = makeEngine({
+      [decisions]:
+        "## Decision — storage\n\n" +
+        "We chose SQLite for the durable memory store because it needs no native build.\n",
+    });
+    await engine.reindex();
+    const { similarTo } = await engine.addMemory({
+      type: "decision",
+      content: "We chose Postgres for the durable memory store because it needs no native build.",
+      project: "Engram",
+    });
+    expect(similarTo).toBe(`${decisions}#Decision — storage`);
+  });
+});

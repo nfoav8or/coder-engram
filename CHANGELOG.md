@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Overlap with existing memory, flagged when it is proposed.** `add_memory`
+  checked for *duplicates* — an exact restatement was absorbed — and for nothing
+  weaker. So an agent proposing "we moved to Postgres" while memory said "we
+  chose SQLite" got both stored, silently, and retrieval later returned the pair
+  with nothing to say which was current: the accumulation of contradictions that
+  made superseding necessary. Every proposal is now scored against existing
+  memory, and the closest match is named back to the agent and shown on the
+  review card.
+
+  **Deliberately narrower than "contradiction detection", and worded that way
+  everywhere.** It finds the memory with the highest lexical overlap; it does not
+  decide that two memories disagree, which nothing offline can. It names the
+  candidate and the one action that resolves it — re-propose with `supersedes`
+  if this replaces it, leave it alone if it only adds detail — and puts the
+  judgement where it belongs.
+
+  Skipped on a direct write (the annotation is for review time, and a direct
+  write has no review) and when the proposal already names what it replaces. It
+  runs inside a write path, so it is offline (no query embedding: the
+  retriever degrades to its lexical component without one), scoped to the memory
+  root, and **total** — any failure means "no overlap", never a failed proposal.
+  Pending proposals and the ledgers are excluded, because overlapping something
+  nobody has approved is not news and `supersedes` cannot name it. The field is
+  computed by the engine and has no place in the tool schema: it is an
+  observation about the vault, not a claim the proposer gets to make.
+
 - **Supersede a stale memory — memory that can be revised, not only appended.**
   Dedup deliberately keeps a restatement that adds detail, so contradictory
   memories accumulated and nothing could ever be retired. A stale memory is

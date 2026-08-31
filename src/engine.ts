@@ -34,6 +34,7 @@ import {
   stripSupersededSections,
   supersessionKey,
 } from "./memory/supersession";
+import { findSimilarMemory } from "./memory/conflict";
 import { ParsedInbox, PendingEntry } from "./memory/pending-inbox";
 import { extractiveSummary, splitIntoSentences, SummaryMethod } from "./summarize/extractive";
 import {
@@ -95,6 +96,14 @@ export interface AddMemoryInput {
   /** `<vault path>#<heading>` of the memory this entry replaces, if any. */
   supersedes?: string;
 }
+
+/**
+ * Memory chunks scored for overlap against a new proposal. The check only ever
+ * reports the single strongest match, so this is how deep to look for it, not a
+ * page size — enough that the right memory is in the set when the proposal's
+ * wording is not the best query for it.
+ */
+const SIMILARITY_CANDIDATES = 10;
 
 /** Default sentences returned by summarizeNote when the caller doesn't specify. */
 const SUMMARY_DEFAULT_SENTENCES = 5;
@@ -1096,7 +1105,12 @@ export class EngramEngine {
   async addMemory(
     input: AddMemoryInput,
     opts: { direct?: boolean; subpath?: string; reviewerAuthored?: boolean } = {},
-  ): Promise<{ path: string; duplicate: boolean; rejection: RejectionMatch | null }> {
+  ): Promise<{
+    path: string;
+    duplicate: boolean;
+    rejection: RejectionMatch | null;
+    similarTo?: string;
+  }> {
     // Validated here, at the domain boundary, rather than at each caller: a
     // reference that cannot be acted on must never reach the inbox, where a
     // reviewer would approve a replacement that silently retires nothing.
@@ -1114,6 +1128,14 @@ export class EngramEngine {
       originTool: input.originTool,
       confidence: input.confidence,
       supersedes: input.supersedes,
+      // Skipped in two cases. When the proposal already names what it replaces,
+      // the agent has said what this covers and a second, weaker signal adds
+      // nothing. And on a DIRECT write, because this annotation exists to be
+      // read at review time and a direct write has no review — it would bake a
+      // "Similar: …" line permanently into a memory file that nobody was given
+      // the chance to act on, which is the opposite of reporting.
+      similarTo:
+        input.supersedes || opts.direct ? undefined : this.similarMemoryRef(input.content),
       tags: input.tags ?? [],
       relatedPaths: input.relatedPaths ?? [],
       timestamp: this.clock(),
@@ -1122,7 +1144,40 @@ export class EngramEngine {
       const path = await this.writer.directWrite(opts.subpath, entry);
       return { path, duplicate: false, rejection: null };
     }
-    return this.writer.proposeToInbox(entry, { reviewerAuthored: opts.reviewerAuthored });
+    const outcome = await this.writer.proposeToInbox(entry, {
+      reviewerAuthored: opts.reviewerAuthored,
+    });
+    return { ...outcome, similarTo: entry.similarTo };
+  }
+
+  /**
+   * The existing memory a proposal most overlaps with, if any.
+   *
+   * Runs inside a write path, so it is offline and total: no query embedding
+   * (the retriever degrades to its lexical component without one), and any
+   * failure yields "no overlap" rather than failing the proposal. Pending
+   * proposals and the ledgers are excluded — a proposal overlapping an
+   * unreviewed proposal is not news, and would point `supersedes` at something
+   * that is not memory yet.
+   */
+  private similarMemoryRef(content: string): string | undefined {
+    try {
+      const candidates = this.retriever
+        .retrieve(
+          {
+            query: content,
+            limit: SIMILARITY_CANDIDATES,
+            filters: { folder: this.paths.memory },
+          },
+          this.index.getChunks(),
+        )
+        .map((r) => r.chunk)
+        .filter((c) => !isInsideRoot(this.paths.inbox, c.notePath));
+      return findSimilarMemory(content, candidates)?.ref;
+    } catch (err) {
+      this.logger.warn("Overlap check skipped", { error: toMessage(err) });
+      return undefined;
+    }
   }
 
   async createProject(name: string): Promise<string> {
