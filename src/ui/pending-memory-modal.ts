@@ -12,6 +12,7 @@ import { App, Modal, Notice, Setting } from "obsidian";
 import { EngramEngine } from "../engine";
 import { PendingEntry, resolveApplyDestination } from "../memory/pending-inbox";
 import { toMessage } from "../utils/errors";
+import { PromptModal } from "./simple-modals";
 
 export class PendingMemoryModal extends Modal {
   /** Guards against overlapping apply/discard while a mutation is in flight
@@ -126,12 +127,38 @@ export class PendingMemoryModal extends Modal {
     }).open();
   }
 
-  private async discard(entry: PendingEntry): Promise<void> {
+  /**
+   * Ask for a reason first. The prompt doubles as the confirmation step this
+   * irreversible button never had — cancelling it cancels the discard — and the
+   * reason is what the agent reads back, so "wrong project" stops it repeating
+   * the mistake where a bare removal taught it nothing.
+   */
+  private discard(entry: PendingEntry): void {
+    if (this.busy) return;
+    new PromptModal(
+      this.app,
+      {
+        title: "Discard proposal",
+        placeholder: "Why? (optional — the agent sees this)",
+        cta: "Discard",
+      },
+      (reason) => {
+        if (reason === null) return;
+        void this.doDiscard(entry, reason);
+      },
+    ).open();
+  }
+
+  private async doDiscard(entry: PendingEntry, reason: string): Promise<void> {
     if (this.busy) return;
     this.busy = true;
     try {
-      await this.engine.discardPendingMemory(entry);
-      new Notice("Entry discarded.");
+      const { recorded } = await this.engine.discardPendingMemory(entry, { reason });
+      new Notice(
+        recorded
+          ? "Entry discarded and recorded as rejected."
+          : "Entry discarded, but the rejection could not be recorded.",
+      );
     } catch (err) {
       new Notice(`Discard failed: ${toMessage(err)}`);
     } finally {
@@ -146,7 +173,31 @@ export class PendingMemoryModal extends Modal {
       void this.app.workspace.openLinkText(pendingPath, "", false);
       this.close();
     });
+    this.button(actions, "Open rejected", () => {
+      void this.app.workspace.openLinkText(this.engine.getPaths().rejectedMemoryFile, "", false);
+      this.close();
+    });
+    this.button(actions, "Clear rejections", () => this.clearRejections(), { warning: true });
     this.button(actions, "Refresh", () => this.renderList());
+  }
+
+  /** Forget every recorded rejection, so those memories can be proposed again. */
+  private async clearRejections(): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      const { entries } = await this.engine.getRejectedMemory();
+      await this.engine.clearRejectedMemory();
+      new Notice(
+        entries.length === 0
+          ? "No rejections were recorded."
+          : `Cleared ${entries.length} rejection(s); those memories can be proposed again.`,
+      );
+    } catch (err) {
+      new Notice(`Could not clear rejections: ${toMessage(err)}`);
+    } finally {
+      this.busy = false;
+    }
   }
 
   private button(

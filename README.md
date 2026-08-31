@@ -50,6 +50,7 @@ Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an a
 - **`search_batch`** runs several related queries in one call and returns one de-duplicated page, each hit naming which queries it answered. A chunk several queries agree on ranks above one only a single query found — a signal you lose asking them separately.
 - **`resolve_project`** maps a working directory or repo name to the project name this vault actually uses, so a near miss stops returning empty context that reads as "nothing here yet".
 - **`list_pending_memory`** shows the proposals the agent has made that are still awaiting your review, so it stops re-proposing what is already queued. Read-only — approving or discarding stays in Obsidian, where a person does it.
+- **`list_rejected_memory`** shows the proposals you discarded, and the reason you gave. Discarding records the entry in `Memory/Inbox/rejected-memory.md`; an identical proposal is then refused with that reason attached, so the agent stops re-proposing what you have already turned down. Also read-only — clearing the ledger (which lets those memories be proposed again) is a button in the review modal.
 
 ### Attachments (opt-in)
 

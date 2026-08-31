@@ -13,6 +13,7 @@ describe("resolveMemoryPaths", () => {
   it("computes the default layout under the root", () => {
     const p = resolveMemoryPaths("Claude Code");
     expect(p.pendingMemoryFile).toBe("Claude Code/Memory/Inbox/pending-memory.md");
+    expect(p.rejectedMemoryFile).toBe("Claude Code/Memory/Inbox/rejected-memory.md");
     expect(p.globalFiles.profile).toBe("Claude Code/Memory/Global/profile.md");
     expect(p.chunksFile).toBe("Claude Code/Index/chunks.json");
   });
@@ -27,6 +28,7 @@ describe("resolveMemoryPaths", () => {
         indexFolder: "Index",
         configFolder: "Config",
         pendingFile: "pending-memory.md",
+        rejectedFile: "rejected-memory.md",
       }),
     ).toThrow(PathSecurityError);
   });

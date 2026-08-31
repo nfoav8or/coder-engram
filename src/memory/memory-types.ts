@@ -59,6 +59,7 @@ export interface MemoryLayoutConfig {
   indexFolder: string;
   configFolder: string;
   pendingFile: string;
+  rejectedFile: string;
 }
 
 export const DEFAULT_LAYOUT: MemoryLayoutConfig = {
@@ -69,6 +70,7 @@ export const DEFAULT_LAYOUT: MemoryLayoutConfig = {
   indexFolder: "Index",
   configFolder: "Config",
   pendingFile: "pending-memory.md",
+  rejectedFile: "rejected-memory.md",
 };
 
 export interface MemoryPaths {
@@ -84,6 +86,9 @@ export interface MemoryPaths {
   index: string;
   config: string;
   pendingMemoryFile: string;
+  /** Ledger of discarded proposals. Lives beside the inbox: both are
+   * plugin-managed review artifacts, not user-authored memory. */
+  rejectedMemoryFile: string;
   chunksFile: string;
   metadataFile: string;
   embeddingsFile: string;
@@ -119,6 +124,7 @@ export function resolveMemoryPaths(
     index,
     config,
     pendingMemoryFile: resolveInVault(inbox, layout.pendingFile),
+    rejectedMemoryFile: resolveInVault(inbox, layout.rejectedFile),
     chunksFile: resolveInVault(index, "chunks.json"),
     metadataFile: resolveInVault(index, "metadata.json"),
     embeddingsFile: resolveInVault(index, "embeddings.json"),

@@ -22,13 +22,34 @@ export const INBOX_HEADER =
   "Reviewable memory proposed by Coder Engram. Apply or discard entries as you see fit.\n\n" +
   "---\n\n";
 
+/** The header written above the first record when the rejection ledger is created. */
+export const REJECTED_HEADER =
+  "# Rejected Memory\n\n" +
+  "Proposals you discarded, newest last. Coder Engram reports these to the agent so it\n" +
+  "stops re-proposing them, and refuses an identical proposal while the record stands.\n" +
+  "Delete a record here to let that memory be proposed again.\n\n" +
+  "---\n\n";
+
 /** Base tag applied to every proposed/graduated memory entry. */
 export const BASE_TAG = "coder-engram";
 /** Tag written by pre-rename releases (≤0.4.0); still stripped at parse so
  * existing inbox blocks round-trip without surfacing it as a user tag. */
 const LEGACY_BASE_TAG = "claude-code-engram";
 
-const HEADING_PREFIX = "## Pending Memory: ";
+/** Heading that opens a block in the review inbox. */
+export const PENDING_HEADING_PREFIX = "## Pending Memory: ";
+/**
+ * Heading that opens a block in the rejection ledger. The ledger reuses this
+ * module's block format so there is still exactly ONE producer of the on-disk
+ * shape; only the heading distinguishes the two files.
+ */
+export const REJECTED_HEADING_PREFIX = "## Rejected Memory: ";
+/** Every heading that opens a block, whichever file it lives in. Content is
+ * neutralized against ALL of them, not just the one it is being written to:
+ * proposal content is copied verbatim into the ledger when it is discarded, so
+ * a `## Rejected Memory: ` line that is inert in the inbox would forge a ledger
+ * entry the moment a reviewer rejects it. */
+const HEADING_PREFIXES = [PENDING_HEADING_PREFIX, REJECTED_HEADING_PREFIX];
 const RELATED_HEADER = "Related files:";
 
 /** Normalize + dedupe tags, always leading with the base tag, each `#`-prefixed. */
@@ -52,6 +73,8 @@ export interface PendingBlockFields {
   source: string;
   originTool?: string;
   confidence?: string;
+  /** Why a reviewer rejected this proposal. Only ever set in the ledger. */
+  reason?: string;
   /** Tags WITHOUT the leading `#`; the base tag is added on render. */
   tags: string[];
   content: string;
@@ -77,8 +100,8 @@ function oneLine(value: string): string {
 
 /**
  * Neutralize a block heading appearing inside content, which IS legitimately
- * multi-line. `parsePendingInbox` splits entries on `/^## Pending Memory: /m`,
- * so content containing that at the start of a line would forge a whole second
+ * multi-line. `parsePendingInbox` splits entries on the heading prefix, so
+ * content containing that at the start of a line would forge a whole second
  * entry. One leading space defeats the anchored split and survives a
  * render→parse→render round trip (the line no longer matches, so it is not
  * indented again).
@@ -86,7 +109,7 @@ function oneLine(value: string): string {
 function neutralizeHeadings(content: string): string {
   return content
     .split("\n")
-    .map((l) => (l.startsWith(HEADING_PREFIX) ? ` ${l}` : l))
+    .map((l) => (HEADING_PREFIXES.some((h) => l.startsWith(h)) ? ` ${l}` : l))
     .join("\n");
 }
 
@@ -115,7 +138,10 @@ function neutralizeRelatedTail(content: string): string {
  * server), so they are neutralized here rather than at each caller — this is
  * the only place that knows which parts of the format are structural.
  */
-export function renderPendingBlock(f: PendingBlockFields): string {
+export function renderPendingBlock(
+  f: PendingBlockFields,
+  headingPrefix: string = PENDING_HEADING_PREFIX,
+): string {
   // Every optional field is gated on its COLLAPSED value, not its raw one.
   // `oneLine` can reduce a truthy input (a lone "\n", say) to "", and the
   // parser maps an empty field back to `undefined` — so gating on the raw
@@ -131,14 +157,16 @@ export function renderPendingBlock(f: PendingBlockFields): string {
   const project = oneLine(f.project ?? "");
   const originTool = oneLine(f.originTool ?? "");
   const confidence = oneLine(f.confidence ?? "");
+  const reason = oneLine(f.reason ?? "");
   const relatedPaths = f.relatedPaths.map(oneLine).filter((p) => p !== "");
-  lines.push(`${HEADING_PREFIX}${oneLine(f.timestampLabel)}`);
+  lines.push(`${headingPrefix}${oneLine(f.timestampLabel)}`);
   lines.push("");
   lines.push(`Type: ${oneLine(f.type)}`);
   if (project) lines.push(`Project: ${project}`);
   lines.push(`Source: ${oneLine(f.source)}`);
   if (originTool) lines.push(`Origin: ${originTool}`);
   if (confidence) lines.push(`Confidence: ${confidence}`);
+  if (reason) lines.push(`Reason: ${reason}`);
   lines.push(`Tags: ${formatTags(f.tags)}`);
   lines.push("");
   lines.push("Content:");
@@ -179,19 +207,34 @@ export interface ParsedInbox {
 
 const FIELD_LINE = /^([A-Za-z][A-Za-z ]*?):\s?(.*)$/;
 
-/** Parse the pending-memory inbox into its header and structured entries. */
-export function parsePendingInbox(text: string): ParsedInbox {
-  const firstIdx = indexOfHeading(text);
+/** Escape a literal heading prefix for use inside an anchored RegExp. */
+function headingPattern(prefix: string): RegExp {
+  return new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "m");
+}
+
+/**
+ * Parse an inbox-format file into its header and structured entries. Pass
+ * `headingPrefix` to parse the rejection ledger, which shares the block format
+ * and differs only in its heading.
+ */
+export function parsePendingInbox(
+  text: string,
+  headingPrefix: string = PENDING_HEADING_PREFIX,
+): ParsedInbox {
+  const heading = headingPattern(headingPrefix);
+  const firstIdx = text.match(heading)?.index ?? -1;
   if (firstIdx < 0) {
     return { header: text, entries: [] };
   }
   const header = text.slice(0, firstIdx);
   const rest = text.slice(firstIdx);
   // Split into per-entry blocks on each heading (keep the heading with its block).
-  const blocks = rest.split(/(?=^## Pending Memory: )/m).filter((b) => b.trim().length > 0);
+  const blocks = rest
+    .split(new RegExp(`(?=${heading.source})`, "m"))
+    .filter((b) => b.trim().length > 0);
   const entries: PendingEntry[] = [];
   blocks.forEach((raw, index) => {
-    const parsed = parseBlock(raw, index);
+    const parsed = parseBlock(raw, index, headingPrefix);
     if (parsed) entries.push(parsed);
   });
   return { header, entries };
@@ -208,25 +251,23 @@ export function serializePendingInbox(header: string, entries: PendingEntry[]): 
  * inbox text. Matches the FIRST exact raw match. Returns `null` if no entry
  * matched (the file changed under us — the caller should refresh).
  */
-export function removeEntry(text: string, target: PendingEntry): string | null {
-  const { header, entries } = parsePendingInbox(text);
+export function removeEntry(
+  text: string,
+  target: PendingEntry,
+  headingPrefix: string = PENDING_HEADING_PREFIX,
+): string | null {
+  const { header, entries } = parsePendingInbox(text, headingPrefix);
   const idx = entries.findIndex((e) => e.raw === target.raw);
   if (idx < 0) return null;
   const remaining = entries.filter((_, i) => i !== idx);
   return serializePendingInbox(header, remaining);
 }
 
-/** Location of the first entry heading in the file, or -1 if none. */
-function indexOfHeading(text: string): number {
-  const m = text.match(/^## Pending Memory: /m);
-  return m?.index ?? -1;
-}
-
-function parseBlock(raw: string, index: number): PendingEntry | null {
+function parseBlock(raw: string, index: number, headingPrefix: string): PendingEntry | null {
   const lines = raw.split("\n");
   const heading = lines[0] ?? "";
-  if (!heading.startsWith(HEADING_PREFIX)) return null;
-  const timestampLabel = heading.slice(HEADING_PREFIX.length).trim();
+  if (!heading.startsWith(headingPrefix)) return null;
+  const timestampLabel = heading.slice(headingPrefix.length).trim();
 
   // Structural landmarks. Content lines may themselves look like `Key: value`
   // or `---`, so bound content by landmarks found from known positions rather
@@ -292,6 +333,7 @@ function parseBlock(raw: string, index: number): PendingEntry | null {
     source: fields.get("source") ?? "",
     originTool: fields.get("origin") || undefined,
     confidence: fields.get("confidence") || undefined,
+    reason: fields.get("reason") || undefined,
     tags,
     content,
     relatedPaths,

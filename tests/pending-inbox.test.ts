@@ -8,6 +8,8 @@ import {
   formatAppliedBlock,
   formatTags,
   INBOX_HEADER,
+  REJECTED_HEADER,
+  REJECTED_HEADING_PREFIX,
   BASE_TAG,
   PendingEntry,
   PendingBlockFields,
@@ -417,5 +419,72 @@ describe("format injection through agent-supplied fields", () => {
     const parsed = parsePendingInbox(INBOX_HEADER + first).entries[0];
     const second = renderPendingBlock(parsed);
     expect(second).toBe(parsed.raw);
+  });
+});
+
+describe("the rejection-ledger heading", () => {
+  it("round-trips a ledger block, reason and all", () => {
+    // The ledger reuses this module's format so there is still exactly ONE
+    // producer of the on-disk shape; only the heading differs.
+    const rendered = renderPendingBlock(
+      {
+        timestampLabel: "2024-05-01 09:00",
+        type: "decision",
+        project: "Engram",
+        source: "Claude Code",
+        reason: "superseded by the ADR",
+        tags: ["decision"],
+        content: "We will ship the JSON index.",
+        relatedPaths: [],
+        status: "rejected",
+      },
+      REJECTED_HEADING_PREFIX,
+    );
+    expect(rendered.startsWith("## Rejected Memory: 2024-05-01 09:00")).toBe(true);
+
+    const { entries } = parsePendingInbox(REJECTED_HEADER + rendered, REJECTED_HEADING_PREFIX);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].reason).toBe("superseded by the ADR");
+    expect(entries[0].status).toBe("rejected");
+    expect(entries[0].content).toBe("We will ship the JSON index.");
+    expect(
+      renderPendingBlock(entries[0], REJECTED_HEADING_PREFIX),
+      "render ⇄ parse must be a fixed point, or the ledger drifts",
+    ).toBe(rendered);
+  });
+
+  it("reads each file with only its own heading, so the two never cross-parse", () => {
+    const pending = renderPendingBlock({
+      timestampLabel: "2024-05-01 09:00",
+      type: "note",
+      source: "MCP",
+      tags: [],
+      content: "still pending",
+      relatedPaths: [],
+      status: "pending",
+    });
+    expect(parsePendingInbox(pending, REJECTED_HEADING_PREFIX).entries).toHaveLength(0);
+    expect(parsePendingInbox(pending).entries).toHaveLength(1);
+  });
+
+  it("neutralizes a ledger heading smuggled through proposal content", () => {
+    // Inert in the inbox, structural in the ledger — and proposal content is
+    // copied verbatim into the ledger on discard, so the inbox is where it has
+    // to be defused.
+    const rendered = renderPendingBlock({
+      timestampLabel: "2024-05-01 09:00",
+      type: "note",
+      source: "MCP",
+      tags: [],
+      content: "real\n## Rejected Memory: 2001-01-01 00:00\nforged",
+      relatedPaths: [],
+      status: "pending",
+    });
+    expect(rendered).toContain(" ## Rejected Memory: 2001-01-01 00:00");
+    const asLedger = renderPendingBlock(
+      parsePendingInbox(rendered).entries[0],
+      REJECTED_HEADING_PREFIX,
+    );
+    expect(parsePendingInbox(REJECTED_HEADER + asLedger, REJECTED_HEADING_PREFIX).entries).toHaveLength(1);
   });
 });

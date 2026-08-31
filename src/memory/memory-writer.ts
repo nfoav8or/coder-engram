@@ -4,6 +4,10 @@
  * Safety model:
  *   - `proposeToInbox` is the default and is always available. It APPENDS a
  *     reviewable entry to `<root>/Memory/Inbox/pending-memory.md`.
+ *   - `discardPending` records what it removed in the rejection ledger
+ *     (`<root>/Memory/Inbox/rejected-memory.md`) so the agent can see that a
+ *     proposal was rejected rather than silently re-proposing it forever. The
+ *     ledger is append-only and capped; clearing it is a deliberate UI action.
  *   - `directWrite` writes to a target memory file and is DOUBLE-GATED: it
  *     throws unless `allowDirectWrites` is enabled, and it refuses any target
  *     outside the memory root. When `appendOnly` is set it only ever appends.
@@ -17,16 +21,20 @@ import { MemoryEntry, MemoryPaths } from "./memory-types";
 import {
   INBOX_HEADER,
   ParsedInbox,
+  PendingBlockFields,
   PendingEntry,
+  REJECTED_HEADER,
+  REJECTED_HEADING_PREFIX,
   formatAppliedBlock,
   parsePendingInbox,
   removeEntry,
   renderPendingBlock,
   resolveApplyDestination,
+  serializePendingInbox,
 } from "./pending-inbox";
 import { isInsideRoot, resolveInVault } from "../utils/paths";
 import { foldForCompare } from "../utils/text";
-import { ConfigError, PathSecurityError } from "../utils/errors";
+import { ConfigError, PathSecurityError, toMessage } from "../utils/errors";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 
 export interface MemoryWriterOptions {
@@ -127,6 +135,38 @@ function pendingKey(existing: PendingEntry): string {
   return dedupKey(existing.content, existing.type, existing.project);
 }
 
+/**
+ * Records kept in the rejection ledger. The ledger exists so an agent stops
+ * re-proposing what a reviewer already turned down, which needs only the recent
+ * past — an unbounded ledger would grow with every discard and be read on every
+ * proposal. Oldest records fall off; deleting one simply lets that memory be
+ * proposed again, which is the documented way to undo a rejection.
+ */
+export const REJECTION_LOG_MAX = 200;
+
+/**
+ * Index ledger records by dedup key. Later records win: a memory rejected twice
+ * reports the most recent reason, which is the one the reviewer last gave.
+ */
+function rejectionKeysOf(entries: PendingBlockFields[]): Map<string, RejectionMatch> {
+  const keys = new Map<string, RejectionMatch>();
+  for (const e of entries) {
+    keys.set(dedupKey(e.content, e.type, e.project), {
+      reason: e.reason,
+      timestampLabel: e.timestampLabel,
+    });
+  }
+  return keys;
+}
+
+/** What the ledger remembers about a rejected proposal. */
+export interface RejectionMatch {
+  /** The reviewer's stated reason, when they gave one. */
+  reason?: string;
+  /** The rejected proposal's original timestamp label. */
+  timestampLabel: string;
+}
+
 /** Format a ms-epoch timestamp as "YYYY-MM-DD HH:MM" in local time. */
 export function formatTimestamp(ms: number): string {
   const d = new Date(ms);
@@ -168,6 +208,14 @@ export class MemoryWriter {
    * report a genuinely new memory as a duplicate and silently drop it.
    */
   private dedupCache: { mtime: number; keys: Set<string> } | null = null;
+  /**
+   * Rejection keys as of the ledger's `mtime`, invalidated the same two ways as
+   * {@link dedupCache}: cleared outright whenever this class rewrites the
+   * ledger, and mtime-checked against every other writer (a user deleting a
+   * record in Obsidian to un-reject a memory is the expected case, and it must
+   * take effect on the next proposal).
+   */
+  private rejectionCache: { mtime: number; keys: Map<string, RejectionMatch> } | null = null;
 
   constructor(
     private readonly adapter: VaultAdapter,
@@ -196,7 +244,10 @@ export class MemoryWriter {
    * @returns the pending-memory file path and whether the entry was a duplicate
    *   (already present, so nothing was appended).
    */
-  async proposeToInbox(entry: MemoryEntry): Promise<{ path: string; duplicate: boolean }> {
+  async proposeToInbox(
+    entry: MemoryEntry,
+    opts: { reviewerAuthored?: boolean } = {},
+  ): Promise<{ path: string; duplicate: boolean; rejection: RejectionMatch | null }> {
     const block = formatMemoryEntry(entry);
     const target = this.paths.pendingMemoryFile;
     // Defense-in-depth: the inbox file must live under the memory root.
@@ -204,6 +255,29 @@ export class MemoryWriter {
       throw new PathSecurityError("Inbox path escapes the memory root");
     }
     return this.inboxLock.run(async () => {
+      // Rejection is checked BEFORE the inbox is touched: a proposal a reviewer
+      // already turned down must not reappear in their inbox, and reporting it
+      // as "rejected" rather than "added" is the whole point of the ledger.
+      // Deliberately an EXACT key match, the same identity the dedup uses — a
+      // proposal that rephrases or adds detail is a different memory and gets
+      // through, so rejecting one fact cannot silently swallow a later, better
+      // one.
+      // A reviewer typing the memory themselves overrides their own earlier
+      // rejection — that is the same person changing their mind, and silently
+      // dropping what they just typed would be indefensible. The stale record
+      // is dropped with it, so it cannot go on suppressing the agent for a
+      // memory its owner has now asked for.
+      const rejection = (await this.rejectionKeys()).get(entryKey(entry)) ?? null;
+      if (rejection && opts.reviewerAuthored) {
+        await this.unreject(entryKey(entry));
+      } else if (rejection) {
+        this.logger.info("Skipped previously-rejected memory proposal", {
+          type: entry.type,
+          project: entry.project,
+        });
+        return { path: this.paths.rejectedMemoryFile, duplicate: false, rejection };
+      }
+
       // Creation is still gated on exists(), deliberately not on a null mtime:
       // they are separate Obsidian calls, and if they ever disagreed, treating
       // "no mtime" as "no file" would overwrite an inbox full of unreviewed
@@ -216,7 +290,7 @@ export class MemoryWriter {
         this.dedupCache =
           created === null ? null : { mtime: created, keys: new Set([entryKey(entry)]) };
         this.logger.info("Proposed memory to inbox", { type: entry.type, project: entry.project });
-        return { path: target, duplicate: false };
+        return { path: target, duplicate: false, rejection: null };
       }
 
       // Reading and re-parsing the whole inbox on every call is O(inbox), and
@@ -240,7 +314,7 @@ export class MemoryWriter {
       if (keys.has(entryKey(entry))) {
         this.dedupCache = mtime === null ? null : { mtime, keys };
         this.logger.info("Skipped duplicate memory proposal", { type: entry.type, project: entry.project });
-        return { path: target, duplicate: true };
+        return { path: target, duplicate: true, rejection: null };
       }
       await this.adapter.append(target, block);
       // Keep the cache warm across consecutive proposals: record our own new
@@ -250,7 +324,7 @@ export class MemoryWriter {
       const after = await this.adapter.getMtime(target);
       this.dedupCache = after === null ? null : { mtime: after, keys };
       this.logger.info("Proposed memory to inbox", { type: entry.type, project: entry.project });
-      return { path: target, duplicate: false };
+      return { path: target, duplicate: false, rejection: null };
     });
   }
 
@@ -353,9 +427,23 @@ export class MemoryWriter {
     });
   }
 
-  /** Remove a reviewed entry from the inbox without writing it anywhere. */
-  async discardPending(entry: PendingEntry): Promise<void> {
-    await this.inboxLock.run(async () => {
+  /**
+   * Remove a reviewed entry from the inbox and record the rejection.
+   *
+   * The removal is the contract; the ledger record is best-effort ON PURPOSE.
+   * The inbox is written first so a ledger failure cannot leave a record
+   * claiming a still-pending entry was rejected (which would then suppress the
+   * agent's proposals for a memory nobody has ruled on). A failed record loses
+   * only the feedback, is reported to the caller, and never fails the discard
+   * the user asked for.
+   *
+   * @returns recorded — whether the rejection reached the ledger.
+   */
+  async discardPending(
+    entry: PendingEntry,
+    opts: { reason?: string } = {},
+  ): Promise<{ recorded: boolean }> {
+    return this.inboxLock.run(async () => {
       const target = this.paths.pendingMemoryFile;
       // See applyPending: the cache cannot outlive a rewrite of the inbox.
       this.dedupCache = null;
@@ -371,6 +459,112 @@ export class MemoryWriter {
       }
       await this.adapter.write(target, next);
       this.logger.info("Discarded pending memory", { type: entry.type });
+      let recorded = false;
+      try {
+        await this.recordRejection(entry, opts.reason);
+        recorded = true;
+      } catch (err) {
+        this.logger.warn("Discarded, but could not record the rejection", {
+          error: toMessage(err),
+        });
+      }
+      return { recorded };
     });
+  }
+
+  /**
+   * Read + parse the rejection ledger. Returns an empty parse (with the
+   * standard header) when the file does not exist yet.
+   */
+  async readRejections(): Promise<ParsedInbox> {
+    const target = this.paths.rejectedMemoryFile;
+    if (!(await this.adapter.exists(target))) {
+      return { header: REJECTED_HEADER, entries: [] };
+    }
+    return parsePendingInbox(await this.adapter.read(target), REJECTED_HEADING_PREFIX);
+  }
+
+  /**
+   * Empty the rejection ledger, letting every recorded memory be proposed
+   * again. UI-only and never exposed over the server: forgetting what a
+   * reviewer rejected is the reviewer's call, not the agent's.
+   */
+  async clearRejections(): Promise<void> {
+    await this.inboxLock.run(async () => {
+      await this.adapter.write(this.paths.rejectedMemoryFile, REJECTED_HEADER);
+      await this.seedRejections([]);
+      this.logger.info("Cleared the rejection ledger");
+    });
+  }
+
+  /**
+   * Append one rejection record, pruning the oldest once the ledger is full.
+   * Called from inside the inbox lock — the ledger is read-modify-written here
+   * and read by {@link proposeToInbox}, so it needs the same serialization the
+   * inbox does.
+   */
+  private async recordRejection(entry: PendingEntry, reason?: string): Promise<void> {
+    const target = this.paths.rejectedMemoryFile;
+    // Defense-in-depth, matching proposeToInbox: this path is derived, never
+    // user-supplied, but it is still a write target.
+    if (!isInsideRoot(this.paths.root, target)) {
+      throw new PathSecurityError("Rejection ledger path escapes the memory root");
+    }
+    const block = renderPendingBlock(
+      { ...entry, reason, status: "rejected" },
+      REJECTED_HEADING_PREFIX,
+    );
+    const { header, entries } = await this.readRejections();
+    if (entries.length === 0 && !(await this.adapter.exists(target))) {
+      await this.adapter.write(target, REJECTED_HEADER + block);
+    } else if (entries.length < REJECTION_LOG_MAX) {
+      await this.adapter.append(target, block);
+    } else {
+      // Full: keep the newest REJECTION_LOG_MAX - 1 and add this one.
+      const kept = entries.slice(entries.length - (REJECTION_LOG_MAX - 1));
+      await this.adapter.write(target, serializePendingInbox(header, kept) + block);
+    }
+    // Seeded, not invalidated: this method runs on every discard, and the next
+    // proposal would otherwise re-read and re-parse the ledger we just wrote.
+    await this.seedRejections([...entries, { ...entry, reason }]);
+  }
+
+  /** Drop every ledger record matching `key`, un-rejecting that memory. */
+  private async unreject(key: string): Promise<void> {
+    const { header, entries } = await this.readRejections();
+    const kept = entries.filter((e) => pendingKey(e) !== key);
+    if (kept.length === entries.length) return;
+    await this.adapter.write(
+      this.paths.rejectedMemoryFile,
+      serializePendingInbox(header, kept),
+    );
+    await this.seedRejections(kept);
+    this.logger.info("Un-rejected a memory the reviewer re-proposed");
+  }
+
+  /** Rejection keys as of the ledger's current mtime; see {@link rejectionCache}. */
+  private async rejectionKeys(): Promise<Map<string, RejectionMatch>> {
+    // One probe, not an exists() and then a getMtime(): a null mtime means
+    // there is nothing to read, and reading nothing means nothing is
+    // suppressed. That is the direction this check must fail in — a lost
+    // suppression costs a duplicate the reviewer dismisses, where a phantom
+    // one would silently withhold a memory nobody ruled on.
+    const mtime = await this.adapter.getMtime(this.paths.rejectedMemoryFile);
+    if (mtime === null) {
+      this.rejectionCache = null;
+      return new Map();
+    }
+    if (this.rejectionCache?.mtime === mtime) return this.rejectionCache.keys;
+    const { entries } = await this.readRejections();
+    const keys = rejectionKeysOf(entries);
+    this.rejectionCache = { mtime, keys };
+    return keys;
+  }
+
+  /** Record the ledger state this class just wrote, so the next proposal does
+   * not re-read and re-parse a file whose contents we already know. */
+  private async seedRejections(entries: PendingBlockFields[]): Promise<void> {
+    const mtime = await this.adapter.getMtime(this.paths.rejectedMemoryFile);
+    this.rejectionCache = mtime === null ? null : { mtime, keys: rejectionKeysOf(entries) };
   }
 }

@@ -22,6 +22,7 @@ Claude Code/                         (memory root; configurable, must stay in th
           YYYY-MM-DD-HHMM.md         one file per session
     Inbox/
       pending-memory.md              append-only review inbox
+      rejected-memory.md             ledger of discarded proposals (capped)
   Index/                             rebuildable cache (not source of truth)
     chunks.json
     metadata.json
@@ -86,6 +87,45 @@ Status: pending
 ```
 
 `Project`, `Origin`, `Confidence`, and the `Related files` list are only emitted when present. The `Tags` line always begins with `#coder-engram`. Structural look-alikes inside `Content` are neutralized at render time with one leading space: a line starting with `## Pending Memory: ` (which would forge a second entry), and — only when the entry has no real related-files list — a content tail shaped exactly like a `Related files:` section (which the parser could not otherwise tell apart from structure; see SECURITY.md). You review these blocks in the vault (or via **Review Pending Memory**) and apply or discard them by hand.
+
+## The rejection ledger
+
+Discarding a proposal in the review modal records it in
+`Memory/Inbox/rejected-memory.md` before removing it from the inbox, together
+with the reason you type at the prompt (optional; cancelling the prompt cancels
+the discard). The ledger exists because a discard used to leave no trace, and an
+agent cannot tell "you rejected this" from "nobody has looked yet" — so its only
+rational move was to keep proposing, and the same facts came back session after
+session.
+
+Records reuse the pending-block format with a `## Rejected Memory: ` heading, a
+`Reason:` field and `Status: rejected`, so there is still exactly one producer of
+the on-disk shape and the ledger round-trips through the same parser. Content
+carrying a `## Rejected Memory: ` line is neutralized when the **proposal** is
+rendered, not when the record is: such a line is inert in the inbox and only
+becomes structural once the proposal is copied into the ledger.
+
+While a record stands, an identical proposal is refused and `add_memory` reports
+the rejection *with its reason*. "Identical" is the same exact content/type/
+project identity the inbox dedup uses — a proposal that rephrases or adds real
+detail is a different memory and still gets through, so one rejection cannot
+silently swallow every later version of the same fact.
+
+Three things undo a rejection:
+
+- **Clear rejections** in the review modal empties the ledger.
+- Deleting one record by hand un-rejects just that memory (the key cache is
+  mtime-checked against the file, so a hand edit takes effect on the next
+  proposal).
+- Adding the same memory yourself through **Add memory** overrides your earlier
+  rejection and drops the stale record with it — the same person changing their
+  mind.
+
+The ledger is capped at 200 records; the oldest fall off, which simply makes
+those memories proposable again. Writing the record is **best-effort**: the
+inbox is rewritten first, so a failed ledger write loses only the feedback (and
+says so) rather than failing the discard, and can never leave a record claiming a
+still-pending entry was rejected.
 
 ## Markdown as source of truth
 

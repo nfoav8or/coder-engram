@@ -11,6 +11,10 @@ export class PromptModal extends Modal {
   constructor(
     app: App,
     private readonly opts: { title: string; placeholder?: string; initial?: string; cta?: string },
+    /** `null` means the user cancelled; `""` means they confirmed with the
+     * field left blank. Callers that only act on a value can keep testing
+     * falsiness; callers where a blank answer is still an answer (an optional
+     * reason, say) test `=== null` for the cancel. */
     private readonly onSubmit: (value: string | null) => void,
   ) {
     super(app);
@@ -42,7 +46,7 @@ export class PromptModal extends Modal {
 
   private submit(): void {
     this.resolved = true;
-    this.onSubmit(this.value.trim() || null);
+    this.onSubmit(this.value.trim());
     this.close();
   }
 

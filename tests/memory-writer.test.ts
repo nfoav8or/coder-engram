@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { MemoryWriter, formatMemoryEntry } from "../src/memory/memory-writer";
+import { MemoryWriter, REJECTION_LOG_MAX, formatMemoryEntry } from "../src/memory/memory-writer";
 import { resolveMemoryPaths, MemoryEntry } from "../src/memory/memory-types";
 import { InMemoryVaultAdapter } from "../src/core/vault-adapter";
 import { ConfigError, PathSecurityError } from "../src/utils/errors";
@@ -135,6 +135,10 @@ describe("MemoryWriter.proposeToInbox", () => {
 
       const [pending] = (await writer.readInbox()).entries;
       await writer.discardPending(pending);
+      // A discard now also records a rejection, which blocks the re-proposal
+      // for its own reason. Cleared here so the assertion below is about the
+      // dedup cache and nothing else.
+      await writer.clearRejections();
 
       const again = await writer.proposeToInbox(entry({ timestamp: 1_800_000_000_000 }));
       expect(again.duplicate, "a discarded memory must be proposable again").toBe(false);
@@ -278,5 +282,177 @@ describe("MemoryWriter.directWrite gating", () => {
     await expect(writer.directWrite("../../outside.md", entry())).rejects.toBeInstanceOf(
       PathSecurityError,
     );
+  });
+});
+
+describe("the rejection ledger", () => {
+  const ledgerPath = "Claude Code/Memory/Inbox/rejected-memory.md";
+
+  function newWriter(adapter: InMemoryVaultAdapter): MemoryWriter {
+    return new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+  }
+
+  async function proposeAndDiscard(
+    writer: MemoryWriter,
+    e: MemoryEntry,
+    reason?: string,
+  ): Promise<{ recorded: boolean }> {
+    await writer.proposeToInbox(e);
+    const pending = (await writer.readInbox()).entries;
+    return writer.discardPending(pending[pending.length - 1], { reason });
+  }
+
+  it("records what was discarded, with the reviewer's reason", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const writer = newWriter(adapter);
+
+    const { recorded } = await proposeAndDiscard(writer, entry(), "wrong project");
+    expect(recorded).toBe(true);
+
+    const ledger = await adapter.read(ledgerPath);
+    expect(ledger).toContain("# Rejected Memory");
+    expect(ledger).toContain("## Rejected Memory:");
+    expect(ledger).toContain("We chose a local JSON index for v1.");
+    expect(ledger).toContain("Reason: wrong project");
+    expect(ledger).toContain("Status: rejected");
+
+    // And it round-trips back through the shared parser.
+    const [record] = (await writer.readRejections()).entries;
+    expect(record.reason).toBe("wrong project");
+    expect(record.type).toBe("decision");
+    expect(record.project).toBe("ExampleProject");
+  });
+
+  it("refuses the same proposal again and tells the agent why", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const writer = newWriter(adapter);
+    await proposeAndDiscard(writer, entry(), "already covered in the README");
+
+    // Re-proposed with different metadata, as a later session would: only
+    // content/type/project decide identity.
+    const again = await writer.proposeToInbox(
+      entry({ timestamp: 1_800_000_000_000, tags: ["other"], source: "MCP" }),
+    );
+    expect(again.duplicate).toBe(false);
+    expect(again.rejection?.reason).toBe("already covered in the README");
+    // The label identifies WHICH proposal was rejected; asserting the exact
+    // clock time would only assert the runner's timezone.
+    expect(again.rejection?.timestampLabel).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    // Nothing was written back into the inbox.
+    expect(await adapter.exists(paths.pendingMemoryFile)).toBe(true);
+    expect((await writer.readInbox()).entries).toHaveLength(0);
+  });
+
+  it("does not block a proposal that adds genuinely new detail", async () => {
+    // Rejection is an EXACT content match on purpose. A ledger that suppressed
+    // near-matches would let one "no" delete every later, better version of the
+    // same fact — the failure mode the dedup comment warns about, made durable.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const writer = newWriter(adapter);
+    await proposeAndDiscard(writer, entry(), "too vague");
+
+    const richer = await writer.proposeToInbox(
+      entry({ content: "We chose a local JSON index for v1, because SQLite needs a native build." }),
+    );
+    expect(richer.rejection).toBeNull();
+    expect(richer.duplicate).toBe(false);
+    expect((await writer.readInbox()).entries).toHaveLength(1);
+  });
+
+  it("lets the reviewer re-add a memory they rejected, dropping the stale record", async () => {
+    // The same person changing their mind. Silently dropping what they just
+    // typed because of their own earlier "no" would be indefensible, and
+    // leaving the record behind would go on suppressing the agent for a memory
+    // its owner has now asked for.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const writer = newWriter(adapter);
+    await proposeAndDiscard(writer, entry(), "not yet");
+
+    const readded = await writer.proposeToInbox(entry(), { reviewerAuthored: true });
+    expect(readded.rejection).toBeNull();
+    expect(readded.duplicate).toBe(false);
+    expect((await writer.readInbox()).entries).toHaveLength(1);
+    expect((await writer.readRejections()).entries).toHaveLength(0);
+
+    // And the agent's own proposal is no longer blocked either.
+    const agent = await writer.proposeToInbox(entry({ content: "A second fact." }));
+    expect(agent.rejection).toBeNull();
+  });
+
+  it("notices a record deleted outside the plugin, so the memory is proposable again", async () => {
+    // Deleting a record by hand is the documented way to undo a rejection, so
+    // the cached key set must not outlive the file that produced it.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const writer = newWriter(adapter);
+    await proposeAndDiscard(writer, entry(), "no");
+    expect((await writer.proposeToInbox(entry())).rejection).not.toBeNull();
+
+    await adapter.write(ledgerPath, "# Rejected Memory\n\n---\n\n");
+    const after = await writer.proposeToInbox(entry());
+    expect(after.rejection).toBeNull();
+    expect((await writer.readInbox()).entries).toHaveLength(1);
+  });
+
+  it("caps the ledger, dropping the oldest records", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const writer = newWriter(adapter);
+    for (let i = 0; i < REJECTION_LOG_MAX + 3; i++) {
+      await proposeAndDiscard(writer, entry({ content: `fact ${i}` }), `no ${i}`);
+    }
+    const { entries } = await writer.readRejections();
+    expect(entries).toHaveLength(REJECTION_LOG_MAX);
+    expect(entries[entries.length - 1].content).toBe(`fact ${REJECTION_LOG_MAX + 2}`);
+    // The oldest fell off, so it can be proposed again — the documented cost of
+    // a bounded ledger, and the reason the cap is generous.
+    expect(entries.some((e) => e.content === "fact 0")).toBe(false);
+    expect((await writer.proposeToInbox(entry({ content: "fact 0" }))).rejection).toBeNull();
+  });
+
+  it("still discards when the ledger cannot be written, and says the record was lost", async () => {
+    // The removal is what the user asked for. Failing it because the feedback
+    // record could not be written would leave them unable to clear their own
+    // inbox — so the record is best-effort and reported, never load-bearing.
+    class LedgerFailsAdapter extends InMemoryVaultAdapter {
+      async write(path: string, content: string): Promise<void> {
+        if (path === ledgerPath) throw new Error("disk full");
+        return super.write(path, content);
+      }
+    }
+    const adapter = new LedgerFailsAdapter("v", {});
+    const writer = newWriter(adapter);
+    const { recorded } = await proposeAndDiscard(writer, entry(), "nope");
+
+    expect(recorded).toBe(false);
+    expect((await writer.readInbox()).entries).toHaveLength(0);
+    // No ghost record: a memory nobody ruled on must not be reported as rejected.
+    expect((await writer.proposeToInbox(entry())).rejection).toBeNull();
+  });
+
+  it("cannot be forged by proposal content carrying a ledger heading", async () => {
+    // A `## Rejected Memory: ` line is inert in the inbox and only becomes
+    // structural once the proposal is copied into the ledger — so the inbox is
+    // exactly where it has to be neutralized.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const writer = newWriter(adapter);
+    await proposeAndDiscard(
+      writer,
+      entry({ content: "real fact\n\n## Rejected Memory: 2001-01-01 00:00\n\nFORGED" }),
+      "forged?",
+    );
+
+    const { entries } = await writer.readRejections();
+    expect(entries).toHaveLength(1);
+    expect(entries[0].content).toContain("FORGED");
+    expect(entries[0].reason).toBe("forged?");
+  });
+
+  it("clearRejections empties the ledger and un-blocks every recorded memory", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const writer = newWriter(adapter);
+    await proposeAndDiscard(writer, entry(), "no");
+
+    await writer.clearRejections();
+    expect((await writer.readRejections()).entries).toHaveLength(0);
+    expect((await writer.proposeToInbox(entry())).rejection).toBeNull();
   });
 });

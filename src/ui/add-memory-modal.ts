@@ -92,16 +92,21 @@ export class AddMemoryModal extends Modal {
       relatedPaths: this.defaults.relatedPaths ?? [],
     };
     try {
-      const { path, duplicate } = await this.engine.addMemory({
-        type: entry.type!,
-        content: entry.content!,
-        project: entry.project,
-        tags: entry.tags,
-        confidence: entry.confidence,
-        relatedPaths: entry.relatedPaths,
-        source: "Obsidian UI",
-        originTool: "add-memory-command",
-      });
+      const { path, duplicate } = await this.engine.addMemory(
+        {
+          type: entry.type!,
+          content: entry.content!,
+          project: entry.project,
+          tags: entry.tags,
+          confidence: entry.confidence,
+          relatedPaths: entry.relatedPaths,
+          source: "Obsidian UI",
+          originTool: "add-memory-command",
+        },
+        // Typed by the reviewer, so it overrides an earlier rejection of the
+        // same memory rather than being silently dropped by it.
+        { reviewerAuthored: true },
+      );
       new Notice(duplicate ? `Already pending in ${path}` : `Memory proposed to ${path}`);
       this.close();
     } catch (err) {

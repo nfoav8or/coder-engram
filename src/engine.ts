@@ -28,7 +28,7 @@ import {
   resolveProjectPaths,
 } from "./memory/memory-types";
 import { MemoryStore, SessionNote, ContextPart } from "./memory/memory-store";
-import { InboxLock, MemoryWriter } from "./memory/memory-writer";
+import { InboxLock, MemoryWriter, RejectionMatch } from "./memory/memory-writer";
 import { ParsedInbox, PendingEntry } from "./memory/pending-inbox";
 import { extractiveSummary, splitIntoSentences, SummaryMethod } from "./summarize/extractive";
 import {
@@ -160,6 +160,22 @@ function chunksByNote(chunks: IndexedChunk[]): Map<string, IndexedChunk[]> {
 function capExtractedText(text: string | null): string | null {
   if (text === null || text.length <= EXTRACTED_TEXT_MAX_CHARS) return text;
   return `${text.slice(0, EXTRACTED_TEXT_MAX_CHARS)}\n\n(extraction truncated at ${EXTRACTED_TEXT_MAX_CHARS} characters)`;
+}
+
+/**
+ * Narrow an inbox-format parse to one project. The inbox and the rejection
+ * ledger answer "does this entry belong to project X" the same way, folded for
+ * case and Unicode form like every other project comparison — one answer, so
+ * the two files cannot drift apart on it. A blank project means every entry.
+ */
+function filterByProject(parsed: ParsedInbox, project: string | undefined): ParsedInbox {
+  const wanted = (project ?? "").trim();
+  if (wanted === "") return parsed;
+  const folded = foldForCompare(wanted);
+  return {
+    ...parsed,
+    entries: parsed.entries.filter((e) => foldForCompare(e.project ?? "") === folded),
+  };
 }
 
 export class EngramEngine {
@@ -995,14 +1011,7 @@ export class EngramEngine {
    * options and still gets every entry.
    */
   async getPendingMemory(options: { project?: string } = {}): Promise<ParsedInbox> {
-    const inbox = await this.writer.readInbox();
-    const project = (options.project ?? "").trim();
-    if (project === "") return inbox;
-    const wanted = foldForCompare(project);
-    return {
-      ...inbox,
-      entries: inbox.entries.filter((e) => foldForCompare(e.project ?? "") === wanted),
-    };
+    return filterByProject(await this.writer.readInbox(), options.project);
   }
 
   /** Graduate a reviewed inbox entry into its destination memory file, then
@@ -1011,16 +1020,37 @@ export class EngramEngine {
     return this.writer.applyPending(entry);
   }
 
-  /** Remove a reviewed inbox entry without applying it. */
-  async discardPendingMemory(entry: PendingEntry): Promise<void> {
-    await this.writer.discardPending(entry);
+  /**
+   * Remove a reviewed inbox entry without applying it, recording the rejection
+   * so the agent can see the outcome instead of re-proposing it forever.
+   * Human-in-the-loop; not exposed over the network.
+   */
+  async discardPendingMemory(
+    entry: PendingEntry,
+    opts: { reason?: string } = {},
+  ): Promise<{ recorded: boolean }> {
+    return this.writer.discardPending(entry, opts);
+  }
+
+  /**
+   * Read + parse the rejection ledger, optionally narrowed to one project.
+   * Same project-matching rule as {@link getPendingMemory} — one answer to
+   * "does this entry belong to this project", used by both.
+   */
+  async getRejectedMemory(options: { project?: string } = {}): Promise<ParsedInbox> {
+    return filterByProject(await this.writer.readRejections(), options.project);
+  }
+
+  /** Empty the rejection ledger. UI-only: see MemoryWriter.clearRejections. */
+  async clearRejectedMemory(): Promise<void> {
+    await this.writer.clearRejections();
   }
 
   /** Propose a memory entry (to the inbox by default; direct write if enabled). */
   async addMemory(
     input: AddMemoryInput,
-    opts: { direct?: boolean; subpath?: string } = {},
-  ): Promise<{ path: string; duplicate: boolean }> {
+    opts: { direct?: boolean; subpath?: string; reviewerAuthored?: boolean } = {},
+  ): Promise<{ path: string; duplicate: boolean; rejection: RejectionMatch | null }> {
     const entry: MemoryEntry = {
       type: input.type,
       content: input.content,
@@ -1034,9 +1064,9 @@ export class EngramEngine {
     };
     if (opts.direct && opts.subpath) {
       const path = await this.writer.directWrite(opts.subpath, entry);
-      return { path, duplicate: false };
+      return { path, duplicate: false, rejection: null };
     }
-    return this.writer.proposeToInbox(entry);
+    return this.writer.proposeToInbox(entry, { reviewerAuthored: opts.reviewerAuthored });
   }
 
   async createProject(name: string): Promise<string> {

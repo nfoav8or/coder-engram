@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The rejection ledger — the agent finally learns what a "no" means.** 0.13.0
+  let an agent see what was *pending*; it still could not see what was
+  **rejected**, or why. A discarded proposal simply vanished, which is
+  indistinguishable from one nobody has reviewed yet — so the agent's only
+  rational move was to keep proposing, and reviewers kept dismissing facts they
+  had already turned down. Discarding now records the proposal, with the
+  reviewer's reason, in `Memory/Inbox/rejected-memory.md`, and the new
+  **`list_rejected_memory`** tool reads it back.
+
+  An identical proposal is refused while its record stands, and `add_memory`
+  says so *with the reason* rather than reporting a bare "not added". The match
+  is the same **exact** content/type/project identity the dedup uses — a
+  proposal that rephrases or adds real detail is a different memory and still
+  gets through, so one "no" can never silently swallow every later, better
+  version of the same fact.
+
+  **Discard now asks why.** The prompt doubles as the confirmation that
+  irreversible button never had: cancelling it cancels the discard. The reason
+  is optional, and is what the agent reads back — "wrong project" stops it
+  repeating a mistake that a bare removal taught it nothing about.
+
+  A reviewer who later types the same memory themselves **overrides their own
+  earlier rejection** and the stale record is dropped with it: that is the same
+  person changing their mind, and silently discarding what they just typed
+  would be indefensible. **Clear rejections** in the review modal forgets the
+  lot, and deleting a single record by hand un-rejects just that memory.
+
+  The ledger is capped at 200 records (oldest fall off) so it cannot grow
+  without bound on a path that is read on every proposal, and it is
+  **best-effort by design**: the inbox is written first, so a ledger failure
+  loses only the feedback and never fails the discard the user asked for — and
+  can never leave a record claiming a still-pending entry was rejected.
+
+  `list_rejected_memory` is **read-only**, like `list_pending_memory`. Clearing
+  the ledger — un-rejecting a memory — is a reviewer decision and stays out of
+  `ALL_TOOLS` entirely, for the same reason promotion does.
+
 ## [0.13.0] — 2026-08-28
 
 ### Added

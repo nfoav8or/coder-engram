@@ -32,6 +32,7 @@ import {
   optionalBoolean,
 } from "../utils/validation";
 import { MemoryEntry, MEMORY_TYPES } from "../memory/memory-types";
+import type { PendingEntry } from "../memory/pending-inbox";
 import { dropNearDuplicates, diversifyByNote } from "../retrieval/ranking";
 import { IndexedChunk } from "../indexing/index-manager";
 import type { RetrievalQuery, RetrievalResult } from "../retrieval/retriever";
@@ -449,7 +450,7 @@ const addMemoryTool: Tool = {
     const relatedPaths = optionalStringArray(obj, "relatedPaths", 128, 512);
 
     // Network path is inbox-only by construction: no `direct` option is passed.
-    const { path, duplicate } = await ctx.engine.addMemory({
+    const { path, duplicate, rejection } = await ctx.engine.addMemory({
       type,
       content,
       project,
@@ -458,6 +459,17 @@ const addMemoryTool: Tool = {
       tags,
       relatedPaths,
     });
+    // A rejection is reported, never hidden: the whole reason the ledger exists
+    // is that an agent could not tell a rejected proposal from an accepted one,
+    // so a bare "not added" here would leave the loop exactly as open as before.
+    if (rejection) {
+      const why = rejection.reason ? ` Reason given: ${rejection.reason}` : "";
+      return (
+        `A reviewer rejected this exact memory (proposed ${rejection.timestampLabel}); ` +
+        `not proposed again.${why} Do not re-propose it verbatim — propose it only if ` +
+        `you have genuinely new detail, which counts as a different memory.`
+      );
+    }
     return duplicate
       ? `An identical memory is already pending review in ${path}; not added again.`
       : `Proposed memory appended to ${path} for review.`;
@@ -936,6 +948,71 @@ function neutralizeBlockStructure(content: string): string {
 }
 
 /**
+ * The shared shape of the two inbox listings (`list_pending_memory` and
+ * `list_rejected_memory`).
+ *
+ * Both read one inbox-format file, filter it by project, and render it under
+ * the same two cuts — an entry `limit` and a character budget. Those two cuts
+ * have to drop the SAME end or they fight each other: `limit` keeps the tail of
+ * an append-ordered file while a character clip always drops the end of the
+ * text, so rendering oldest-first had the limit keep the newest entries and the
+ * clip then throw them away. Reversing here makes both drop the oldest, once,
+ * for both tools.
+ *
+ * `assembleLabeledBlocks` is deliberately not used: its omission tail tells the
+ * agent to follow up with `get_note_context` on the paths it dropped, and these
+ * entries have no path to read.
+ */
+function renderInboxListing(
+  entries: PendingEntry[],
+  limit: number,
+  maxChars: number,
+  noun: string,
+): string {
+  const shown = entries.slice(-limit).reverse();
+  const body = shown
+    .map((e) => {
+      const why = e.reason ? `\n\nReason: ${neutralizeBlockStructure(e.reason)}` : "";
+      return `## ${pendingHead(e)}${why}\n\n${neutralizeBlockStructure(e.content.trim())}`;
+    })
+    .join("\n\n---\n\n");
+  const preamble =
+    shown.length === entries.length
+      ? `${entries.length} ${noun}, newest first.`
+      : `${entries.length} ${noun}; showing the ${shown.length} newest.`;
+  return clipContext(`${preamble}\n\n${body}`, maxChars, "raise `limit` or narrow by `project`");
+}
+
+/** The `project` / `limit` / `maxChars` arguments both inbox listings take. */
+function inboxListingArgs(args: unknown): { project: string; limit: number; maxChars: number } {
+  const obj = requireObject(args, "arguments");
+  return {
+    project: optionalString(obj, "project", "", 200).trim(),
+    limit: Math.trunc(
+      optionalNumber(obj, "limit", PENDING_DEFAULT_LIMIT, { min: 1, max: PENDING_MAX_LIMIT }),
+    ),
+    maxChars: contextMaxChars(obj),
+  };
+}
+
+/** The shared `inputSchema` for both inbox listings. */
+const INBOX_LISTING_SCHEMA = {
+  type: "object",
+  properties: {
+    project: {
+      type: "string",
+      description: "Only entries for this project. Omit for all entries.",
+    },
+    limit: {
+      type: "number",
+      description: `Max entries (1–${PENDING_MAX_LIMIT}, default ${PENDING_DEFAULT_LIMIT}).`,
+    },
+    maxChars: MAX_CHARS_SCHEMA,
+  },
+  additionalProperties: false,
+} as const;
+
+/**
  * `list_pending_memory` — let the agent see the proposals it made.
  *
  * `add_memory` appends to the review inbox and returns only that it landed, so
@@ -962,31 +1039,11 @@ const listPendingMemoryTool: Tool = {
       "List memory proposals awaiting human review in the inbox, newest first. " +
       "Use this before proposing, to avoid re-proposing something already pending. " +
       "Read-only: approving or discarding an entry is done by a person in Obsidian.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        project: {
-          type: "string",
-          description: "Only entries for this project. Omit for all entries.",
-        },
-        limit: {
-          type: "number",
-          description: `Max entries (1–${PENDING_MAX_LIMIT}, default ${PENDING_DEFAULT_LIMIT}).`,
-        },
-        maxChars: MAX_CHARS_SCHEMA,
-      },
-      additionalProperties: false,
-    },
+    inputSchema: INBOX_LISTING_SCHEMA,
   },
   async handler(args, ctx) {
     ctx.rateLimiter.enforceWindow("list_pending_memory", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
-    const obj = requireObject(args, "arguments");
-    const project = optionalString(obj, "project", "", 200).trim();
-    const limit = Math.trunc(
-      optionalNumber(obj, "limit", PENDING_DEFAULT_LIMIT, { min: 1, max: PENDING_MAX_LIMIT }),
-    );
-    const maxChars = contextMaxChars(obj);
-
+    const { project, limit, maxChars } = inboxListingArgs(args);
     // The project match is the engine's rule, not the transport's: it is a
     // domain question, and this file is the wrong place for a second, subtly
     // different answer to it.
@@ -996,26 +1053,7 @@ const listPendingMemoryTool: Tool = {
         ? "No memory proposals are awaiting review."
         : `No memory proposals awaiting review for "${project}".`;
     }
-
-    // NEWEST FIRST, and the two ways this output can be cut must agree on which
-    // end they drop. `limit` keeps the tail of an append-ordered inbox, while a
-    // character clip always drops the end of the text — so rendering oldest
-    // first would have the limit keep the newest and the clip then throw them
-    // away again, leaving an agent asking "what did I just propose" looking at
-    // the oldest entries. Reversing makes both cuts drop the oldest.
-    const shown = matching.slice(-limit).reverse();
-    const body = shown
-      .map((e) => `## ${pendingHead(e)}\n\n${neutralizeBlockStructure(e.content.trim())}`)
-      .join("\n\n---\n\n");
-    // `assembleLabeledBlocks` is deliberately not used: its omission tail tells
-    // the agent to follow up with `get_note_context` on the paths it dropped,
-    // and a pending entry has no path to read. One clip vocabulary, and a hint
-    // that names something the agent can actually do.
-    const preamble =
-      shown.length === matching.length
-        ? `${matching.length} awaiting review, newest first.`
-        : `${matching.length} awaiting review; showing the ${shown.length} newest.`;
-    return clipContext(`${preamble}\n\n${body}`, maxChars, "raise `limit` or narrow by `project`");
+    return renderInboxListing(matching, limit, maxChars, "awaiting review");
   },
 };
 
@@ -1027,6 +1065,41 @@ const listPendingMemoryTool: Tool = {
  * context on. See `EngramEngine.getChangedNotes` for why this is a map read
  * rather than a search, and for the exclusion property it rests on.
  */
+/**
+ * `list_rejected_memory` — the other half of the feedback loop.
+ *
+ * `list_pending_memory` told the agent what a reviewer has yet to act on. This
+ * tells it what they acted on by saying no, and why. Without it, a rejection is
+ * indistinguishable from an entry that simply has not been reviewed yet, so the
+ * agent's only rational move is to keep proposing — which is what filled review
+ * inboxes with facts their owner had already turned down.
+ *
+ * READ ONLY, and for the same reason `list_pending_memory` is: the ledger is a
+ * record of human decisions. Clearing it (un-rejecting a memory) is a UI action
+ * and is never exposed over the network.
+ */
+const listRejectedMemoryTool: Tool = {
+  definition: {
+    name: "list_rejected_memory",
+    description:
+      "List memory proposals a reviewer discarded, with their reasons, newest first. " +
+      "Read this when a proposal comes back as rejected, or before re-proposing " +
+      "something from an earlier session. Read-only.",
+    inputSchema: INBOX_LISTING_SCHEMA,
+  },
+  async handler(args, ctx) {
+    ctx.rateLimiter.enforceWindow("list_rejected_memory", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
+    const { project, limit, maxChars } = inboxListingArgs(args);
+    const matching = (await ctx.engine.getRejectedMemory({ project })).entries;
+    if (matching.length === 0) {
+      return project === ""
+        ? "No memory proposals have been rejected."
+        : `No rejected memory proposals for "${project}".`;
+    }
+    return renderInboxListing(matching, limit, maxChars, "rejected");
+  },
+};
+
 const getRecentChangesTool: Tool = {
   definition: {
     name: "get_recent_changes",
@@ -1270,6 +1343,7 @@ const ALL_TOOLS: Tool[] = [
   getGlobalContextTool,
   listProjectsTool,
   listPendingMemoryTool,
+  listRejectedMemoryTool,
   getRecentChangesTool,
   resolveProjectTool,
   searchBatchTool,
