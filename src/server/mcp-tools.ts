@@ -111,6 +111,18 @@ const SUMMARY_MAX_SENTENCES = 20;
 // whole purpose is cheap context returned more than a full note read (measured:
 // 20k chars from 12 such lines). 20 ordinary sentences land well under this.
 const SUMMARY_MAX_CHARS = 4_000;
+// `list_pending_memory` reads one file and formats it, so it is cheap — but it
+// is also the tool an agent is most tempted to poll after every proposal. It is
+// given the same per-tool ceiling as the bulk context reads — `enforceWindow`
+// keys its window by tool name, so this is its own 60/min, not a budget shared
+// with them. Reading it costs a full read and parse of the inbox (`readInbox`
+// is uncached, unlike the dedup cache `proposeToInbox` keeps), so the cost
+// grows with an unreviewed backlog rather than with vault size. It takes the
+// shared `maxChars` schema and `contextMaxChars` too: advertising that schema
+// while validating a narrower range would reject the very value the schema
+// tells an agent to send.
+const PENDING_MAX_LIMIT = 50;
+const PENDING_DEFAULT_LIMIT = 20;
 const NOTE_CONTEXT_MAX_PER_MINUTE = 60;
 const NOTE_CONTEXT_DEFAULT_MAX_CHARS = 12_000;
 const NOTE_CONTEXT_MAX_CHARS = 50_000;
@@ -815,6 +827,129 @@ const findRelatedNotesTool: Tool = {
   },
 };
 
+/**
+ * The one-line label for a pending entry. Carries the timestamp for the same
+ * reason the review modal does: it is the field that tells two similar
+ * proposals apart.
+ */
+function pendingHead(e: {
+  index: number;
+  type: string;
+  project?: string;
+  timestampLabel: string;
+}): string {
+  const project = e.project ? `project: ${e.project}` : undefined;
+  return [`#${e.index + 1}`, e.type, project, e.timestampLabel].filter(Boolean).join(" · ");
+}
+
+/**
+ * Defuse block structure inside proposal content before it is rendered.
+ *
+ * The listing separates entries with `\n\n---\n\n` and heads each with `## `,
+ * and proposal content is agent-supplied. Without this, one proposal whose
+ * content contains a `---` line followed by a `## …` line renders as TWO
+ * apparent entries — and the consequence lands precisely on this tool's
+ * purpose: an agent that believes a fact is already pending suppresses a
+ * genuine proposal, so a forged entry silently deletes memory that would
+ * otherwise have been contributed.
+ *
+ * On-disk state is unaffected — `renderPendingBlock` owns the file format and
+ * resolves its landmarks by position, so a forged line there loses to the real
+ * one. This is the same defence applied to the rendered VIEW, and it mirrors
+ * `neutralizeHeadings` in `pending-inbox.ts`: one leading space, which defeats
+ * the anchored pattern and survives a round trip as ordinary prose.
+ */
+function neutralizeBlockStructure(content: string): string {
+  return content
+    .split("\n")
+    .map((line) => (/^(#{1,6}\s|-{3,}\s*$)/.test(line) ? ` ${line}` : line))
+    .join("\n");
+}
+
+/**
+ * `list_pending_memory` — let the agent see the proposals it made.
+ *
+ * `add_memory` appends to the review inbox and returns only that it landed, so
+ * an agent could not tell an accepted memory from a rejected one from a still
+ * pending one. It re-proposed facts it had already contributed, and the
+ * writer's dedup silently absorbed them — a loop that was open in one
+ * direction, and the reason memory quality decayed across sessions rather than
+ * accumulating.
+ *
+ * READ ONLY, and deliberately so. Applying an entry stays out of `ALL_TOOLS`
+ * entirely: promotion is the human review step the whole inbox design exists
+ * for, and a tool that could approve its own proposal would collapse that. This
+ * tool cannot write, apply, or discard anything — it reports what a reviewer
+ * has yet to act on.
+ *
+ * It reads only `pending-memory.md` through `MemoryWriter.readInbox`, which
+ * returns an empty parse when the file does not exist, so it is not a general
+ * file reader and cannot be aimed anywhere else.
+ */
+const listPendingMemoryTool: Tool = {
+  definition: {
+    name: "list_pending_memory",
+    description:
+      "List memory proposals awaiting human review in the inbox, newest first. " +
+      "Use this before proposing, to avoid re-proposing something already pending. " +
+      "Read-only: approving or discarding an entry is done by a person in Obsidian.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: {
+          type: "string",
+          description: "Only entries for this project. Omit for all entries.",
+        },
+        limit: {
+          type: "number",
+          description: `Max entries (1–${PENDING_MAX_LIMIT}, default ${PENDING_DEFAULT_LIMIT}).`,
+        },
+        maxChars: MAX_CHARS_SCHEMA,
+      },
+      additionalProperties: false,
+    },
+  },
+  async handler(args, ctx) {
+    ctx.rateLimiter.enforceWindow("list_pending_memory", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
+    const obj = requireObject(args, "arguments");
+    const project = optionalString(obj, "project", "", 200).trim();
+    const limit = Math.trunc(
+      optionalNumber(obj, "limit", PENDING_DEFAULT_LIMIT, { min: 1, max: PENDING_MAX_LIMIT }),
+    );
+    const maxChars = contextMaxChars(obj);
+
+    // The project match is the engine's rule, not the transport's: it is a
+    // domain question, and this file is the wrong place for a second, subtly
+    // different answer to it.
+    const matching = (await ctx.engine.getPendingMemory({ project })).entries;
+    if (matching.length === 0) {
+      return project === ""
+        ? "No memory proposals are awaiting review."
+        : `No memory proposals awaiting review for "${project}".`;
+    }
+
+    // NEWEST FIRST, and the two ways this output can be cut must agree on which
+    // end they drop. `limit` keeps the tail of an append-ordered inbox, while a
+    // character clip always drops the end of the text — so rendering oldest
+    // first would have the limit keep the newest and the clip then throw them
+    // away again, leaving an agent asking "what did I just propose" looking at
+    // the oldest entries. Reversing makes both cuts drop the oldest.
+    const shown = matching.slice(-limit).reverse();
+    const body = shown
+      .map((e) => `## ${pendingHead(e)}\n\n${neutralizeBlockStructure(e.content.trim())}`)
+      .join("\n\n---\n\n");
+    // `assembleLabeledBlocks` is deliberately not used: its omission tail tells
+    // the agent to follow up with `get_note_context` on the paths it dropped,
+    // and a pending entry has no path to read. One clip vocabulary, and a hint
+    // that names something the agent can actually do.
+    const preamble =
+      shown.length === matching.length
+        ? `${matching.length} awaiting review, newest first.`
+        : `${matching.length} awaiting review; showing the ${shown.length} newest.`;
+    return clipContext(`${preamble}\n\n${body}`, maxChars, "raise `limit` or narrow by `project`");
+  },
+};
+
 const ALL_TOOLS: Tool[] = [
   searchTool,
   addMemoryTool,
@@ -824,6 +959,7 @@ const ALL_TOOLS: Tool[] = [
   getProjectContextTool,
   getGlobalContextTool,
   listProjectsTool,
+  listPendingMemoryTool,
   getRecentSessionsTool,
   reindexTool,
 ];

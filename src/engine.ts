@@ -38,6 +38,7 @@ import {
   toEmbeddingConfig,
 } from "./settings/settings";
 import { normalizeVaultRelativePath, isInsideRoot, resolveInVault } from "./utils/paths";
+import { foldForCompare } from "./utils/text";
 import { ConfigError, toMessage } from "./utils/errors";
 import { Logger, redact } from "./utils/logger";
 
@@ -905,9 +906,27 @@ export class EngramEngine {
     }
   }
 
-  /** Read + parse the review inbox for the richer per-entry review UI. */
-  async getPendingMemory(): Promise<ParsedInbox> {
-    return this.writer.readInbox();
+  /**
+   * Read + parse the review inbox.
+   *
+   * `project` filters to one project's proposals, folded for case and Unicode
+   * form. The rule lives here rather than in the caller because "does this
+   * entry belong to project X" is a domain question, and the codebase has been
+   * bitten before by the same question being answered twice with different
+   * rules — `foldForCompare` exists precisely because a folder was excluded
+   * correctly but matched nothing as a search filter, giving zero results
+   * indistinguishable from "nothing matched". The review UI calls this with no
+   * options and still gets every entry.
+   */
+  async getPendingMemory(options: { project?: string } = {}): Promise<ParsedInbox> {
+    const inbox = await this.writer.readInbox();
+    const project = (options.project ?? "").trim();
+    if (project === "") return inbox;
+    const wanted = foldForCompare(project);
+    return {
+      ...inbox,
+      entries: inbox.entries.filter((e) => foldForCompare(e.project ?? "") === wanted),
+    };
   }
 
   /** Graduate a reviewed inbox entry into its destination memory file, then

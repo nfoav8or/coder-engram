@@ -25,6 +25,7 @@ import {
   resolveApplyDestination,
 } from "./pending-inbox";
 import { isInsideRoot, resolveInVault } from "../utils/paths";
+import { foldForCompare } from "../utils/text";
 import { ConfigError, PathSecurityError } from "../utils/errors";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 
@@ -106,9 +107,16 @@ function contentKey(content: string): string {
  * comparison it replaces is how a dedup cache silently stops deduping.
  */
 function dedupKey(content: string, type: string, project: string | undefined): string {
-  // Same reason as contentKey: the project name reaching an agent from a
-  // macOS working-directory path is decomposed, the one a user types is not.
-  return JSON.stringify([contentKey(content), type, (project ?? "").normalize("NFC")]);
+  // Folded with `foldForCompare`, which is case AND Unicode form — the same
+  // rule every other project comparison in the codebase uses (retrieval
+  // filters, the scanner's exclusions, `list_pending_memory`).
+  //
+  // NFC alone was not enough, and the gap defeated the dedup's purpose: an
+  // agent proposing the same fact under "engram" after "Engram" produced a
+  // second inbox entry, because the content folded to one key and the project
+  // did not. Case-variant project names are the norm, not the exception —
+  // agents derive them from working-directory paths, users type them.
+  return JSON.stringify([contentKey(content), type, foldForCompare(project ?? "")]);
 }
 
 function entryKey(entry: MemoryEntry): string {

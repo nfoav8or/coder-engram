@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`list_pending_memory` — the agent can finally see its own proposals.**
+  `add_memory` reported only that a proposal landed, so an agent could not tell
+  an accepted memory from a rejected one from a still-pending one. It
+  re-proposed facts it had already contributed and the writer's dedup silently
+  absorbed them: a loop open in one direction, and the reason memory quality
+  decayed across sessions instead of accumulating. The new tool lists what is
+  awaiting review, with an optional `project` filter folded for case and
+  Unicode form like every other project filter.
+
+  **Read-only, deliberately.** It reports on the review queue and cannot act on
+  it — applying or discarding an entry stays UI-only and absent from
+  `ALL_TOOLS`, because a tool that could approve its own proposal would
+  collapse the human-in-the-loop design the inbox exists for. It takes no path
+  argument and reads only `pending-memory.md`, so it is not a general file
+  reader. Entries come back **newest first**, so the entry limit and the
+  character budget drop the same end — ordered oldest-first, the limit kept the
+  newest and the clip then threw them away, leaving an agent asking "what did I
+  just propose" looking at the oldest entries.
+
+  Content is rendered with heading and `---` lines defused. Without that, one
+  proposal whose content carried those lines rendered as two apparent entries,
+  and the consequence landed precisely on this tool's purpose: an agent that
+  believes a fact is already pending suppresses a genuine proposal.
+
+### Fixed
+
+- **Memory dedup missed a case-variant project name.** The proposal dedup key
+  folded content for case but the project for Unicode form only, so the same
+  fact proposed under `engram` after `Engram` produced a second inbox entry.
+  Case-variant project names are the norm rather than the exception — an agent
+  derives one from a working-directory path, a user types another — and every
+  other project comparison in the codebase already folds case. Found while
+  reviewing `list_pending_memory`, whose whole purpose is closing the
+  re-proposal loop this gap held open.
+
 ## [0.12.1] — 2026-08-28
 
 ### Fixed

@@ -70,6 +70,26 @@ describe("MemoryWriter.proposeToInbox", () => {
     expect(inbox.match(/## Pending Memory:/g)?.length).toBe(1);
   });
 
+  it("de-duplicates across a case-variant project name", async () => {
+    // The dedup key folded content for case but the project for Unicode form
+    // ONLY, so "engram" after "Engram" was a different key and the same fact
+    // landed twice. Case-variant project names are the norm rather than the
+    // exception — an agent derives one from a working-directory path, a user
+    // types another — and every other project comparison in the codebase
+    // (retrieval filters, scanner exclusions, `list_pending_memory`) already
+    // folds case. A dedup that misses this defeats its own purpose.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+
+    const first = await writer.proposeToInbox(entry({ project: "Engram" }));
+    expect(first.duplicate).toBe(false);
+    const variant = await writer.proposeToInbox(entry({ project: "engram" }));
+    expect(variant.duplicate).toBe(true);
+
+    const inbox = await adapter.read(first.path);
+    expect(inbox.match(/## Pending Memory:/g)?.length).toBe(1);
+  });
+
   describe("the dedup scan is cached against the inbox's mtime", () => {
     // Reading and re-parsing the whole inbox per call is O(inbox), and the
     // backlog grows with agent usage rather than vault size. These pin the
