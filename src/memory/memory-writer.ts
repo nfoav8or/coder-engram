@@ -25,6 +25,8 @@ import {
   PendingEntry,
   REJECTED_HEADER,
   REJECTED_HEADING_PREFIX,
+  SUPERSEDED_HEADER,
+  SUPERSEDED_HEADING_PREFIX,
   formatAppliedBlock,
   parsePendingInbox,
   removeEntry,
@@ -34,6 +36,7 @@ import {
 } from "./pending-inbox";
 import { isInsideRoot, resolveInVault } from "../utils/paths";
 import { foldForCompare } from "../utils/text";
+import { countSections, parseSupersedesRef, supersessionKey } from "./supersession";
 import { ConfigError, PathSecurityError, toMessage } from "../utils/errors";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 
@@ -144,6 +147,23 @@ function pendingKey(existing: PendingEntry): string {
  */
 export const REJECTION_LOG_MAX = 200;
 
+/** Shared empty result, so the common "nothing retired" path allocates nothing. */
+const EMPTY_KEYS: ReadonlySet<string> = new Set<string>();
+
+/** What became of an applied entry's `supersedes` reference. */
+export type SupersessionOutcome =
+  | "none"
+  | "recorded"
+  | "ambiguous"
+  | "target-missing"
+  | "invalid"
+  | "failed";
+
+export interface ApplyOutcome {
+  destination: string;
+  superseded: SupersessionOutcome;
+}
+
 /**
  * Index ledger records by dedup key. Later records win: a memory rejected twice
  * reports the most recent reason, which is the one the reviewer last gave.
@@ -190,6 +210,7 @@ export function formatMemoryEntry(entry: MemoryEntry): string {
     source: entry.source,
     originTool: entry.originTool,
     confidence: entry.confidence,
+    supersedes: entry.supersedes,
     tags: entry.tags,
     content: entry.content,
     relatedPaths: entry.relatedPaths,
@@ -216,6 +237,8 @@ export class MemoryWriter {
    * take effect on the next proposal).
    */
   private rejectionCache: { mtime: number; keys: Map<string, RejectionMatch> } | null = null;
+  /** Retired-section keys as of the supersession ledger's `mtime`. */
+  private supersededCache: { mtime: number; keys: Set<string> } | null = null;
 
   constructor(
     private readonly adapter: VaultAdapter,
@@ -382,7 +405,7 @@ export class MemoryWriter {
    * write is ALWAYS an append (it never overwrites an existing memory file),
    * regardless of the `appendOnly` setting.
    */
-  async applyPending(entry: PendingEntry): Promise<{ destination: string }> {
+  async applyPending(entry: PendingEntry): Promise<ApplyOutcome> {
     const destination = resolveApplyDestination(entry, this.paths);
     // Defense-in-depth: resolveApplyDestination already builds paths via
     // resolveInVault, but never write anywhere that isn't under the root.
@@ -423,8 +446,106 @@ export class MemoryWriter {
       }
       await this.adapter.write(target, next);
       this.logger.info("Applied pending memory", { destination, type: entry.type });
-      return { destination };
+      return { destination, superseded: await this.recordSupersession(entry) };
     });
+  }
+
+  /**
+   * Retire the memory this entry claims to replace, if it named one.
+   *
+   * Runs AFTER the entry has landed, and never fails the apply: the new memory
+   * is the thing the reviewer approved, and losing it because a reference was
+   * stale would be the worse outcome by far. A reference that no longer
+   * resolves is reported as `target-missing` so the UI can say plainly that
+   * nothing was retired, rather than leaving the reviewer believing it was.
+   */
+  private async recordSupersession(entry: PendingEntry): Promise<SupersessionOutcome> {
+    if (!entry.supersedes) return "none";
+    const ref = parseSupersedesRef(entry.supersedes, this.paths.memory);
+    // Validated at propose time too; re-checked here because the inbox is a
+    // file a user can edit by hand between the two.
+    if (!ref) return "invalid";
+    // Defense-in-depth, matching the other two ledger writers: this path is
+    // derived, never caller-supplied, but it is still a write target.
+    if (!isInsideRoot(this.paths.root, this.paths.supersededMemoryFile)) {
+      throw new PathSecurityError("Supersession ledger path escapes the memory root");
+    }
+    try {
+      if (!(await this.adapter.exists(ref.path))) return "target-missing";
+      const matches = countSections(await this.adapter.read(ref.path), ref.heading);
+      if (matches === 0) return "target-missing";
+      // A section is addressed by its heading text, so a heading that appears
+      // twice is two candidates and no way to choose. Retiring both would
+      // silently remove a memory nobody named — the exact harm this mechanism
+      // must never cause — so it retires neither and says so.
+      if (matches > 1) return "ambiguous";
+      const { entries } = await this.readSupersessions();
+      const block = renderPendingBlock(
+        { ...entry, status: "superseded" },
+        SUPERSEDED_HEADING_PREFIX,
+      );
+      if (entries.length === 0 && !(await this.adapter.exists(this.paths.supersededMemoryFile))) {
+        await this.adapter.write(this.paths.supersededMemoryFile, SUPERSEDED_HEADER + block);
+      } else {
+        await this.adapter.append(this.paths.supersededMemoryFile, block);
+      }
+      // Unlike the rejection ledger this one is NOT capped: dropping the oldest
+      // record would silently un-retire a memory the reviewer replaced, putting
+      // stale text back into search — the exact failure superseding exists to
+      // fix. It grows only with reviewer decisions, one line-bounded block each.
+      //
+      // Seeded rather than invalidated: this set is read by every search and
+      // every context assembly, so the next one would otherwise re-read and
+      // re-parse a ledger whose contents we just wrote.
+      const mtime = await this.adapter.getMtime(this.paths.supersededMemoryFile);
+      const keys = new Set([supersessionKey(ref.path, ref.heading)]);
+      for (const e of entries) {
+        const prior = e.supersedes ? parseSupersedesRef(e.supersedes, this.paths.memory) : null;
+        if (prior) keys.add(supersessionKey(prior.path, prior.heading));
+      }
+      this.supersededCache = mtime === null ? null : { mtime, keys };
+      return "recorded";
+    } catch (err) {
+      this.logger.warn("Applied, but could not record the supersession", {
+        error: toMessage(err),
+      });
+      return "failed";
+    }
+  }
+
+  /** Read + parse the supersession ledger. */
+  async readSupersessions(): Promise<ParsedInbox> {
+    const target = this.paths.supersededMemoryFile;
+    if (!(await this.adapter.exists(target))) {
+      return { header: SUPERSEDED_HEADER, entries: [] };
+    }
+    return parsePendingInbox(await this.adapter.read(target), SUPERSEDED_HEADING_PREFIX);
+  }
+
+  /**
+   * The set of retired sections, as {@link supersessionKey} values, cached
+   * against the ledger's mtime. Read on every search and every context
+   * assembly, so it must not re-parse the file each time; deleting a record by
+   * hand is the documented way to bring a memory back, so the cache must not
+   * outlive the file either.
+   */
+  async supersededKeys(): Promise<ReadonlySet<string>> {
+    const mtime = await this.adapter.getMtime(this.paths.supersededMemoryFile);
+    // A null mtime means nothing is retired. Failing open here shows a stale
+    // memory, which a reader can see and act on; failing closed would hide a
+    // live one, which they cannot.
+    if (mtime === null) {
+      this.supersededCache = null;
+      return EMPTY_KEYS;
+    }
+    if (this.supersededCache?.mtime === mtime) return this.supersededCache.keys;
+    const keys = new Set<string>();
+    for (const e of (await this.readSupersessions()).entries) {
+      const ref = e.supersedes ? parseSupersedesRef(e.supersedes, this.paths.memory) : null;
+      if (ref) keys.add(supersessionKey(ref.path, ref.heading));
+    }
+    this.supersededCache = { mtime, keys };
+    return keys;
   }
 
   /**

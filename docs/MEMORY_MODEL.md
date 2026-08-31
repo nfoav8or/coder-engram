@@ -23,6 +23,7 @@ Claude Code/                         (memory root; configurable, must stay in th
     Inbox/
       pending-memory.md              append-only review inbox
       rejected-memory.md             ledger of discarded proposals (capped)
+      superseded-memory.md           ledger of memories retired by a later one
   Index/                             rebuildable cache (not source of truth)
     chunks.json
     metadata.json
@@ -87,6 +88,81 @@ Status: pending
 ```
 
 `Project`, `Origin`, `Confidence`, and the `Related files` list are only emitted when present. The `Tags` line always begins with `#coder-engram`. Structural look-alikes inside `Content` are neutralized at render time with one leading space: a line starting with `## Pending Memory: ` (which would forge a second entry), and — only when the entry has no real related-files list — a content tail shaped exactly like a `Related files:` section (which the parser could not otherwise tell apart from structure; see SECURITY.md). You review these blocks in the vault (or via **Review Pending Memory**) and apply or discard them by hand.
+
+## Superseding a stale memory
+
+Memory used to be write-once. Dedup deliberately keeps a restatement that adds
+detail, so contradictory entries accumulated and nothing could ever be retired —
+and a stale memory is worse than none, because it still reads as settled
+knowledge.
+
+A proposal may carry a `Supersedes: <path>#<heading>` field naming the memory it
+replaces. The reference is exactly what a search result already prints, so an
+agent that found the stale memory has it to hand; a full `A › B › C` heading path
+is accepted and its leaf taken.
+
+Two rules bound what may be named, checked at `add_memory` (so an unusable
+reference never reaches the inbox) and re-checked at apply (because the inbox is
+a file a person can edit in between):
+
+- **Inside the memory root.** Retiring is a hide, so a reference able to name any
+  vault note would let a proposal quietly suppress the user's own writing.
+- **A heading is required.** A bare path would retire a whole file in one click.
+
+Applying the entry appends a record to `Memory/Inbox/superseded-memory.md`.
+Nothing is overwritten — that is what lets superseding coexist with the
+apply-is-always-an-append rule. From then on:
+
+- `search` drops results in the retired section. The filter runs **after**
+  ranking, never before: removing the chunks first would change the BM25 corpus
+  statistics every other result is scored against, so retiring one memory would
+  silently re-rank unrelated notes.
+- `get_project_context` and `get_global_context` replace the section with a
+  `— superseded` marker and a pointer to the ledger. Without this the retired
+  text would still be served through the other door, beside its replacement,
+  with nothing to tell them apart.
+- `get_note_context` and `summarize_note` read a note's chunks, and both go
+  through `EngramEngine.getReadableNoteChunks`, which drops retired sections.
+  Every path that hands chunk *text* to a caller goes through that one method;
+  the raw `getNoteChunks` stays unfiltered because its other callers ask an
+  existence question ("is this note indexed?"), which a retirement does not
+  change. A note whose every section is retired reports exactly that, rather
+  than the "not indexed" answer that would send an agent to reindex it.
+
+Section boundaries come from `scanMarkdownLines`, the chunker's own heading
+scan, so a section is retired on exactly the boundaries it was chunked on. A `#`
+comment inside a code block is not a heading, and a closing fence must match the
+marker that opened it.
+
+Three rules keep a retirement from taking more than it named:
+
+- **Applied content has its code fences balanced** before it is written. Content
+  lands in the file verbatim, and an odd number of fence markers desynchronizes
+  every fence-aware reader to the end of the file — which made one crafted
+  memory able to hide every section applied after it. Closing the fence is
+  additive and visible; nothing in the content is altered or removed.
+- **Applied headings carry a short content-derived anchor** —
+  `## Decision — 2026-07-03 14:22 · k3f9a1`. The heading is the address a
+  reference names, and `timestampLabel` has minute granularity: a reviewer
+  applying several same-type entries in one minute produced byte-identical
+  headings, so retiring one retired the other. Two entries that agree on content
+  as well are the same memory, which the inbox dedup already refuses.
+- **An ambiguous target retires nothing.** If the named heading matches more
+  than one section — possible in a file written before the anchor existed, or
+  hand-authored — the apply reports `ambiguous` and retires neither. Removing a
+  memory nobody named is the one harm this mechanism must never cause.
+
+Delete a record from the ledger to bring that memory back. Unlike the rejection
+ledger, this one is **not capped**: dropping the oldest record would silently
+un-retire a memory the reviewer replaced, putting stale text back into search —
+the exact failure superseding exists to fix.
+
+Retiring is **human-gated**. `supersedes` on a proposal is a claim; nothing in
+the MCP tool surface can promote it. The review card names the memory that will
+be retired, above the content, so approving it is never a surprise. If the
+reference no longer resolves at apply time the apply still succeeds — the new
+memory is what the reviewer approved — and the UI says plainly that nothing was
+retired.
 
 ## The rejection ledger
 

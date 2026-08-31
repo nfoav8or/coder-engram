@@ -14,6 +14,7 @@ describe("resolveMemoryPaths", () => {
     const p = resolveMemoryPaths("Claude Code");
     expect(p.pendingMemoryFile).toBe("Claude Code/Memory/Inbox/pending-memory.md");
     expect(p.rejectedMemoryFile).toBe("Claude Code/Memory/Inbox/rejected-memory.md");
+    expect(p.supersededMemoryFile).toBe("Claude Code/Memory/Inbox/superseded-memory.md");
     expect(p.globalFiles.profile).toBe("Claude Code/Memory/Global/profile.md");
     expect(p.chunksFile).toBe("Claude Code/Index/chunks.json");
   });
@@ -29,6 +30,7 @@ describe("resolveMemoryPaths", () => {
         configFolder: "Config",
         pendingFile: "pending-memory.md",
         rejectedFile: "rejected-memory.md",
+        supersededFile: "superseded-memory.md",
       }),
     ).toThrow(PathSecurityError);
   });

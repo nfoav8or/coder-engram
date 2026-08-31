@@ -28,7 +28,12 @@ import {
   resolveProjectPaths,
 } from "./memory/memory-types";
 import { MemoryStore, SessionNote, ContextPart } from "./memory/memory-store";
-import { InboxLock, MemoryWriter, RejectionMatch } from "./memory/memory-writer";
+import { ApplyOutcome, InboxLock, MemoryWriter, RejectionMatch } from "./memory/memory-writer";
+import {
+  parseSupersedesRef,
+  stripSupersededSections,
+  supersessionKey,
+} from "./memory/supersession";
 import { ParsedInbox, PendingEntry } from "./memory/pending-inbox";
 import { extractiveSummary, splitIntoSentences, SummaryMethod } from "./summarize/extractive";
 import {
@@ -40,7 +45,7 @@ import {
 } from "./settings/settings";
 import { normalizeVaultRelativePath, isInsideRoot, resolveInVault } from "./utils/paths";
 import { foldForCompare, projectKey } from "./utils/text";
-import { ConfigError, toMessage } from "./utils/errors";
+import { ConfigError, ValidationError, toMessage } from "./utils/errors";
 import { Logger, redact } from "./utils/logger";
 
 /** Optional injected dependencies (production wires the Obsidian adapters). */
@@ -87,6 +92,8 @@ export interface AddMemoryInput {
   confidence?: MemoryEntry["confidence"];
   tags?: string[];
   relatedPaths?: string[];
+  /** `<vault path>#<heading>` of the memory this entry replaces, if any. */
+  supersedes?: string;
 }
 
 /** Default sentences returned by summarizeNote when the caller doesn't specify. */
@@ -675,7 +682,15 @@ export class EngramEngine {
    */
   async search(query: RetrievalQuery): Promise<RetrievalResult[]> {
     const resolved = await this.withQueryVector(query);
-    return this.retriever.retrieve(resolved, this.index.getChunks());
+    const results = this.retriever.retrieve(resolved, this.index.getChunks());
+    // Retired memory is dropped AFTER ranking, not before: filtering the corpus
+    // would change the BM25 corpus statistics every other result is scored
+    // against, so retiring one memory would silently re-rank unrelated notes.
+    const retired = await this.writer.supersededKeys();
+    if (retired.size === 0) return results;
+    return results.filter(
+      (r) => !retired.has(supersessionKey(r.chunk.notePath, r.chunk.heading)),
+    );
   }
 
   /** Identity of the CURRENTLY-configured embedding backend. Stored vectors are
@@ -826,6 +841,26 @@ export class EngramEngine {
   }
 
   /**
+   * A note's chunks with retired sections removed — what may be SERVED to a
+   * caller, as opposed to what the index holds.
+   *
+   * Every path that hands chunk TEXT to someone goes through here. Filtering
+   * search and the whole-file context reads alone left this door open: an agent
+   * calling `get_note_context` or `summarize_note` on a memory file still saw
+   * the superseded text beside its replacement, with nothing to tell them
+   * apart — which is the situation superseding exists to end, reached through a
+   * third door. {@link getNoteChunks} stays unfiltered because its other
+   * callers ask an existence question ("is this note indexed?"), which a
+   * retirement does not change.
+   */
+  async getReadableNoteChunks(notePath: string): Promise<IndexedChunk[]> {
+    const chunks = this.getNoteChunks(notePath);
+    const retired = await this.writer.supersededKeys();
+    if (retired.size === 0) return chunks;
+    return chunks.filter((c) => !retired.has(supersessionKey(c.notePath, c.heading)));
+  }
+
+  /**
    * Notes related to an indexed note through the link graph: which indexed notes
    * it links to, and which indexed notes link back to it.
    *
@@ -859,10 +894,16 @@ export class EngramEngine {
    */
   async summarizeNote(notePath: string, opts: { maxSentences?: number } = {}): Promise<NoteSummary> {
     const normalized = normalizeVaultRelativePath(notePath);
-    const chunks = this.getNoteChunks(normalized);
+    const chunks = await this.getReadableNoteChunks(normalized);
     if (chunks.length === 0) {
+      // Two different empties, and they need different answers: a note nobody
+      // indexed, and a note whose every section a reviewer retired. Reporting
+      // the second as "not indexed" would send the agent to reindex a note that
+      // is indexed and deliberately empty of servable content.
       throw new ConfigError(
-        `Note "${normalized}" is not indexed (it may be excluded or outside the vault). Only indexed notes can be summarized.`,
+        this.getNoteChunks(normalized).length > 0
+          ? `Every section of "${normalized}" has been superseded, so there is nothing to summarize.`
+          : `Note "${normalized}" is not indexed (it may be excluded or outside the vault). Only indexed notes can be summarized.`,
       );
     }
     const maxSentences = Math.max(
@@ -1016,8 +1057,13 @@ export class EngramEngine {
 
   /** Graduate a reviewed inbox entry into its destination memory file, then
    * drop it from the inbox. Human-in-the-loop; not exposed over the network. */
-  async applyPendingMemory(entry: PendingEntry): Promise<{ destination: string }> {
+  async applyPendingMemory(entry: PendingEntry): Promise<ApplyOutcome> {
     return this.writer.applyPending(entry);
+  }
+
+  /** Read + parse the supersession ledger (retired memories, newest last). */
+  async getSupersessions(): Promise<ParsedInbox> {
+    return this.writer.readSupersessions();
   }
 
   /**
@@ -1051,6 +1097,15 @@ export class EngramEngine {
     input: AddMemoryInput,
     opts: { direct?: boolean; subpath?: string; reviewerAuthored?: boolean } = {},
   ): Promise<{ path: string; duplicate: boolean; rejection: RejectionMatch | null }> {
+    // Validated here, at the domain boundary, rather than at each caller: a
+    // reference that cannot be acted on must never reach the inbox, where a
+    // reviewer would approve a replacement that silently retires nothing.
+    if (input.supersedes && !parseSupersedesRef(input.supersedes, this.paths.memory)) {
+      throw new ValidationError(
+        `"supersedes" must be "<path>#<heading>" naming a section of a memory file under ` +
+          `${this.paths.memory}. A path outside memory, or a path with no heading, is refused.`,
+      );
+    }
     const entry: MemoryEntry = {
       type: input.type,
       content: input.content,
@@ -1058,6 +1113,7 @@ export class EngramEngine {
       source: input.source ?? "Obsidian UI",
       originTool: input.originTool,
       confidence: input.confidence,
+      supersedes: input.supersedes,
       tags: input.tags ?? [],
       relatedPaths: input.relatedPaths ?? [],
       timestamp: this.clock(),
@@ -1138,11 +1194,28 @@ export class EngramEngine {
   }
 
   async getProjectContext(name: string): Promise<ContextPart[]> {
-    return this.store.getProjectContext(name);
+    return this.withoutSuperseded(await this.store.getProjectContext(name));
   }
 
   async getGlobalContext(): Promise<ContextPart[]> {
-    return this.store.getGlobalContext();
+    return this.withoutSuperseded(await this.store.getGlobalContext());
+  }
+
+  /**
+   * Replace retired sections in whole-file context reads with a marker.
+   *
+   * Filtering search alone would leave a superseded memory served through the
+   * other door: `get_project_context` returns a file verbatim, so the agent
+   * would see the retired text and its replacement side by side with nothing to
+   * tell them apart — which is the situation superseding exists to end.
+   */
+  private async withoutSuperseded(parts: ContextPart[]): Promise<ContextPart[]> {
+    const retired = await this.writer.supersededKeys();
+    if (retired.size === 0) return parts;
+    return parts.map((part) => ({
+      ...part,
+      content: stripSupersededSections(part.content, part.path, retired).text,
+    }));
   }
 
   async getRecentSessions(name: string, limit?: number): Promise<SessionNote[]> {

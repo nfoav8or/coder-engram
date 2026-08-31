@@ -11,8 +11,27 @@
 import { App, Modal, Notice, Setting } from "obsidian";
 import { EngramEngine } from "../engine";
 import { PendingEntry, resolveApplyDestination } from "../memory/pending-inbox";
+import { SupersessionOutcome } from "../memory/memory-writer";
 import { toMessage } from "../utils/errors";
 import { PromptModal } from "./simple-modals";
+
+/** What to tell the reviewer about the entry's `supersedes` reference. */
+function supersessionNote(outcome: SupersessionOutcome): string {
+  switch (outcome) {
+    case "recorded":
+      return " The memory it replaces is now retired from search and context.";
+    case "ambiguous":
+      return " More than one memory there has that heading, so none was retired.";
+    case "target-missing":
+      return " The memory it claimed to replace was not found, so nothing was retired.";
+    case "invalid":
+      return " Its replacement reference was not usable, so nothing was retired.";
+    case "failed":
+      return " The replacement could not be recorded, so nothing was retired.";
+    default:
+      return "";
+  }
+}
 
 export class PendingMemoryModal extends Modal {
   /** Guards against overlapping apply/discard while a mutation is in flight
@@ -78,6 +97,16 @@ export class PendingMemoryModal extends Modal {
     }
     card.createEl("p", { text: `Applies to: ${destination}`, cls: "engram-result-path" });
 
+    // Shown prominently and above the content: applying this entry retires
+    // another memory, and a reviewer must not have to read the raw block to
+    // find that out.
+    if (entry.supersedes) {
+      card.createEl("p", {
+        text: `Replaces (will be retired on apply): ${entry.supersedes}`,
+        cls: "engram-result-path",
+      });
+    }
+
     card.createEl("pre", { text: entry.content || "(no content)" });
 
     if (entry.tags.length > 0) {
@@ -103,8 +132,8 @@ export class PendingMemoryModal extends Modal {
     if (this.busy) return;
     this.busy = true;
     try {
-      const { destination } = await this.engine.applyPendingMemory(entry);
-      new Notice(`Applied to ${destination}.`);
+      const { destination, superseded } = await this.engine.applyPendingMemory(entry);
+      new Notice(`Applied to ${destination}.${supersessionNote(superseded)}`);
     } catch (err) {
       new Notice(`Apply failed: ${toMessage(err)}`);
     } finally {
@@ -175,6 +204,10 @@ export class PendingMemoryModal extends Modal {
     });
     this.button(actions, "Open rejected", () => {
       void this.app.workspace.openLinkText(this.engine.getPaths().rejectedMemoryFile, "", false);
+      this.close();
+    });
+    this.button(actions, "Open retired", () => {
+      void this.app.workspace.openLinkText(this.engine.getPaths().supersededMemoryFile, "", false);
       this.close();
     });
     this.button(actions, "Clear rejections", () => this.clearRejections(), { warning: true });

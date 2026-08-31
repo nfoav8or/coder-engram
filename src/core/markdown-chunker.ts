@@ -67,6 +67,47 @@ const DEFAULTS = { maxChars: 2000, overlapChars: 150 };
 const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 const FENCE = /^(\s*)(```|~~~)/;
 
+/** An ATX heading line: its level (`#` count) and its title, trimmed. */
+export interface MarkdownHeading {
+  level: number;
+  text: string;
+}
+
+/**
+ * Walk Markdown lines, reporting which of them are real headings.
+ *
+ * Fence-aware, and the closing marker must MATCH the one that opened the fence
+ * — a ``` inside a ~~~ block is content, not a terminator. This is the one
+ * definition of "is this line a heading" in the codebase, exported because
+ * getting it subtly wrong elsewhere has consequences beyond chunking: a second
+ * scanner that toggled on any fence-looking line desynchronized on an unmatched
+ * marker and, in `stripSupersededSections`, swallowed every remaining section
+ * of a file instead of the one it was asked to retire. Two answers to this
+ * question is one too many.
+ */
+export function scanMarkdownLines(
+  lines: string[],
+  visit: (index: number, line: string, heading: MarkdownHeading | null) => void,
+  startLine = 0,
+): void {
+  let inFence = false;
+  let fenceMarker = "";
+  for (let i = startLine; i < lines.length; i++) {
+    const line = lines[i];
+    const fence = line.match(FENCE);
+    if (fence) {
+      if (!inFence) {
+        inFence = true;
+        fenceMarker = fence[2];
+      } else if (line.trimStart().startsWith(fenceMarker)) {
+        inFence = false;
+      }
+    }
+    const m = inFence ? null : line.match(HEADING);
+    visit(i, line, m ? { level: m[1].length, text: m[2].trim() } : null);
+  }
+}
+
 interface RawSection {
   heading: string;
   headingPath: string[];
@@ -78,9 +119,6 @@ interface RawSection {
 function splitIntoSections(lines: string[], bodyStartLine: number): RawSection[] {
   const sections: RawSection[] = [];
   const headingStack: { level: number; text: string }[] = [];
-  let inFence = false;
-  let fenceMarker = "";
-
   let current: RawSection | null = null;
 
   const flush = (endLine: number): void => {
@@ -101,39 +139,28 @@ function splitIntoSections(lines: string[], bodyStartLine: number): RawSection[]
     };
   };
 
-  for (let i = bodyStartLine; i < lines.length; i++) {
-    const line = lines[i];
-
-    const fence = line.match(FENCE);
-    if (fence) {
-      if (!inFence) {
-        inFence = true;
-        fenceMarker = fence[2];
-      } else if (line.trimStart().startsWith(fenceMarker)) {
-        inFence = false;
+  scanMarkdownLines(
+    lines,
+    (i, line, heading) => {
+      if (heading) {
+        flush(i - 1);
+        const { level, text } = heading;
+        while (headingStack.length && headingStack[headingStack.length - 1].level >= level) {
+          headingStack.pop();
+        }
+        // Breadcrumb excludes the heading itself; push after computing path.
+        startSection(text, i);
+        headingStack.push({ level, text });
+        return;
       }
-    }
-
-    const headingMatch = inFence ? null : line.match(HEADING);
-    if (headingMatch) {
-      flush(i - 1);
-      const level = headingMatch[1].length;
-      const text = headingMatch[2].trim();
-      while (headingStack.length && headingStack[headingStack.length - 1].level >= level) {
-        headingStack.pop();
+      if (!current) {
+        // Preamble before the first heading.
+        startSection("", i);
       }
-      // Breadcrumb excludes the heading itself; push after computing path.
-      startSection(text, i);
-      headingStack.push({ level, text });
-      continue;
-    }
-
-    if (!current) {
-      // Preamble before the first heading.
-      startSection("", i);
-    }
-    current!.lines.push(line);
-  }
+      current!.lines.push(line);
+    },
+    bodyStartLine,
+  );
   flush(lines.length - 1);
 
   return sections.filter((s) => s.heading !== "" || s.lines.some((l) => l.trim() !== ""));

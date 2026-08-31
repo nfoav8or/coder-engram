@@ -443,3 +443,176 @@ describe("inbox serialization across a settings change", () => {
     expect(remaining).toEqual(["memory number 2"]);
   });
 });
+
+describe("superseded memory", () => {
+  const DECISIONS = "Claude Code/Memory/Projects/Engram/decisions.md";
+  const REF = `${DECISIONS}#Decision — storage`;
+
+  async function retire(): Promise<ReturnType<typeof makeEngine>> {
+    const made = makeEngine({
+      [DECISIONS]:
+        "## Decision — storage\n\nWe chose SQLite for the durable store.\n\n" +
+        "## Decision — ranking\n\nWe chose BM25 for lexical ranking.\n",
+      "Notes/unrelated.md": "# Unrelated\nSQLite appears here too, in an ordinary note.",
+    });
+    await made.engine.reindex();
+    await made.engine.addMemory({
+      type: "decision",
+      content: "We now use a local JSON index instead of SQLite.",
+      project: "Engram",
+      supersedes: REF,
+    });
+    const [pending] = (await made.engine.getPendingMemory()).entries;
+    const outcome = await made.engine.applyPendingMemory(pending);
+    expect(outcome.superseded).toBe("recorded");
+    return made;
+  }
+
+  it("stops returning the retired section from search, and only that section", async () => {
+    const { engine } = await retire();
+    const hits = await engine.search({ query: "SQLite durable store" });
+    const paths = hits.map((h) => `${h.chunk.notePath}#${h.chunk.heading}`);
+
+    expect(paths).not.toContain(REF);
+    // An unrelated note that merely mentions the same words is untouched.
+    expect(hits.some((h) => h.chunk.notePath === "Notes/unrelated.md")).toBe(true);
+    // And so is the rest of the SAME file — retiring one memory must not blank
+    // its neighbours. Asked separately because the query above shares no terms
+    // with the sibling section, so its absence there proves nothing.
+    const siblings = await engine.search({ query: "BM25 lexical ranking" });
+    expect(
+      siblings.some((h) => h.chunk.notePath === DECISIONS && h.chunk.heading === "Decision — ranking"),
+    ).toBe(true);
+  });
+
+  it("strips the retired section from whole-file context reads too", async () => {
+    // Filtering search alone would leave the retired memory served through the
+    // other door, with nothing to tell it apart from its replacement.
+    const { engine } = await retire();
+    const parts = await engine.getProjectContext("Engram");
+    const decisions = parts.find((p) => p.path === DECISIONS);
+
+    expect(decisions?.content).not.toContain("We chose SQLite for the durable store.");
+    expect(decisions?.content).toContain("Decision — storage — superseded");
+    expect(decisions?.content).toContain("We chose BM25 for lexical ranking.");
+    expect(decisions?.content).toContain("We now use a local JSON index");
+  });
+
+  it("refuses a reference that points outside the memory root", async () => {
+    // Retiring is a hide, so a reference able to name any vault note would let
+    // a proposal quietly retire the user's own writing.
+    const { engine } = makeEngine({ "Notes/private.md": "# Private\nsecret" });
+    await expect(
+      engine.addMemory({ type: "note", content: "x", supersedes: "Notes/private.md#Private" }),
+    ).rejects.toThrow(/supersedes/i);
+    // Nothing was written: the proposal never reached the inbox.
+    expect((await engine.getPendingMemory()).entries).toHaveLength(0);
+  });
+
+  it("refuses a reference with no heading", async () => {
+    const { engine } = makeEngine({});
+    await expect(
+      engine.addMemory({ type: "note", content: "x", supersedes: DECISIONS }),
+    ).rejects.toThrow(/supersedes/i);
+  });
+});
+
+describe("superseded memory is not served through the note-reading doors", () => {
+  const DECISIONS = "Claude Code/Memory/Projects/Engram/decisions.md";
+
+  async function retireStorage() {
+    const made = makeEngine({
+      [DECISIONS]:
+        "## Decision — storage\n\nWe chose SQLite for the durable store.\n\n" +
+        "## Decision — ranking\n\nWe chose BM25 for lexical ranking.\n",
+    });
+    await made.engine.reindex();
+    await made.engine.addMemory({
+      type: "decision",
+      content: "We now use a local JSON index.",
+      project: "Engram",
+      supersedes: `${DECISIONS}#Decision — storage`,
+    });
+    const [pending] = (await made.engine.getPendingMemory()).entries;
+    expect((await made.engine.applyPendingMemory(pending)).superseded).toBe("recorded");
+    return made;
+  }
+
+  it("drops the retired section from the chunks a caller may read", async () => {
+    // Filtering search and the whole-file context reads alone left this door
+    // open: get_note_context and summarize_note both read a note's chunks, so
+    // an agent still saw the retired text beside its replacement.
+    const { engine } = await retireStorage();
+    const readable = await engine.getReadableNoteChunks(DECISIONS);
+
+    expect(readable.some((c) => c.heading === "Decision — storage")).toBe(false);
+    expect(readable.some((c) => c.heading === "Decision — ranking")).toBe(true);
+    // The raw index accessor is deliberately unfiltered: its other callers ask
+    // "is this note indexed?", which a retirement does not change.
+    expect(engine.getNoteChunks(DECISIONS).some((c) => c.heading === "Decision — storage")).toBe(
+      true,
+    );
+  });
+
+  it("keeps the retired text out of a summary", async () => {
+    const { engine } = await retireStorage();
+    const summary = await engine.summarizeNote(DECISIONS);
+    expect(summary.sentences.join(" ")).not.toContain("SQLite");
+  });
+
+  it("says a fully-retired note is retired, not unindexed", async () => {
+    // Two different empties needing different answers: reporting this as "not
+    // indexed" would send the agent to reindex a note that is indexed and
+    // deliberately empty of servable content.
+    const made = makeEngine({ [DECISIONS]: "## Decision — storage\n\nWe chose SQLite.\n" });
+    await made.engine.reindex();
+    await made.engine.addMemory({
+      type: "decision",
+      content: "Replacement.",
+      project: "Engram",
+      supersedes: `${DECISIONS}#Decision — storage`,
+    });
+    const [pending] = (await made.engine.getPendingMemory()).entries;
+    await made.engine.applyPendingMemory(pending);
+    // Re-index so the applied block is not itself a servable chunk.
+    await made.adapter.write(DECISIONS, "## Decision — storage\n\nWe chose SQLite.\n");
+    await made.engine.reindex();
+
+    await expect(made.engine.summarizeNote(DECISIONS)).rejects.toThrow(/superseded/i);
+  });
+});
+
+describe("a memory with an unbalanced code fence cannot hide its neighbours", () => {
+  it("retires only the named memory, not everything applied after it", async () => {
+    // The reported attack: applied content lands in the memory file verbatim,
+    // so an odd number of fence markers desynchronizes every fence-aware reader
+    // from that point to the end of the file. Retiring that memory then found
+    // no heading to stop at and swallowed every later section — silently, and
+    // only in the context reads, so search still showed the "missing" text.
+    const { engine } = makeEngine({});
+    await engine.reindex();
+
+    const propose = async (content: string, supersedes?: string) => {
+      await engine.addMemory({ type: "decision", content, project: "Engram", supersedes });
+      const entries = (await engine.getPendingMemory()).entries;
+      return engine.applyPendingMemory(entries[entries.length - 1]);
+    };
+
+    await propose("Storage plan:\n\n```sh\nsqlite3 memory.db");
+    await propose("Ranking uses BM25 with a heading boost.");
+
+    const decisions = "Claude Code/Memory/Projects/Engram/decisions.md";
+    const before = await engine.getProjectContext("Engram");
+    const stale = before.find((p) => p.path === decisions)!.content;
+    const staleHeading = /^## (Decision — .*)$/m.exec(stale)![1];
+
+    expect((await propose("Storage is now a JSON index.", `${decisions}#${staleHeading}`)).superseded)
+      .toBe("recorded");
+
+    const after = (await engine.getProjectContext("Engram")).find((p) => p.path === decisions)!;
+    expect(after.content).not.toContain("sqlite3 memory.db");
+    // The neighbour applied between them survives — that is the whole point.
+    expect(after.content).toContain("Ranking uses BM25 with a heading boost.");
+    expect(after.content).toContain("Storage is now a JSON index.");
+  });
+});

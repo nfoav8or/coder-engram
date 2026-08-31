@@ -9,6 +9,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Supersede a stale memory — memory that can be revised, not only appended.**
+  Dedup deliberately keeps a restatement that adds detail, so contradictory
+  memories accumulated and nothing could ever be retired. A stale memory is
+  worse than no memory, because it still reads as settled knowledge. A proposal
+  may now carry **`supersedes`**: the `"<path>#<heading>"` of the memory it
+  replaces, taken straight from a search result's label. Applying it retires
+  that memory — search stops returning it and `get_project_context` /
+  `get_global_context` replace the section with a visible `— superseded` marker.
+
+  **Nothing is overwritten**, which is what lets this coexist with the
+  apply-is-always-an-append invariant. The original text stays in its file; a
+  record is appended to `Memory/Inbox/superseded-memory.md`, and deleting that
+  record brings the memory straight back. The retirement is a decision you can
+  read, audit, and undo, not a deletion.
+
+  **Two rules bound what can be retired, and both are load-bearing.** The target
+  must be **inside the memory root** — retiring is a hide, so a reference able
+  to name any vault note would let an agent's proposal quietly suppress the
+  user's own writing. And it must **name a heading**: a bare path would retire a
+  whole file in one click, and a reviewer approving "this replaces that
+  decision" is not approving the loss of everything else in the file. A
+  reference failing either is refused at `add_memory`, so it never reaches the
+  inbox for someone to approve.
+
+  Retiring stays **human-gated**: `supersedes` on a proposal is a *claim*, and
+  nothing in the tool surface can promote it. The review card names the memory
+  that will be retired, above the content. A reference that no longer resolves
+  when you apply does not fail the apply — the new memory is what you approved —
+  it retires nothing and says so.
+
+  Every door is closed, not just the obvious ones: `search`,
+  `get_project_context`, `get_global_context`, `get_note_context`, and
+  `summarize_note` all stop serving a retired section. The last two read a
+  note's chunks, so they share one choke-point (`getReadableNoteChunks`) — the
+  raw chunk accessor stays unfiltered because its other callers ask whether a
+  note is indexed, which a retirement does not change.
+
+  Three things keep a retirement from taking more than it named. Applied
+  content has its **code fences balanced** before it is written: content lands
+  in the file verbatim, and an odd number of fence markers desynchronizes every
+  fence-aware reader to the end of the file — which made one crafted memory able
+  to hide every section applied after it. Applied headings carry a **short
+  content-derived anchor**, because `timestampLabel` has minute granularity and
+  a reviewer working through a backlog applies several same-type entries inside
+  one minute routinely, producing byte-identical headings where retiring one
+  retired the other. And a reference whose heading matches **more than one**
+  section retires **neither**, reporting `ambiguous` — a legacy file can still
+  hold a repeated heading, and removing a memory nobody named is the one harm
+  this mechanism must never cause.
+
+  Heading detection is now one function (`scanMarkdownLines`, exported from the
+  chunker) rather than a second copy. The copy disagreed with the original on
+  trailing `#`s and on mismatched fence markers, so a section could chunk one way
+  and be retired another.
+
+  Search is filtered **after** ranking, never before: dropping the chunks first
+  would change the BM25 corpus statistics every other result is scored against,
+  so retiring one memory would silently re-rank unrelated notes. Section
+  matching is fence-aware, so a `#` comment in a code block cannot be mistaken
+  for a heading and drop the wrong text.
+
 - **The rejection ledger — the agent finally learns what a "no" means.** 0.13.0
   let an agent see what was *pending*; it still could not see what was
   **rejected**, or why. A discarded proposal simply vanished, which is

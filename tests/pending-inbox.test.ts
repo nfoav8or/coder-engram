@@ -488,3 +488,82 @@ describe("the rejection-ledger heading", () => {
     expect(parsePendingInbox(REJECTED_HEADER + asLedger, REJECTED_HEADING_PREFIX).entries).toHaveLength(1);
   });
 });
+
+describe("the Supersedes field", () => {
+  it("round-trips through render ⇄ parse", () => {
+    const fields: PendingBlockFields = {
+      timestampLabel: "2026-07-03 14:22",
+      type: "decision",
+      source: "Claude Code",
+      supersedes: "Claude Code/Memory/Global/preferences.md#Preference — tabs",
+      tags: [],
+      content: "We now use spaces.",
+      relatedPaths: [],
+      status: "pending",
+    };
+    const rendered = renderPendingBlock(fields);
+    expect(rendered).toContain("Supersedes: Claude Code/Memory/Global/preferences.md#Preference — tabs");
+
+    const [parsed] = parsePendingInbox(INBOX_HEADER + rendered).entries;
+    expect(parsed.supersedes).toBe(fields.supersedes);
+    expect(renderPendingBlock(parsed)).toBe(rendered);
+  });
+
+  it("cannot be forged from content, which the parser reads after the landmark", () => {
+    // Header fields are only read before `Content:`, so a Supersedes line in
+    // the body stays body — otherwise any proposal could retire any memory.
+    const rendered = renderPendingBlock({
+      timestampLabel: "2026-07-03 14:22",
+      type: "note",
+      source: "MCP",
+      tags: [],
+      content: "Supersedes: Claude Code/Memory/Global/profile.md#Profile",
+      relatedPaths: [],
+      status: "pending",
+    });
+    const [parsed] = parsePendingInbox(INBOX_HEADER + rendered).entries;
+    expect(parsed.supersedes).toBeUndefined();
+    expect(parsed.content).toContain("Supersedes:");
+  });
+});
+
+describe("the applied block's shape", () => {
+  function applied(overrides: Partial<PendingEntry> = {}): string {
+    return formatAppliedBlock({
+      index: 0,
+      raw: "",
+      timestampLabel: "2026-07-03 14:22",
+      type: "decision",
+      source: "Claude Code",
+      tags: [],
+      content: "We chose SQLite.",
+      relatedPaths: [],
+      status: "pending",
+      ...overrides,
+    });
+  }
+
+  it("gives two same-type entries applied in the same minute distinct headings", () => {
+    // The heading is the address a supersession reference names. With
+    // minute-granularity labels alone, two decisions applied in one review
+    // session were byte-identical — and retiring one retired the other.
+    const a = applied({ content: "We chose SQLite." });
+    const b = applied({ content: "We chose BM25." });
+    const headingOf = (s: string) => s.split("\n")[0];
+    expect(headingOf(a)).not.toBe(headingOf(b));
+    expect(headingOf(a)).toMatch(/^## Decision — 2026-07-03 14:22 · [0-9a-z]+$/);
+  });
+
+  it("closes a code fence the content left open", () => {
+    // Content lands in the file verbatim, and an odd number of fence markers
+    // desynchronizes every fence-aware reader to the end of the file.
+    const block = applied({ content: "Here is how:\n\n```sh\necho hi" });
+    expect(block).toContain("echo hi");
+    expect(block.match(/^```/gm)?.length).toBe(2);
+  });
+
+  it("leaves balanced content exactly as written", () => {
+    const content = "Here is how:\n\n```sh\necho hi\n```";
+    expect(applied({ content })).toContain(content);
+  });
+});

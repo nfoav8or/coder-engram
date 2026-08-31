@@ -45,6 +45,8 @@ export interface MemoryEntry {
   /** Originating command or MCP tool name. */
   originTool?: string;
   confidence?: Confidence;
+  /** `<vault path>#<heading>` of the memory this entry replaces, if any. */
+  supersedes?: string;
   tags: string[];
   relatedPaths: string[];
   /** ms since epoch. */
@@ -60,6 +62,7 @@ export interface MemoryLayoutConfig {
   configFolder: string;
   pendingFile: string;
   rejectedFile: string;
+  supersededFile: string;
 }
 
 export const DEFAULT_LAYOUT: MemoryLayoutConfig = {
@@ -71,6 +74,7 @@ export const DEFAULT_LAYOUT: MemoryLayoutConfig = {
   configFolder: "Config",
   pendingFile: "pending-memory.md",
   rejectedFile: "rejected-memory.md",
+  supersededFile: "superseded-memory.md",
 };
 
 export interface MemoryPaths {
@@ -89,6 +93,8 @@ export interface MemoryPaths {
   /** Ledger of discarded proposals. Lives beside the inbox: both are
    * plugin-managed review artifacts, not user-authored memory. */
   rejectedMemoryFile: string;
+  /** Ledger of memories retired by a later applied entry. */
+  supersededMemoryFile: string;
   chunksFile: string;
   metadataFile: string;
   embeddingsFile: string;
@@ -125,6 +131,7 @@ export function resolveMemoryPaths(
     config,
     pendingMemoryFile: resolveInVault(inbox, layout.pendingFile),
     rejectedMemoryFile: resolveInVault(inbox, layout.rejectedFile),
+    supersededMemoryFile: resolveInVault(inbox, layout.supersededFile),
     chunksFile: resolveInVault(index, "chunks.json"),
     metadataFile: resolveInVault(index, "metadata.json"),
     embeddingsFile: resolveInVault(index, "embeddings.json"),

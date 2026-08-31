@@ -1403,6 +1403,90 @@ describe("search_batch", () => {
   });
 });
 
+describe("add_memory supersedes", () => {
+  it("carries the reference into the proposal and says it is not retired yet", async () => {
+    const { ctx, adapter } = makeContext();
+    const registry = new ToolRegistry();
+    const ref = "Claude Code/Memory/Global/preferences.md#Preference — tabs";
+
+    const out = await registry.call(
+      "add_memory",
+      { content: "We now use spaces.", type: "preference", supersedes: ref },
+      ctx,
+    );
+    expect(out).toContain(ref);
+    expect(out).toMatch(/only if a reviewer applies/i);
+    expect(await adapter.read("Claude Code/Memory/Inbox/pending-memory.md")).toContain(
+      `Supersedes: ${ref}`,
+    );
+  });
+
+  it("refuses a reference outside the memory root, or with no heading", async () => {
+    // Retiring hides a section from search and context, so a reference able to
+    // name any vault note would let a proposal quietly retire the user's own
+    // writing. Refused in-band, so the agent sees why.
+    const { ctx, adapter } = makeContext();
+    const registry = new ToolRegistry();
+
+    await expect(
+      registry.call("add_memory", { content: "x", supersedes: "Notes/journal.md#Today" }, ctx),
+    ).rejects.toThrow(/supersedes/i);
+    await expect(
+      registry.call(
+        "add_memory",
+        { content: "x", supersedes: "Claude Code/Memory/Global/profile.md" },
+        ctx,
+      ),
+    ).rejects.toThrow(/supersedes/i);
+
+    expect(await adapter.exists("Claude Code/Memory/Inbox/pending-memory.md")).toBe(false);
+  });
+
+  it("keeps a retired section out of get_note_context", async () => {
+    // The third door. Search and the context reads were filtered first; an
+    // agent reading the note directly still saw the stale text in full.
+    const decisions = "Claude Code/Memory/Projects/Engram/decisions.md";
+    const { ctx, adapter } = makeContext();
+    await adapter.write(
+      decisions,
+      "## Decision — storage\n\nWe chose SQLite.\n\n## Decision — ranking\n\nWe chose BM25.\n",
+    );
+    await ctx.engine.reindex();
+    const registry = new ToolRegistry();
+    await registry.call(
+      "add_memory",
+      {
+        content: "We now use a JSON index.",
+        type: "decision",
+        project: "Engram",
+        supersedes: `${decisions}#Decision — storage`,
+      },
+      ctx,
+    );
+    const [pending] = (await ctx.engine.getPendingMemory()).entries;
+    expect((await ctx.engine.applyPendingMemory(pending)).superseded).toBe("recorded");
+
+    const out = await registry.call("get_note_context", { path: decisions }, ctx);
+    expect(out).not.toContain("We chose SQLite.");
+    expect(out).toContain("We chose BM25.");
+  });
+
+  it("is not something a tool can apply — retiring still needs a reviewer", async () => {
+    const { ctx } = makeContext();
+    const registry = new ToolRegistry();
+    await registry.call(
+      "add_memory",
+      {
+        content: "We now use spaces.",
+        supersedes: "Claude Code/Memory/Global/preferences.md#Preference — tabs",
+      },
+      ctx,
+    );
+    // Nothing in the tool surface can promote it, so nothing is retired.
+    expect((await ctx.engine.getSupersessions()).entries).toHaveLength(0);
+  });
+});
+
 describe("list_rejected_memory", () => {
   async function discardAll(ctx: { engine: EngramEngine }, reason: string): Promise<void> {
     for (const e of (await ctx.engine.getPendingMemory()).entries) {

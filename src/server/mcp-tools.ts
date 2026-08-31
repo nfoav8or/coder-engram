@@ -428,6 +428,14 @@ const addMemoryTool: Tool = {
         tags: { type: "array", items: { type: "string" }, description: "Optional tags." },
         source: { type: "string", description: "Where this came from (default: MCP)." },
         relatedPaths: { type: "array", items: { type: "string" }, description: "Related note paths." },
+        supersedes: {
+          type: "string",
+          description:
+            "Optional \"<path>#<heading>\" of a memory this one REPLACES, taken from a search " +
+            "result's label. Must name a section of a file under the memory root. On approval " +
+            "the named memory stops being returned by search and context reads; its text is " +
+            "left in place. Use it when a fact has changed, not when you are adding detail.",
+        },
       },
       required: ["content"],
       additionalProperties: false,
@@ -448,6 +456,9 @@ const addMemoryTool: Tool = {
     // the same 1 MB body fits in `relatedPaths` instead.
     const tags = optionalStringArray(obj, "tags", 64, 128);
     const relatedPaths = optionalStringArray(obj, "relatedPaths", 128, 512);
+    // A vault path plus a heading; the engine validates it against the memory
+    // root before the proposal is written.
+    const supersedes = optionalString(obj, "supersedes", "", 1_000) || undefined;
 
     // Network path is inbox-only by construction: no `direct` option is passed.
     const { path, duplicate, rejection } = await ctx.engine.addMemory({
@@ -458,6 +469,7 @@ const addMemoryTool: Tool = {
       originTool: "mcp:add_memory",
       tags,
       relatedPaths,
+      supersedes,
     });
     // A rejection is reported, never hidden: the whole reason the ledger exists
     // is that an agent could not tell a rejected proposal from an accepted one,
@@ -470,8 +482,10 @@ const addMemoryTool: Tool = {
         `you have genuinely new detail, which counts as a different memory.`
       );
     }
-    return duplicate
-      ? `An identical memory is already pending review in ${path}; not added again.`
+    if (duplicate) return `An identical memory is already pending review in ${path}; not added again.`;
+    return supersedes
+      ? `Proposed memory appended to ${path} for review. It claims to replace ${supersedes}; ` +
+          `that memory is retired only if a reviewer applies this entry.`
       : `Proposed memory appended to ${path} for review.`;
   },
 };
@@ -721,7 +735,9 @@ const getNoteContextTool: Tool = {
     // Indexed-only gate (same as summarize_note): an excluded/unindexed note has
     // no chunks and is refused, so this can never read a note the exclusion
     // filters were meant to keep out.
-    const allChunks = ctx.engine.getNoteChunks(path);
+    // Readable, not raw: a retired section must not come back through this
+    // door after search and the context reads stopped returning it.
+    const allChunks = await ctx.engine.getReadableNoteChunks(path);
     if (allChunks.length === 0) {
       throw new ValidationError(
         `Note "${path}" is not indexed (it may be excluded or outside the vault). ` +

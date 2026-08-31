@@ -15,6 +15,7 @@
  */
 
 import { MemoryPaths, resolveProjectPaths } from "./memory-types";
+import { fnv1a32 } from "../utils/hash";
 
 /** The header written above the first entry when the inbox file is created. */
 export const INBOX_HEADER =
@@ -28,6 +29,15 @@ export const REJECTED_HEADER =
   "Proposals you discarded, newest last. Coder Engram reports these to the agent so it\n" +
   "stops re-proposing them, and refuses an identical proposal while the record stands.\n" +
   "Delete a record here to let that memory be proposed again.\n\n" +
+  "---\n\n";
+
+/** The header written above the first record when the supersession ledger is created. */
+export const SUPERSEDED_HEADER =
+  "# Superseded Memory\n\n" +
+  "Memories retired by a later one you applied, newest last. Coder Engram stops\n" +
+  "returning a superseded memory from search and from project/global context; the\n" +
+  "original text is left untouched in its file.\n" +
+  "Delete a record here to bring that memory back.\n\n" +
   "---\n\n";
 
 /** Base tag applied to every proposed/graduated memory entry. */
@@ -44,12 +54,18 @@ export const PENDING_HEADING_PREFIX = "## Pending Memory: ";
  * shape; only the heading distinguishes the two files.
  */
 export const REJECTED_HEADING_PREFIX = "## Rejected Memory: ";
+/** Heading that opens a record in the supersession ledger. */
+export const SUPERSEDED_HEADING_PREFIX = "## Superseded Memory: ";
 /** Every heading that opens a block, whichever file it lives in. Content is
  * neutralized against ALL of them, not just the one it is being written to:
  * proposal content is copied verbatim into the ledger when it is discarded, so
  * a `## Rejected Memory: ` line that is inert in the inbox would forge a ledger
  * entry the moment a reviewer rejects it. */
-const HEADING_PREFIXES = [PENDING_HEADING_PREFIX, REJECTED_HEADING_PREFIX];
+const HEADING_PREFIXES = [
+  PENDING_HEADING_PREFIX,
+  REJECTED_HEADING_PREFIX,
+  SUPERSEDED_HEADING_PREFIX,
+];
 const RELATED_HEADER = "Related files:";
 
 /** Normalize + dedupe tags, always leading with the base tag, each `#`-prefixed. */
@@ -75,6 +91,12 @@ export interface PendingBlockFields {
   confidence?: string;
   /** Why a reviewer rejected this proposal. Only ever set in the ledger. */
   reason?: string;
+  /**
+   * `<vault path>#<heading>` of the memory this entry replaces, when the
+   * proposal claims to supersede one. Validated against the memory root before
+   * it is ever acted on; see `memory/supersession.ts`.
+   */
+  supersedes?: string;
   /** Tags WITHOUT the leading `#`; the base tag is added on render. */
   tags: string[];
   content: string;
@@ -158,6 +180,7 @@ export function renderPendingBlock(
   const originTool = oneLine(f.originTool ?? "");
   const confidence = oneLine(f.confidence ?? "");
   const reason = oneLine(f.reason ?? "");
+  const supersedes = oneLine(f.supersedes ?? "");
   const relatedPaths = f.relatedPaths.map(oneLine).filter((p) => p !== "");
   lines.push(`${headingPrefix}${oneLine(f.timestampLabel)}`);
   lines.push("");
@@ -166,6 +189,7 @@ export function renderPendingBlock(
   lines.push(`Source: ${oneLine(f.source)}`);
   if (originTool) lines.push(`Origin: ${originTool}`);
   if (confidence) lines.push(`Confidence: ${confidence}`);
+  if (supersedes) lines.push(`Supersedes: ${supersedes}`);
   if (reason) lines.push(`Reason: ${reason}`);
   lines.push(`Tags: ${formatTags(f.tags)}`);
   lines.push("");
@@ -334,6 +358,7 @@ function parseBlock(raw: string, index: number, headingPrefix: string): PendingE
     originTool: fields.get("origin") || undefined,
     confidence: fields.get("confidence") || undefined,
     reason: fields.get("reason") || undefined,
+    supersedes: fields.get("supersedes") || undefined,
     tags,
     content,
     relatedPaths,
@@ -410,6 +435,23 @@ export function resolveApplyDestination(entry: PendingEntry, paths: MemoryPaths)
 }
 
 /**
+ * Close an unterminated code fence, returning the content otherwise untouched.
+ *
+ * Only a fence opened and never closed matters: readers track the marker that
+ * opened the fence, so a mismatched inner marker is already inert.
+ */
+function balanceFences(content: string): string {
+  let open: string | null = null;
+  for (const line of content.split("\n")) {
+    const m = /^\s*(```|~~~)/.exec(line);
+    if (!m) continue;
+    if (open === null) open = m[1];
+    else if (line.trimStart().startsWith(open)) open = null;
+  }
+  return open === null ? content : `${content}\n${open}`;
+}
+
+/**
  * Render the Markdown block appended to a memory file when an entry is applied.
  * Distinct from the pending block: it carries no `Status: pending` marker and
  * uses a clean, type-titled heading suitable for a graduated memory file. The
@@ -420,9 +462,23 @@ export function formatAppliedBlock(entry: PendingEntry): string {
   const typeTitle = entry.type
     .replace(/(^|[-\s])(\w)/g, (_m: string, sep: string, c: string) => (sep ? " " : "") + c.toUpperCase())
     .trim();
-  lines.push(`## ${typeTitle} — ${entry.timestampLabel}`);
+  // The heading is the ADDRESS a supersession reference names, so it has to be
+  // unique within the file. `timestampLabel` has minute granularity, and a
+  // reviewer working through a backlog applies several same-type entries inside
+  // one minute routinely — byte-identical headings, and retiring one would
+  // retire the other. A short content-derived suffix separates them; two
+  // entries that agree on content as well are the same memory, which the inbox
+  // dedup already refuses.
+  const anchor = fnv1a32(entry.content.trim()).toString(36).padStart(7, "0");
+  lines.push(`## ${typeTitle} — ${entry.timestampLabel} · ${anchor}`);
   lines.push("");
-  lines.push(entry.content.trim());
+  // Fences are balanced before the content is written into a file the plugin
+  // later scans. Content is agent-supplied and lands verbatim, and an odd
+  // number of fence markers desynchronizes every fence-aware reader from that
+  // point to the end of the file — which made one crafted memory able to hide
+  // every section after it. Closing the fence is additive and visible; nothing
+  // in the content is altered or removed.
+  lines.push(balanceFences(entry.content.trim()));
   if (entry.relatedPaths.length > 0) {
     lines.push("");
     lines.push("Related files:");
@@ -430,6 +486,10 @@ export function formatAppliedBlock(entry: PendingEntry): string {
     for (const p of entry.relatedPaths) lines.push(`* ${p}`);
   }
   const footer: string[] = [];
+  // Informational only — the authoritative record lives in the supersession
+  // ledger, which nothing but `applyPending` writes. Parsing this line back
+  // would make any applied memory able to retire another just by containing it.
+  if (entry.supersedes) footer.push(`supersedes: ${entry.supersedes}`);
   if (entry.source) footer.push(`source: ${entry.source}`);
   footer.push(`tags: ${formatTags(entry.tags)}`);
   lines.push("");

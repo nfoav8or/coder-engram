@@ -4,6 +4,7 @@ import { resolveMemoryPaths, MemoryEntry } from "../src/memory/memory-types";
 import { InMemoryVaultAdapter } from "../src/core/vault-adapter";
 import { ConfigError, PathSecurityError } from "../src/utils/errors";
 import { INBOX_HEADER } from "../src/memory/pending-inbox";
+import { supersessionKey } from "../src/memory/supersession";
 
 const paths = resolveMemoryPaths("Claude Code");
 
@@ -454,5 +455,129 @@ describe("the rejection ledger", () => {
     await writer.clearRejections();
     expect((await writer.readRejections()).entries).toHaveLength(0);
     expect((await writer.proposeToInbox(entry())).rejection).toBeNull();
+  });
+});
+
+describe("superseding a memory on apply", () => {
+  const ledgerPath = "Claude Code/Memory/Inbox/superseded-memory.md";
+  const targetPath = "Claude Code/Memory/Projects/ExampleProject/decisions.md";
+  const TARGET_DOC = "## Decision — 2024-01-01 09:00\n\nWe chose SQLite.\n";
+  const REF = `${targetPath}#Decision — 2024-01-01 09:00`;
+
+  async function applyOne(
+    adapter: InMemoryVaultAdapter,
+    supersedes: string,
+    seedTarget = true,
+  ): Promise<{ writer: MemoryWriter; outcome: Awaited<ReturnType<MemoryWriter["applyPending"]>> }> {
+    if (seedTarget) await adapter.write(targetPath, TARGET_DOC);
+    const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+    await writer.proposeToInbox(entry({ content: "We now use a JSON index.", supersedes }));
+    const [pending] = (await writer.readInbox()).entries;
+    return { writer, outcome: await writer.applyPending(pending) };
+  }
+
+  it("records the retired memory and reports it back", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const { writer, outcome } = await applyOne(adapter, REF);
+
+    expect(outcome.superseded).toBe("recorded");
+    const ledger = await adapter.read(ledgerPath);
+    expect(ledger).toContain("# Superseded Memory");
+    expect(ledger).toContain(`Supersedes: ${REF}`);
+    expect(ledger).toContain("Status: superseded");
+    expect(await writer.supersededKeys()).toEqual(
+      new Set([supersessionKey(targetPath, "Decision — 2024-01-01 09:00")]),
+    );
+  });
+
+  it("never rewrites the retired memory — the original text stays on disk", async () => {
+    // This is what lets superseding coexist with "apply is always an append":
+    // nothing is overwritten, so the decision is auditable and reversible.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    await applyOne(adapter, REF);
+    const after = await adapter.read(targetPath);
+    expect(after).toContain("We chose SQLite.");
+    expect(after).toContain("We now use a JSON index.");
+  });
+
+  it("applies the memory anyway when the reference no longer resolves", async () => {
+    // The new memory is what the reviewer approved. Losing it because a
+    // reference went stale would be far worse than retiring nothing.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const { outcome } = await applyOne(adapter, `${targetPath}#Decision — never written`);
+    expect(outcome.superseded).toBe("target-missing");
+    expect(await adapter.read(targetPath)).toContain("We now use a JSON index.");
+    expect(await adapter.exists(ledgerPath)).toBe(false);
+  });
+
+  it("reports a hand-edited reference it cannot use, and retires nothing", async () => {
+    // The inbox is a file a user can edit between propose and apply, so the
+    // root check is re-run here rather than trusted from propose time.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    await adapter.write(targetPath, TARGET_DOC);
+    const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+    await writer.proposeToInbox(entry({ content: "later fact" }));
+    const [pending] = (await writer.readInbox()).entries;
+
+    const outcome = await writer.applyPending({ ...pending, supersedes: "Notes/private.md#Today" });
+    expect(outcome.superseded).toBe("invalid");
+    expect(await adapter.exists(ledgerPath)).toBe(false);
+    expect(await writer.supersededKeys()).toEqual(new Set());
+  });
+
+  it("notices a ledger record deleted by hand, bringing that memory back", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    const { writer } = await applyOne(adapter, REF);
+    expect((await writer.supersededKeys()).size).toBe(1);
+
+    await adapter.write(ledgerPath, "# Superseded Memory\n\n---\n\n");
+    expect((await writer.supersededKeys()).size).toBe(0);
+  });
+
+  it("cannot be forged by an applied block's own footer text", async () => {
+    // The applied footer names the supersession for a human reader and is never
+    // parsed back. Were it authoritative, any proposal could retire any memory
+    // just by containing that line.
+    const adapter = new InMemoryVaultAdapter("v", {});
+    await adapter.write(targetPath, TARGET_DOC);
+    const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+    await writer.proposeToInbox(
+      entry({ content: `_Applied from Coder Engram review · supersedes: ${REF}_` }),
+    );
+    const [pending] = (await writer.readInbox()).entries;
+    const outcome = await writer.applyPending(pending);
+
+    expect(outcome.superseded).toBe("none");
+    expect(await writer.supersededKeys()).toEqual(new Set());
+  });
+
+  it("names the retired memory in the applied block, for a human reader", async () => {
+    const adapter = new InMemoryVaultAdapter("v", {});
+    await applyOne(adapter, REF);
+    expect(await adapter.read(targetPath)).toContain(`supersedes: ${REF}`);
+  });
+});
+
+describe("an ambiguous supersession target", () => {
+  it("retires nothing when two sections share the named heading", async () => {
+    // A section is addressed by its heading text. Retiring both would silently
+    // remove a memory nobody named — the exact harm this must never cause.
+    const targetPath = "Claude Code/Memory/Projects/ExampleProject/decisions.md";
+    const adapter = new InMemoryVaultAdapter("v", {});
+    await adapter.write(
+      targetPath,
+      "## Decision — dup\n\nFirst.\n\n## Decision — dup\n\nSecond.\n",
+    );
+    const writer = new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+    await writer.proposeToInbox(
+      entry({ content: "Replacement.", supersedes: `${targetPath}#Decision — dup` }),
+    );
+    const [pending] = (await writer.readInbox()).entries;
+    const outcome = await writer.applyPending(pending);
+
+    expect(outcome.superseded).toBe("ambiguous");
+    expect(await writer.supersededKeys()).toEqual(new Set());
+    // The memory itself still landed — it is what the reviewer approved.
+    expect(await adapter.read(targetPath)).toContain("Replacement.");
   });
 });
