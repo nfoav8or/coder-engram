@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Memory ageing — a settled fact stops outranking a recent one.** Every memory
+  was equally true forever: a decision from eighteen months ago outranked last
+  week's on term frequency alone. Recency existed only as a *filter*
+  (`sinceDays`), which is all-or-nothing — it either hides old memory outright or
+  ignores age completely. **Memory ageing (half-life in days)** in settings makes
+  it a ranking signal instead, halving a memory's weight every N days.
+
+  **Off by default**, because it changes scoring semantics. Three properties
+  matter more than the curve. It applies to **memory only** — ordinary notes are
+  documents, not claims that go stale, and ageing the whole vault would change
+  what search means for everyone who wanted this for their memory. It is
+  **floored** at a quarter weight, so an old memory ranks lower but never becomes
+  unfindable: ageing orders memory, it does not delete it. And it dates each
+  memory from the timestamp its applied heading carries, **not** the file's
+  mtime — dating by mtime would make adding one decision refresh every older
+  decision beside it, and decay that resets itself is worse than none because it
+  looks like it works.
+
+  It runs last, in the engine — it multiplies a score that does not exist until
+  the retriever has produced one, and keeping it there spares all three
+  retrievers the same re-weighting plus the settings and clock dependencies they
+  are deliberately free of. A memory dated in the future scores 1 rather than
+  more: clock skew and hand-typed headings both produce those, and a wrong date
+  must not be a way to win every ranking.
+
 - **Overlap with existing memory, flagged when it is proposed.** `add_memory`
   checked for *duplicates* — an exact restatement was absorbed — and for nothing
   weaker. So an agent proposing "we moved to Postgres" while memory said "we

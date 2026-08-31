@@ -35,6 +35,7 @@ import {
   supersessionKey,
 } from "./memory/supersession";
 import { findSimilarMemory } from "./memory/conflict";
+import { applyMemoryDecay } from "./memory/decay";
 import { ParsedInbox, PendingEntry } from "./memory/pending-inbox";
 import { extractiveSummary, splitIntoSentences, SummaryMethod } from "./summarize/extractive";
 import {
@@ -696,10 +697,33 @@ export class EngramEngine {
     // would change the BM25 corpus statistics every other result is scored
     // against, so retiring one memory would silently re-rank unrelated notes.
     const retired = await this.writer.supersededKeys();
-    if (retired.size === 0) return results;
-    return results.filter(
-      (r) => !retired.has(supersessionKey(r.chunk.notePath, r.chunk.heading)),
+    const live =
+      retired.size === 0
+        ? results
+        : results.filter((r) => !retired.has(supersessionKey(r.chunk.notePath, r.chunk.heading)));
+    // Ageing runs last, on the ranked list: the retriever's scores are
+    // comparable within one result set, and weighting the corpus first would
+    // move the statistics every score is computed against.
+    return applyMemoryDecay(live, this.clock(), this.settings.memoryDecayHalfLifeDays, (p) =>
+      this.isMemoryPath(p),
     );
+  }
+
+  /**
+   * True when a vault path lies under the memory tree.
+   *
+   * Guarded where the other `isInsideRoot` call sites on an indexed path are
+   * not, because this one is on the search path: a chunk whose path somehow
+   * fails to normalize should cost that chunk its ageing, not cost the user
+   * their whole search. Failing to "not memory" also fails in the harmless
+   * direction — the result is returned undecayed rather than hidden.
+   */
+  private isMemoryPath(notePath: string): boolean {
+    try {
+      return isInsideRoot(this.paths.memory, notePath);
+    } catch {
+      return false;
+    }
   }
 
   /** Identity of the CURRENTLY-configured embedding backend. Stored vectors are

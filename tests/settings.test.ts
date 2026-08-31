@@ -5,6 +5,7 @@ import {
   parseList,
   toScanConfig,
   SETTINGS_SCHEMA_VERSION,
+  MAX_DECAY_HALF_LIFE_DAYS,
 } from "../src/settings/settings";
 
 describe("DEFAULT_SETTINGS safe defaults", () => {
@@ -145,5 +146,52 @@ describe("toScanConfig", () => {
   it("projects settings into a scan config", () => {
     const cfg = toScanConfig({ ...DEFAULT_SETTINGS, excludedFolders: ["Private"] });
     expect(cfg.excludedFolders).toEqual(["Private"]);
+  });
+});
+
+describe("memory ageing half-life", () => {
+  it("defaults to off", () => {
+    expect(migrateSettings({}).memoryDecayHalfLifeDays).toBe(0);
+  });
+
+  it("degrades anything unusable to off rather than throwing", () => {
+    // The setting only ever reorders results, so degrading it can lose nothing
+    // — which is why it coerces instead of refusing to load.
+    // Arrays and objects are the ones a bare `Number(value)` would let
+    // through: `[5]` coerces to 5, and a `valueOf` returns whatever it likes —
+    // so a corrupt blob could silently switch a ranking feature ON, which is
+    // not what "degrades to a safe default" means.
+    const hostile: unknown[] = [
+      "nonsense",
+      null,
+      undefined,
+      {},
+      [],
+      [5],
+      ["5"],
+      { valueOf: () => 1e21 },
+      true,
+      NaN,
+      Infinity,
+      -30,
+      -0,
+      0,
+      "",
+      "   ",
+    ];
+    for (const bad of hostile) {
+      expect(migrateSettings({ memoryDecayHalfLifeDays: bad }).memoryDecayHalfLifeDays).toBe(0);
+    }
+  });
+
+  it("keeps a usable value and caps an absurd one", () => {
+    expect(migrateSettings({ memoryDecayHalfLifeDays: 90 }).memoryDecayHalfLifeDays).toBe(90);
+    expect(migrateSettings({ memoryDecayHalfLifeDays: 1e9 }).memoryDecayHalfLifeDays).toBe(
+      MAX_DECAY_HALF_LIFE_DAYS,
+    );
+  });
+
+  it("accepts a numeric string, as a hand-edited data.json produces", () => {
+    expect(migrateSettings({ memoryDecayHalfLifeDays: "45" }).memoryDecayHalfLifeDays).toBe(45);
   });
 });

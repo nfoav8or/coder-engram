@@ -759,3 +759,64 @@ describe("a direct write carries no review-time annotation", () => {
     expect(similarTo).toBe(`${decisions}#Decision — storage`);
   });
 });
+
+describe("memory ageing in search", () => {
+  const DECISIONS = "Claude Code/Memory/Projects/Engram/decisions.md";
+  const seed = {
+    [DECISIONS]:
+      "## Decision — 2020-01-01 09:00 · aaa\n\n" +
+      "We chose SQLite for the durable memory store.\n\n" +
+      "## Decision — 2026-08-01 09:00 · bbb\n\n" +
+      "We chose SQLite for the durable memory store, with WAL enabled.\n",
+    "Notes/ancient.md": "# Ancient\nWe chose SQLite for the durable memory store, long ago.",
+  };
+
+  function engineWith(halfLife: number) {
+    const adapter = new InMemoryVaultAdapter("v", seed);
+    // A clock in the present, so the 2020 heading really is old.
+    const now = new Date(2026, 7, 20, 12, 0).getTime();
+    return new EngramEngine(
+      adapter,
+      { ...DEFAULT_SETTINGS, memoryDecayHalfLifeDays: halfLife },
+      NULL_LOGGER,
+      () => now,
+    );
+  }
+
+  it("puts the recent memory first once ageing is on, and not before", async () => {
+    const off = engineWith(0);
+    await off.reindex();
+    const baseline = await off.search({ query: "SQLite durable memory store" });
+    const baselineFirstMemory = baseline.find((r) => r.chunk.notePath === DECISIONS)!;
+    expect(baselineFirstMemory.chunk.heading).toContain("2020-01-01");
+
+    const on = engineWith(90);
+    await on.reindex();
+    const aged = await on.search({ query: "SQLite durable memory store" });
+    const agedFirstMemory = aged.find((r) => r.chunk.notePath === DECISIONS)!;
+    expect(agedFirstMemory.chunk.heading).toContain("2026-08-01");
+  });
+
+  it("never drops an old memory out of the results entirely", async () => {
+    // Ageing orders memory; a memory you cannot retrieve is one you have lost.
+    const on = engineWith(1);
+    await on.reindex();
+    const aged = await on.search({ query: "SQLite durable memory store" });
+    expect(aged.some((r) => r.chunk.heading.includes("2020-01-01"))).toBe(true);
+  });
+
+  it("leaves an ordinary note's score alone", async () => {
+    const off = engineWith(0);
+    await off.reindex();
+    const before = (await off.search({ query: "SQLite durable memory store" })).find(
+      (r) => r.chunk.notePath === "Notes/ancient.md",
+    )!;
+
+    const on = engineWith(30);
+    await on.reindex();
+    const after = (await on.search({ query: "SQLite durable memory store" })).find(
+      (r) => r.chunk.notePath === "Notes/ancient.md",
+    )!;
+    expect(after.score).toBeCloseTo(before.score, 10);
+  });
+});

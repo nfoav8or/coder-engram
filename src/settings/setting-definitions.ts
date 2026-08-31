@@ -23,7 +23,13 @@
  */
 
 import type { SettingDefinitionItem, Setting } from "obsidian";
-import { EngramSettings, EMBEDDING_PROVIDERS, RETRIEVAL_MODES, parseList } from "./settings";
+import {
+  EngramSettings,
+  EMBEDDING_PROVIDERS,
+  MAX_DECAY_HALF_LIFE_DAYS,
+  RETRIEVAL_MODES,
+  parseList,
+} from "./settings";
 import { normalizeVaultRelativePath } from "../utils/paths";
 import { toMessage } from "../utils/errors";
 
@@ -309,6 +315,23 @@ export function buildSettingDefinitions(ctx: DefinitionContext): SettingDefiniti
               vector: "Vector only",
               lexical: "Lexical only",
             },
+          },
+        },
+        {
+          name: "Memory ageing (half-life in days)",
+          desc:
+            "Rank older memory lower, halving its weight every N days. 0 turns it off. " +
+            "Applies to memory only — ordinary notes are documents, not claims that go " +
+            "stale — and the weight is floored, so an old memory ranks lower but never " +
+            "becomes unfindable.",
+          aliases: ["decay", "recency", "half-life", "ageing", "aging", "stale"],
+          control: {
+            type: "number",
+            key: "memoryDecayHalfLifeDays",
+            min: 0,
+            max: MAX_DECAY_HALF_LIFE_DAYS,
+            step: 30,
+            validate: inRange("Memory ageing half-life", 0, MAX_DECAY_HALF_LIFE_DAYS),
           },
         },
         {

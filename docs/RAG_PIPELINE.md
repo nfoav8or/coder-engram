@@ -61,6 +61,19 @@ Retrieval is defined by the `Retriever` interface (`retrieval/retriever.ts`), so
 - **Relevance eval.** `npm run eval` (`tests/relevance.bench.ts`, local-only like the scale bench) plants invented-term needle notes and reports recall@8 + MRR per query class (body / filename / heading / alias / plural / phrase). Ranking changes must move these numbers, not vibes. Current: all classes at 1.00 recall@8 (plural MRR 0.92); filename and alias were 0.00 before field matching.
 - **Results.** Each `RetrievalResult` carries the `chunk`, `score`, a `snippet` (the densest-match window via `buildSnippet` — the window covering the most matches, not merely the first), and the `matchedTerms` (whole-token matches). Results are sorted by score, then **diversified so a single long note cannot flood the page** (`diversifyByNote`: at most `ceil(limit/3)`, floor 2, chunks per note, with rank-order backfill so the page is never shorter than a plain top-`limit`), and snippets are built only for the survivors. This retriever-level diversity is always on — it shapes the desktop search results too. The MCP search tool re-applies the same cap at page size after its deeper fetch, and *that* pass is what the **Cap one note's share of a page** setting governs; with it off, the tool takes the ranked pool as it comes. Default limit `DEFAULT_LIMIT = 8`.
 
+### Post-ranking passes (0.14.0)
+
+Two engine-level passes run **after** the retriever has ranked, in this order, and neither touches the corpus:
+
+1. **Superseded memory is dropped** — results whose `notePath#heading` appears in the supersession ledger are filtered out.
+2. **Memory ageing** (`memory/decay.ts`, opt-in via `memoryDecayHalfLifeDays`) multiplies each memory result's score by `0.5 ^ (ageDays / halfLife)`, floored at 0.25, and re-sorts.
+
+They are post-ranking for two different reasons, and it is worth not conflating them.
+
+The **supersession filter** must be: BM25 IDF and average document length are computed over the searched set, so removing chunks *before* scoring would change the statistics every other result is scored against — retiring one memory would silently re-rank unrelated notes.
+
+**Ageing** could not run earlier even in principle: it multiplies a score that does not exist until the retriever has produced one. It lives in the engine rather than in the retrievers because all three would otherwise carry the same re-weighting, plus the settings and clock dependencies they are deliberately free of. Ageing is scoped to the memory tree and dated from the timestamp in each applied block's heading rather than the file's mtime, so editing a memory file does not refresh every memory in it. See [MEMORY_MODEL.md](MEMORY_MODEL.md).
+
 ### Performance at scale
 
 Retrieval is measured by an on-demand benchmark (`npm run bench`, `tests/scale.bench.ts`; excluded from `npm test`/CI, like the e2e harness) that drives the real scanner → index → retriever path over a large synthetic in-memory vault. Representative numbers on a dev laptop (dense synthetic notes, ~9.5 chunks/note, 100 queries, embedding dim 384):

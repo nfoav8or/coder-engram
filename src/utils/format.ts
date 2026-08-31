@@ -4,7 +4,11 @@
  */
 
 /**
- * Format a chunk's 0-based inclusive line span as a human 1-based label.
+/** Milliseconds in a day. One definition, so day-math cannot drift between
+ * the tools' `sinceDays` windows and memory ageing's half-life. */
+export const MS_PER_DAY = 86_400_000;
+
+/**
  * A single line reads "Line 5"; a span reads "Lines 5–8".
  */
 export function formatLineRange(startLine: number, endLine: number): string {

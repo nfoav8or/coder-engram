@@ -106,6 +106,15 @@ export interface EngramSettings {
   embeddingConcurrency: number;
   /** How retrieval combines lexical and vector signals (with a provider set). */
   retrievalMode: RetrievalMode;
+  /**
+   * Half-life, in days, for ageing MEMORY down the rankings. 0 disables it.
+   *
+   * Off by default because it changes scoring semantics, and scoped to memory
+   * because ordinary notes are documents rather than claims that go stale. The
+   * weight is floored, so an old memory ranks lower but never becomes
+   * unreachable.
+   */
+  memoryDecayHalfLifeDays: number;
   server: ServerSettings;
   contextSavings: ContextSavingsSettings;
   allowDirectWrites: boolean;
@@ -132,6 +141,7 @@ export const DEFAULT_SETTINGS: EngramSettings = {
   embeddingBatchSize: DEFAULT_BATCH_SIZE,
   embeddingConcurrency: DEFAULT_CONCURRENCY,
   retrievalMode: "hybrid",
+  memoryDecayHalfLifeDays: 0,
   server: {
     enabled: false,
     host: "127.0.0.1",
@@ -187,6 +197,9 @@ export function migrateSettings(raw: unknown): EngramSettings {
   if (!RETRIEVAL_MODES.includes(merged.retrievalMode)) {
     merged.retrievalMode = DEFAULT_SETTINGS.retrievalMode;
   }
+  // A non-number, a negative, or a NaN all mean "off" rather than an error:
+  // this setting only ever reorders results, so degrading it can lose nothing.
+  merged.memoryDecayHalfLifeDays = clampDecayHalfLife(merged.memoryDecayHalfLifeDays);
   // `defaultProject` is the one string field a non-string value survives all
   // the way to a crash rather than degrading: `showProjectContext` and
   // `startSessionNote` both guard only with `if (!project)`, so a truthy `42`
@@ -326,6 +339,27 @@ export function toEmbeddingConfig(settings: EngramSettings): EmbeddingConfig {
     endpoint: settings.embeddingEndpoint,
     apiKey: settings.embeddingApiKey,
   };
+}
+
+/** Bounds for the memory decay half-life, in days. */
+export const MAX_DECAY_HALF_LIFE_DAYS = 3650;
+
+/**
+ * Coerce any stored value to a usable half-life; anything unusable is "off".
+ *
+ * The type check is explicit rather than a bare `Number(value)`, which happily
+ * turns `[5]` into `5` and an object with a `valueOf` into whatever it says —
+ * so a corrupt blob could silently switch a ranking feature ON, which is not
+ * what "degrades to a safe default" means. A numeric string is still accepted:
+ * a hand-edited `data.json` is an ordinary way to reach this.
+ */
+function clampDecayHalfLife(value: unknown): number {
+  const usable =
+    typeof value === "number" || (typeof value === "string" && value.trim() !== "");
+  if (!usable) return 0;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(MAX_DECAY_HALF_LIFE_DAYS, n);
 }
 
 export function toMemoryLayout(_settings: EngramSettings): MemoryLayoutConfig {

@@ -22,7 +22,7 @@ import { EngramEngine } from "../engine";
 import { EngramSettings } from "../settings/settings";
 import { Logger } from "../utils/logger";
 import { ValidationError } from "../utils/errors";
-import { formatModifiedDate } from "../utils/format";
+import { MS_PER_DAY, formatModifiedDate } from "../utils/format";
 import {
   requireObject,
   requireString,
@@ -100,7 +100,6 @@ const SEARCH_MAX_LIMIT = 25;
 const SEARCH_DEFAULT_LIMIT = 8;
 const SESSIONS_MAX_LIMIT = 20;
 const REINDEX_COOLDOWN_MS = 15_000;
-const MS_PER_DAY = 86_400_000;
 const RATE_WINDOW_MS = 60_000;
 const SEARCH_MAX_PER_MINUTE = 120;
 const ADD_MEMORY_MAX_PER_MINUTE = 60;

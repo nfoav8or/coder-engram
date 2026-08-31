@@ -89,6 +89,45 @@ Status: pending
 
 `Project`, `Origin`, `Confidence`, and the `Related files` list are only emitted when present. The `Tags` line always begins with `#coder-engram`. Structural look-alikes inside `Content` are neutralized at render time with one leading space: a line starting with `## Pending Memory: ` (which would forge a second entry), and — only when the entry has no real related-files list — a content tail shaped exactly like a `Related files:` section (which the parser could not otherwise tell apart from structure; see SECURITY.md). You review these blocks in the vault (or via **Review Pending Memory**) and apply or discard them by hand.
 
+## Memory ageing
+
+Every memory used to be equally true forever, so a decision from eighteen months
+ago outranked last week's on term frequency alone. Recency existed only as a
+filter (`sinceDays`), which is all-or-nothing.
+
+**Memory ageing (half-life in days)** — `memoryDecayHalfLifeDays`, 0 to disable,
+off by default — multiplies a memory's retrieval score by
+`0.5 ^ (ageDays / halfLife)`, floored at 0.25.
+
+- **Memory only.** Ordinary notes are documents, not claims that go stale. The
+  test is `isInsideRoot(paths.memory, notePath)`, and an unparseable path is
+  simply not memory, leaving it undecayed.
+- **Floored.** A memory you cannot retrieve is a memory you have lost. At the
+  floor an aged memory still outranks anything it beats by more than 4× on
+  relevance — the difference between "older, so lower" and "old, so gone".
+- **Dated per memory, not per file.** The age comes from the timestamp
+  `formatAppliedBlock` writes into the heading, falling back to the file's mtime
+  only when there is none. Dating by mtime alone would make adding one decision
+  refresh every older decision in the same file; decay that resets itself is
+  worse than none, because it looks like it works.
+- **Applied last, in the engine.** It multiplies a score that does not exist
+  until the retriever has produced one, so there is no earlier place for it. It
+  sits in `EngramEngine.search` rather than in the retrievers because all three
+  would otherwise carry the same re-weighting, along with the settings and clock
+  dependencies they are deliberately free of. (The supersession filter running
+  just before it is post-ranking for a different reason: it *removes* chunks,
+  and doing that pre-scoring would move the BM25 statistics.)
+- **A future date scores 1, never more.** Clock skew and hand-typed headings both
+  produce those, and a wrong date must not become a way to win every ranking.
+
+A corrupt or missing value degrades to 0 (off) rather than failing settings
+load: the setting only reorders results, so degrading it can lose nothing. The
+type check is explicit rather than a bare `Number(value)` — that would turn `[5]`
+into `5`, and an object with a `valueOf` into whatever it returns, so a corrupt
+blob could silently switch a ranking feature *on*, which is not what "degrades to
+a safe default" means. A numeric string is still accepted, because a hand-edited
+`data.json` is an ordinary way to reach this.
+
 ## Overlap at propose time
 
 Dedup answers "is this the same memory?" — exactly, and only. Nothing answered
