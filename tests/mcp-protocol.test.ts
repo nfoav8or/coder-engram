@@ -157,6 +157,47 @@ describe("handleRpcMessage", () => {
     expect(result.content[0].text).toContain("Profile");
   });
 
+  it("omits structuredContent for a tool that emits none", async () => {
+    // Emitting an empty object would be a claim the tool made a structured
+    // answer; a client validating against the (absent) outputSchema would be
+    // right to object.
+    const deps = makeDeps();
+    await deps.toolContext.engine.ensureScaffold();
+    const res = await handleRpcMessage(
+      { jsonrpc: "2.0", id: 30, method: "tools/call", params: { name: "get_global_context", arguments: {} } },
+      deps,
+    );
+    expect(Object.keys(res?.result as object)).not.toContain("structuredContent");
+  });
+
+  it("puts structuredContent alongside the text, never instead of it", async () => {
+    const deps = makeDeps();
+    await deps.toolContext.engine.createProject("Demo");
+    const res = await handleRpcMessage(
+      { jsonrpc: "2.0", id: 31, method: "tools/call", params: { name: "list_projects", arguments: {} } },
+      deps,
+    );
+    const result = res?.result as {
+      content: { type: string; text: string }[];
+      structuredContent: { projects: string[] };
+      isError: boolean;
+    };
+    expect(result.isError).toBe(false);
+    // A client that ignores structuredContent must lose nothing.
+    expect(result.content[0].text).toContain("Demo");
+    expect(result.structuredContent.projects).toContain("Demo");
+  });
+
+  it("advertises outputSchema on tools/list for the tools that emit one", async () => {
+    const res = await handleRpcMessage(
+      { jsonrpc: "2.0", id: 32, method: "tools/list" },
+      makeDeps(),
+    );
+    const tools = (res?.result as { tools: { name: string; outputSchema?: unknown }[] }).tools;
+    expect(tools.find((t) => t.name === "list_projects")?.outputSchema).toBeDefined();
+    expect(tools.find((t) => t.name === "get_global_context")?.outputSchema).toBeUndefined();
+  });
+
   it("reports tool failures in-band via isError, not a transport error", async () => {
     const res = await handleRpcMessage(
       { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "search_vault_memory", arguments: {} } },

@@ -42,6 +42,28 @@ export interface ToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /**
+   * Shape of the `structuredContent` this tool returns, when it returns any.
+   * Declared for exactly the tools that emit one — a schema without a payload
+   * is a promise the server does not keep, and a client that validates would
+   * be right to reject the call.
+   */
+  outputSchema?: Record<string, unknown>;
+}
+
+/**
+ * What a tool hands back: prose for the model to read, and optionally the same
+ * answer as data.
+ *
+ * The prose stays the primary channel and is never a serialization of the
+ * structured form — a client that ignores `structuredContent` (every client
+ * before this release, and the protocol's own default) must lose nothing. The
+ * structured form exists so a caller that wants to cite a passage gets the
+ * path and line span as fields rather than re-parsing them out of a label.
+ */
+export interface ToolResult {
+  text: string;
+  structured?: Record<string, unknown>;
 }
 
 /** Rate-limits repeated invocations of a keyed operation using an injected clock. */
@@ -87,7 +109,7 @@ export interface ToolContext {
   rateLimiter: RateLimiter;
 }
 
-export type ToolHandler = (args: unknown, ctx: ToolContext) => Promise<string>;
+export type ToolHandler = (args: unknown, ctx: ToolContext) => Promise<string | ToolResult>;
 
 interface Tool {
   definition: ToolDefinition;
@@ -326,6 +348,29 @@ function assembleLabeledBlocks(
     : `${body}\n\n…(clipped at ${maxChars} chars; omitted: ${omitted.join(", ")} — read with get_note_context)`;
 }
 
+/**
+ * How many of `blocks` fit in `maxChars` once joined by a `sepLen` separator.
+ *
+ * Always at least 1: a page with nothing on it helps nobody, and the caller
+ * still applies `clipContext` as a hard ceiling for a single oversized item.
+ *
+ * This exists so a listing can decide ONCE what it is returning, and build both
+ * its prose and its structured payload from that decision. Clipping the prose
+ * after the fact — which is what a raw `clipContext` over a joined body does —
+ * left the two halves disagreeing: at `maxChars: 200` the text showed one entry
+ * while the structured array still listed five, and a caller reading fields
+ * instead of prose received content its own `maxChars` was meant to bound.
+ */
+function blocksThatFit(blocks: string[], maxChars: number, sepLen: number): number {
+  let used = 0;
+  for (let i = 0; i < blocks.length; i++) {
+    const sep = i > 0 ? sepLen : 0;
+    if (i > 0 && used + sep + blocks[i].length > maxChars) return i;
+    used += sep + blocks[i].length;
+  }
+  return blocks.length;
+}
+
 /** Parsed optional `maxChars` argument for the bulk context reads. */
 function contextMaxChars(obj: Record<string, unknown>): number {
   return Math.trunc(
@@ -341,6 +386,103 @@ const MAX_CHARS_SCHEMA = {
   description:
     `Max characters returned (1000–${CONTEXT_MAX_CHARS}, default ` +
     `${CONTEXT_DEFAULT_MAX_CHARS}); output is truncated past this.`,
+} as const;
+
+// --- structured output -------------------------------------------------------
+
+/**
+ * One search hit, as data.
+ *
+ * The fields are exactly what the prose label spells out — path, heading, line
+ * span, date — so a caller that wants to cite a passage reads them instead of
+ * parsing a `path › heading (L4–9, 2026-07-03)` string that was written for a
+ * human. `score` is present here and deliberately absent from the prose, where
+ * rank order already conveys it and a float would just cost tokens.
+ */
+function searchResultRecord(
+  r: RetrievalResult,
+  pendingPath: string,
+): Record<string, unknown> {
+  return {
+    path: r.chunk.notePath,
+    heading: chunkHeadingLabel(r.chunk),
+    startLine: r.chunk.startLine + 1,
+    endLine: Math.max(r.chunk.startLine + 1, r.chunk.endLine + 1),
+    modified: formatModifiedDate(r.chunk.mtime),
+    score: r.score,
+    snippet: r.snippet,
+    // Same warning the label carries: a hit in the review inbox is a proposal
+    // awaiting a human, not accepted memory. A structured consumer that only
+    // read the fields would otherwise lose the one caveat that matters most.
+    pendingReview: r.chunk.notePath === pendingPath,
+  };
+}
+
+const SEARCH_RESULT_ITEM_SCHEMA = {
+  type: "object",
+  properties: {
+    path: { type: "string" },
+    heading: { type: "string" },
+    startLine: { type: "number" },
+    endLine: { type: "number" },
+    modified: { type: "string" },
+    score: { type: "number" },
+    snippet: { type: "string" },
+    pendingReview: { type: "boolean" },
+  },
+  required: ["path", "heading", "startLine", "endLine", "pendingReview"],
+} as const;
+
+const SEARCH_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: { results: { type: "array", items: SEARCH_RESULT_ITEM_SCHEMA } },
+  required: ["results"],
+} as const;
+
+/**
+ * One inbox entry, as data. Shared by the pending and rejected listings.
+ *
+ * `content` and `reason` are bounded by the same `maxChars` the prose is. A
+ * proposal may be 50,000 characters and a page may hold 50 of them, so leaving
+ * the payload unbounded made `maxChars` bound only the channel a caller
+ * happened not to be reading — measured at 491 KB returned against a
+ * 1,000-character request.
+ */
+function inboxEntryRecord(e: PendingEntry, maxChars: number): Record<string, unknown> {
+  const clip = (s: string) => (s.length <= maxChars ? s : `${s.slice(0, maxChars)}…`);
+  return {
+    type: e.type,
+    project: e.project ?? null,
+    proposedAt: e.timestampLabel,
+    content: clip(e.content),
+    reason: e.reason ? clip(e.reason) : null,
+    supersedes: e.supersedes ?? null,
+    similarTo: e.similarTo ?? null,
+  };
+}
+
+const INBOX_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    total: { type: "number" },
+    entries: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          type: { type: "string" },
+          project: { type: ["string", "null"] },
+          proposedAt: { type: "string" },
+          content: { type: "string" },
+          reason: { type: ["string", "null"] },
+          supersedes: { type: ["string", "null"] },
+          similarTo: { type: ["string", "null"] },
+        },
+        required: ["type", "proposedAt", "content"],
+      },
+    },
+  },
+  required: ["total", "entries"],
 } as const;
 
 // --- tool implementations ----------------------------------------------------
@@ -371,6 +513,7 @@ const searchTool: Tool = {
       required: ["query"],
       additionalProperties: false,
     },
+    outputSchema: SEARCH_OUTPUT_SCHEMA,
   },
   async handler(args, ctx) {
     ctx.rateLimiter.enforceWindow("search_vault_memory", SEARCH_MAX_PER_MINUTE, RATE_WINDOW_MS);
@@ -384,7 +527,7 @@ const searchTool: Tool = {
     const results = await ctx.engine.search({ query, limit: limit * 2, filters });
 
     if (results.length === 0) {
-      return `No results for "${query}".`;
+      return { text: `No results for "${query}".`, structured: { results: [] } };
     }
     // Drop near-duplicate hits so the agent isn't fed (and charged tokens for)
     // the same memory twice — e.g. a decision copied into a session note. Then
@@ -406,7 +549,10 @@ const searchTool: Tool = {
     const blocks = distinct.map(
       (r, i) => `${i + 1}. ${searchResultLabel(r, pendingPath)}\n${r.snippet}`,
     );
-    return `${distinct.length} result(s):\n\n${blocks.join("\n\n")}`;
+    return {
+      text: `${distinct.length} result(s):\n\n${blocks.join("\n\n")}`,
+      structured: { results: distinct.map((r) => searchResultRecord(r, pendingPath)) },
+    };
   },
 };
 
@@ -560,6 +706,14 @@ const listProjectsTool: Tool = {
       `List the project names under the projects root. Clipped at ` +
       `${LIST_PROJECTS_MAX_CHARS} characters, saying how many are not shown.`,
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    outputSchema: {
+      type: "object",
+      properties: {
+        projects: { type: "array", items: { type: "string" } },
+        total: { type: "number" },
+      },
+      required: ["projects"],
+    },
   },
   async handler(_args, ctx) {
     // Cheap-looking, but it lists every Markdown file in the vault and scans
@@ -567,7 +721,9 @@ const listProjectsTool: Tool = {
     // 3.5 ms at 20k) and it is spent on the app's main thread.
     ctx.rateLimiter.enforceWindow("list_projects", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
     const projects = await ctx.engine.listProjects();
-    if (projects.length === 0) return "No projects yet.";
+    if (projects.length === 0) {
+      return { text: "No projects yet.", structured: { projects: [], total: 0 } };
+    }
     const kept: string[] = [];
     let used = 0;
     for (const name of projects) {
@@ -577,9 +733,15 @@ const listProjectsTool: Tool = {
       used += cost;
     }
     const omitted = projects.length - kept.length;
-    return omitted === 0
-      ? kept.join("\n")
-      : `${kept.join("\n")}\n\n…(clipped at ${LIST_PROJECTS_MAX_CHARS} chars; ${omitted} more not shown)`;
+    return {
+      text:
+        omitted === 0
+          ? kept.join("\n")
+          : `${kept.join("\n")}\n\n…(clipped at ${LIST_PROJECTS_MAX_CHARS} chars; ${omitted} more not shown)`,
+      // The names actually shown, so the two halves cannot disagree about what
+      // was clipped; `total` carries the rest of the truth.
+      structured: { projects: kept, total: projects.length },
+    };
   },
 };
 
@@ -994,19 +1156,40 @@ function renderInboxListing(
   limit: number,
   maxChars: number,
   noun: string,
-): string {
-  const shown = entries.slice(-limit).reverse();
-  const body = shown
-    .map((e) => {
-      const why = e.reason ? `\n\nReason: ${neutralizeBlockStructure(e.reason)}` : "";
-      return `## ${pendingHead(e)}${why}\n\n${neutralizeBlockStructure(e.content.trim())}`;
-    })
-    .join("\n\n---\n\n");
+): ToolResult {
+  const newestFirst = entries.slice(-limit).reverse();
+  const blocks = newestFirst.map((e) => {
+    // `supersedes` is in the prose as well as the payload: it says this entry
+    // claims to retire another, which is the single most consequential thing
+    // about it and not something a reviewer or an agent should have to read
+    // fields to discover.
+    const claims = e.supersedes ? `\n\nReplaces: ${neutralizeBlockStructure(e.supersedes)}` : "";
+    const why = e.reason ? `\n\nReason: ${neutralizeBlockStructure(e.reason)}` : "";
+    return `## ${pendingHead(e)}${claims}${why}\n\n${neutralizeBlockStructure(e.content.trim())}`;
+  });
+  // ONE decision about what this page contains, used for both halves.
+  const fits = blocksThatFit(blocks, maxChars, 7); // "\n\n---\n\n"
+  const shown = newestFirst.slice(0, fits);
+  const body = blocks.slice(0, fits).join("\n\n---\n\n");
   const preamble =
     shown.length === entries.length
       ? `${entries.length} ${noun}, newest first.`
       : `${entries.length} ${noun}; showing the ${shown.length} newest.`;
-  return clipContext(`${preamble}\n\n${body}`, maxChars, "raise `limit` or narrow by `project`");
+  const text = clipContext(
+    `${preamble}\n\n${body}`,
+    maxChars,
+    "raise `limit` or narrow by `project`",
+  );
+  return {
+    text,
+    // Built from the same slice the prose was, and each entry's own text bounded
+    // the same way — otherwise `maxChars` bounds only the channel a caller
+    // happens not to be reading. `total` carries what was cut.
+    structured: {
+      total: entries.length,
+      entries: shown.map((e) => inboxEntryRecord(e, maxChars)),
+    },
+  };
 }
 
 /** The `project` / `limit` / `maxChars` arguments both inbox listings take. */
@@ -1066,6 +1249,7 @@ const listPendingMemoryTool: Tool = {
       "Use this before proposing, to avoid re-proposing something already pending. " +
       "Read-only: approving or discarding an entry is done by a person in Obsidian.",
     inputSchema: INBOX_LISTING_SCHEMA,
+    outputSchema: INBOX_OUTPUT_SCHEMA,
   },
   async handler(args, ctx) {
     ctx.rateLimiter.enforceWindow("list_pending_memory", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
@@ -1075,9 +1259,13 @@ const listPendingMemoryTool: Tool = {
     // different answer to it.
     const matching = (await ctx.engine.getPendingMemory({ project })).entries;
     if (matching.length === 0) {
-      return project === ""
-        ? "No memory proposals are awaiting review."
-        : `No memory proposals awaiting review for "${project}".`;
+      return {
+        text:
+          project === ""
+            ? "No memory proposals are awaiting review."
+            : `No memory proposals awaiting review for "${project}".`,
+        structured: { total: 0, entries: [] },
+      };
     }
     return renderInboxListing(matching, limit, maxChars, "awaiting review");
   },
@@ -1112,15 +1300,20 @@ const listRejectedMemoryTool: Tool = {
       "Read this when a proposal comes back as rejected, or before re-proposing " +
       "something from an earlier session. Read-only.",
     inputSchema: INBOX_LISTING_SCHEMA,
+    outputSchema: INBOX_OUTPUT_SCHEMA,
   },
   async handler(args, ctx) {
     ctx.rateLimiter.enforceWindow("list_rejected_memory", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
     const { project, limit, maxChars } = inboxListingArgs(args);
     const matching = (await ctx.engine.getRejectedMemory({ project })).entries;
     if (matching.length === 0) {
-      return project === ""
-        ? "No memory proposals have been rejected."
-        : `No rejected memory proposals for "${project}".`;
+      return {
+        text:
+          project === ""
+            ? "No memory proposals have been rejected."
+            : `No rejected memory proposals for "${project}".`,
+        structured: { total: 0, entries: [] },
+      };
     }
     return renderInboxListing(matching, limit, maxChars, "rejected");
   },
@@ -1147,6 +1340,25 @@ const getRecentChangesTool: Tool = {
         maxChars: MAX_CHARS_SCHEMA,
       },
       additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        indexed: { type: "number" },
+        notes: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              modified: { type: "string" },
+              modifiedAt: { type: "number" },
+            },
+            required: ["path", "modifiedAt"],
+          },
+        },
+      },
+      required: ["indexed", "notes"],
     },
   },
   async handler(args, ctx) {
@@ -1178,15 +1390,35 @@ const getRecentChangesTool: Tool = {
       // is unknown, not negative, and the fix is a reindex rather than a wider
       // window. Conflating them is how an agent concludes a vault is idle.
       // Both facts come from one call so they cannot disagree.
-      return "The index is empty, so no change history is available. Run reindex_vault first.";
+      return {
+        text: "The index is empty, so no change history is available. Run reindex_vault first.",
+        // `indexed: 0` is what tells a structured consumer this is "unknown",
+        // not "nothing changed" — the same distinction the prose makes.
+        structured: { indexed: 0, notes: [] },
+      };
     }
     const window = sinceDays === 0 ? "ever recorded" : `in the last ${sinceDays} day(s)`;
     if (changed.length === 0) {
-      return `No indexed notes changed ${window}.`;
+      return { text: `No indexed notes changed ${window}.`, structured: { indexed, notes: [] } };
     }
     const lines = changed.map((c) => `${c.path} — ${formatModifiedDate(c.mtime)}`);
-    const body = `${changed.length} changed ${window}, newest first:\n\n${lines.join("\n")}`;
-    return clipContext(body, maxChars, "narrow `sinceDays` or lower `limit`");
+    // Same one-decision rule as the inbox listings: the payload must describe
+    // the notes the prose actually listed, not the ones it would have.
+    const shown = changed.slice(0, blocksThatFit(lines, maxChars, 1));
+    const body = `${shown.length} changed ${window}, newest first:\n\n${lines
+      .slice(0, shown.length)
+      .join("\n")}`;
+    return {
+      text: clipContext(body, maxChars, "narrow `sinceDays` or lower `limit`"),
+      structured: {
+        indexed,
+        notes: shown.map((c) => ({
+          path: c.path,
+          modified: formatModifiedDate(c.mtime),
+          modifiedAt: c.mtime,
+        })),
+      },
+    };
   },
 };
 
@@ -1225,47 +1457,79 @@ const resolveProjectTool: Tool = {
       required: ["hint"],
       additionalProperties: false,
     },
+    outputSchema: {
+      type: "object",
+      properties: {
+        exact: { type: ["string", "null"] },
+        ambiguous: { type: "array", items: { type: "string" } },
+        candidates: { type: "array", items: { type: "string" } },
+        all: { type: "array", items: { type: "string" } },
+      },
+      required: ["exact", "ambiguous", "candidates", "all"],
+    },
   },
   async handler(args, ctx) {
     ctx.rateLimiter.enforceWindow("resolve_project", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
     const obj = requireObject(args, "arguments");
     const hint = requireString(obj, "hint", { maxLength: 1000 });
     const { exact, ambiguous, candidates, all } = await ctx.engine.resolveProject(hint);
+    // One structured answer for every branch below, so a consumer reads the
+    // same four fields whatever the outcome — the prose says which branch it
+    // is, and `exact === null` with an empty `ambiguous` says the same thing
+    // in data.
+    const structured = {
+      exact,
+      ambiguous,
+      candidates: candidates.slice(0, PROJECT_LIST_MAX),
+      all: all.slice(0, PROJECT_LIST_MAX),
+    };
     if (ambiguous.length > 0) {
       // Two projects whose names differ only by separator or case. Naming one
       // as "the" match would be a confident wrong answer, which is worse here
       // than no answer: the agent would never learn the other exists.
-      return (
-        `"${hint}" matches more than one project:\n\n${ambiguous.join("\n")}\n\n` +
-        `They differ only by punctuation or case. Pass the exact name you mean as \`project\`.`
-      );
+      return {
+        text:
+          `"${hint}" matches more than one project:\n\n${ambiguous.join("\n")}\n\n` +
+          `They differ only by punctuation or case. Pass the exact name you mean as \`project\`.`,
+        structured,
+      };
     }
     if (exact !== null) {
       // Near matches are deliberately NOT appended here. On the one branch
       // where the answer is unambiguous, they are noise the agent has no use
       // for — and every extra clause is another thing to keep true.
-      return `${exact}\n\nExact match — use this as the \`project\` argument.`;
+      return {
+        text: `${exact}\n\nExact match — use this as the \`project\` argument.`,
+        structured,
+      };
     }
     if (candidates.length > 0) {
-      return (
-        `No exact match for "${hint}". Near matches:\n\n${candidates.slice(0, PROJECT_LIST_MAX).join("\n")}\n\n` +
-        `Pass one of these as \`project\`, or create it with the Create Project Memory Folder command.`
-      );
+      return {
+        text:
+          `No exact match for "${hint}". Near matches:\n\n${structured.candidates.join("\n")}\n\n` +
+          `Pass one of these as \`project\`, or create it with the Create Project Memory Folder command.`,
+        structured,
+      };
     }
     // Naming what exists beats a bare "not found": the usual cause is that the
     // project has not been created yet, and an agent cannot tell that apart
     // from a spelling miss without seeing the list. `all` came back with the
     // match above rather than from a second vault scan.
     if (all.length === 0) {
-      return `No projects exist yet. Create one with the Create Project Memory Folder command in Obsidian.`;
+      return {
+        text: `No projects exist yet. Create one with the Create Project Memory Folder command in Obsidian.`,
+        structured,
+      };
     }
     // Says how many it hid, like `list_projects` does. Silently truncating is
     // the same failure this tool exists to remove: an agent told a project does
     // not exist, when it was item 26.
-    const shownAll = all.slice(0, PROJECT_LIST_MAX);
-    const hidden = all.length - shownAll.length;
+    const hidden = all.length - structured.all.length;
     const more = hidden > 0 ? `\n\n…(${hidden} more not shown)` : "";
-    return `No project matches "${hint}". Existing projects:\n\n${shownAll.join("\n")}${more}`;
+    return {
+      text: `No project matches "${hint}". Existing projects:\n\n${structured.all.join("\n")}${more}`,
+      structured,
+    };
   },
 };
 
@@ -1314,6 +1578,24 @@ const searchBatchTool: Tool = {
       required: ["queries"],
       additionalProperties: false,
     },
+    outputSchema: {
+      type: "object",
+      properties: {
+        queries: { type: "array", items: { type: "string" } },
+        results: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              ...SEARCH_RESULT_ITEM_SCHEMA.properties,
+              matchedQueries: { type: "array", items: { type: "number" } },
+            },
+            required: [...SEARCH_RESULT_ITEM_SCHEMA.required, "matchedQueries"],
+          },
+        },
+      },
+      required: ["queries", "results"],
+    },
   },
   async handler(args, ctx) {
     // Charged in two steps, and the order matters. First under this tool's own
@@ -1340,7 +1622,10 @@ const searchBatchTool: Tool = {
     const fused = await ctx.engine.searchBatch(queries, { limit, filters });
 
     if (fused.length === 0) {
-      return `No results for any of: ${queries.map((q) => `"${q}"`).join(", ")}.`;
+      return {
+        text: `No results for any of: ${queries.map((q) => `"${q}"`).join(", ")}.`,
+        structured: { queries, results: [] },
+      };
     }
 
     const distinct = applyContextSavings(fused, limit, ctx.settings);
@@ -1355,7 +1640,18 @@ const searchBatchTool: Tool = {
       return `${i + 1}. ${searchResultLabel(r, pendingPath)}${which}\n${r.snippet}`;
     });
     const asked = queries.map((q, i) => `q${i + 1}: "${q}"`).join("\n");
-    return `${distinct.length} merged result(s) for:\n${asked}\n\n${blocks.join("\n\n")}`;
+    return {
+      text: `${distinct.length} merged result(s) for:\n${asked}\n\n${blocks.join("\n\n")}`,
+      structured: {
+        queries,
+        results: distinct.map((r) => ({
+          ...searchResultRecord(r, pendingPath),
+          // 0-based from fusion, as the prose's `[q1,q3]` is 1-based. Named
+          // rather than renumbered so a consumer can index `queries` directly.
+          matchedQueries: r.sources,
+        })),
+      },
+    };
   },
 };
 
@@ -1393,12 +1689,28 @@ export class ToolRegistry {
     return this.byName.has(name);
   }
 
-  /** Invoke a tool by name; throws ValidationError for an unknown tool. */
-  async call(name: string, args: unknown, ctx: ToolContext): Promise<string> {
+  /**
+   * Invoke a tool by name; throws ValidationError for an unknown tool.
+   *
+   * Handlers may return a bare string — most do, and nothing is gained by
+   * making a one-line answer carry an envelope — so the result is normalized
+   * here rather than at every `return`.
+   */
+  async call(name: string, args: unknown, ctx: ToolContext): Promise<ToolResult> {
     const tool = this.byName.get(name);
     if (!tool) {
       throw new ValidationError(`Unknown tool: ${name}`);
     }
-    return tool.handler(args, ctx);
+    const out = await tool.handler(args, ctx);
+    return typeof out === "string" ? { text: out } : out;
+  }
+
+  /**
+   * The prose half of {@link call}, for callers that only want what the model
+   * reads. Test support: the protocol layer needs the whole result so it can
+   * emit `structuredContent`, and nothing in production wants one half of it.
+   */
+  async callText(name: string, args: unknown, ctx: ToolContext): Promise<string> {
+    return (await this.call(name, args, ctx)).text;
   }
 }

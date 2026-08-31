@@ -36,7 +36,7 @@ describe("summarize_note tool", () => {
     const { engine, ctx } = makeContext({ "Notes/a.md": NOTE });
     await engine.reindex();
     const registry = new ToolRegistry();
-    const out = await registry.call("summarize_note", { path: "Notes/a.md" }, ctx);
+    const out = await registry.callText("summarize_note", { path: "Notes/a.md" }, ctx);
     expect(out).toMatch(/^Extractive summary of Notes\/a\.md/);
   });
 
@@ -56,12 +56,12 @@ describe("summarize_note tool", () => {
     const registry = new ToolRegistry();
     // Ask for enough sentences that the selection exceeds the char cap even
     // though chunking now bounds each unit — the cap is what holds the line.
-    const out = await registry.call("summarize_note", { path: "Notes/blob.md", maxSentences: 20 }, ctx);
+    const out = await registry.callText("summarize_note", { path: "Notes/blob.md", maxSentences: 20 }, ctx);
     expect(out.length).toBeLessThan(5_000);
     expect(out).toContain("truncated");
 
     // With few sentences the output is simply small, no clipping needed.
-    const short = await registry.call("summarize_note", { path: "Notes/blob.md", maxSentences: 2 }, ctx);
+    const short = await registry.callText("summarize_note", { path: "Notes/blob.md", maxSentences: 2 }, ctx);
     expect(short.length).toBeLessThan(5_000);
   });
 
@@ -70,7 +70,7 @@ describe("summarize_note tool", () => {
     await engine.reindex();
     const registry = new ToolRegistry();
     await expect(
-      registry.call("summarize_note", { path: "Notes/missing.md" }, ctx),
+      registry.callText("summarize_note", { path: "Notes/missing.md" }, ctx),
     ).rejects.toThrow();
   });
 
@@ -78,7 +78,7 @@ describe("summarize_note tool", () => {
     const { engine, ctx } = makeContext({ "Notes/a.md": NOTE });
     await engine.reindex();
     const registry = new ToolRegistry();
-    await expect(registry.call("summarize_note", {}, ctx)).rejects.toThrow(/path/);
+    await expect(registry.callText("summarize_note", {}, ctx)).rejects.toThrow(/path/);
   });
 
   it("rate limits after 30 calls in the same minute", async () => {
@@ -87,10 +87,10 @@ describe("summarize_note tool", () => {
     const registry = new ToolRegistry();
     for (let i = 0; i < 30; i++) {
       // eslint-disable-next-line no-await-in-loop
-      await registry.call("summarize_note", { path: "Notes/a.md" }, ctx);
+      await registry.callText("summarize_note", { path: "Notes/a.md" }, ctx);
     }
     await expect(
-      registry.call("summarize_note", { path: "Notes/a.md" }, ctx),
+      registry.callText("summarize_note", { path: "Notes/a.md" }, ctx),
     ).rejects.toThrow(/rate limited/i);
   });
 });

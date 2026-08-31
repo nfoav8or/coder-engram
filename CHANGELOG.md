@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Structured results — citations as fields, not a parsed label.** The seven
+  tools whose answers are lists now return MCP `structuredContent` beside their
+  prose: `search_vault_memory`, `search_batch`, `list_pending_memory`,
+  `list_rejected_memory`, `get_recent_changes`, `resolve_project`, and
+  `list_projects`. A caller that wants to cite a passage reads `path`,
+  `startLine`, `endLine` as fields instead of parsing them back out of a
+  `path › heading (L4–9, 2026-07-03)` string that was written for a human.
+
+  **Alongside, never instead of.** `content` still carries the whole answer, so
+  every client that predates this — including the protocol's own default — loses
+  nothing. `pendingReview` is in the structured form for the same reason, since
+  a consumer reading only fields would otherwise lose the one caveat that
+  matters most: that a hit from the inbox is an unreviewed proposal, not settled
+  memory.
+
+  **One decision, two halves.** The listings work out what fits in `maxChars`
+  at **entry boundaries** and build both the prose and the payload from that
+  same slice, rather than rendering everything and slicing the joined text
+  afterwards. The naive version left `maxChars` bounding only the channel a
+  caller happened not to be reading — a 1,000-character request measured 491 KB
+  of proposal content in `structuredContent`. Each entry's own text is bounded
+  the same way, and `total` still says how much was left out. Listing entries
+  now also name what they claim to replace in the prose, not only in the fields.
+
+  `outputSchema` is declared for exactly those seven and no others, and a test
+  pins that both ways: a schema without a payload is a promise the server does
+  not keep, and a client that validates would be right to reject the call.
+
 - **Memory ageing — a settled fact stops outranking a recent one.** Every memory
   was equally true forever: a decision from eighteen months ago outranked last
   week's on term frequency alone. Recency existed only as a *filter*

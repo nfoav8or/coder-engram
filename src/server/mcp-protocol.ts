@@ -36,7 +36,9 @@ export const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
  * implements — initialize, ping, tools/list, tools/call — are wire-identical
  * across them: same `inputSchema` on a tool, same `content` array and `isError`
  * on a result, same `nextCursor` paging. 2025-06-18 added `outputSchema` and
- * `structuredContent`, which are optional and which this server does not emit.
+ * `structuredContent`, which is optional and which this server emits for the
+ * tools whose answers are lists — always alongside the full text, never instead
+ * of it.
  *
  * Newer revisions are deliberately absent. They replaced this negotiation with
  * an `UnsupportedProtocolVersionError`, so answering one would claim a revision
@@ -159,8 +161,20 @@ export async function handleRpcMessage(
         const toolName = params.name;
         const args = params.arguments ?? {};
         try {
-          const text = await deps.registry.call(toolName, args, deps.toolContext);
-          return ok(id, { content: [{ type: "text", text }], isError: false });
+          const { text, structured } = await deps.registry.call(
+            toolName,
+            args,
+            deps.toolContext,
+          );
+          // `content` is always the whole answer. `structuredContent` is an
+          // addition for clients that want fields instead of a parsed label,
+          // never a replacement — a client that ignores it (every client before
+          // this release) must lose nothing.
+          return ok(id, {
+            content: [{ type: "text", text }],
+            ...(structured ? { structuredContent: structured } : {}),
+            isError: false,
+          });
         } catch (err) {
           // Tool-level failure: report in-band so the client sees the reason.
           deps.logger.warn("Tool call failed", { tool: toolName, error: toMessage(err) });
