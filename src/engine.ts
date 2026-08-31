@@ -38,7 +38,7 @@ import {
   toEmbeddingConfig,
 } from "./settings/settings";
 import { normalizeVaultRelativePath, isInsideRoot, resolveInVault } from "./utils/paths";
-import { foldForCompare } from "./utils/text";
+import { foldForCompare, projectKey } from "./utils/text";
 import { ConfigError, toMessage } from "./utils/errors";
 import { Logger, redact } from "./utils/logger";
 
@@ -1001,6 +1001,65 @@ export class EngramEngine {
 
   async listProjects(): Promise<string[]> {
     return this.store.listProjects();
+  }
+
+  /**
+   * Match a free-form hint — a working-directory path, a repo name, a typed
+   * guess — against the projects that actually exist.
+   *
+   * The agent's side of the world is a filesystem path outside the vault; this
+   * side is a folder name a person chose. Nothing connects them, so until now
+   * an agent had to guess the project name on every call, and a near miss
+   * ("coder-engram" for "Coder Engram") silently returned an empty context that
+   * is indistinguishable from a project with nothing in it yet.
+   *
+   * The hint is treated as TEXT and never as a path: only its last segment is
+   * read, nothing is resolved, and no filesystem outside the vault is touched.
+   * Matching is over names this vault already exposes through `listProjects`,
+   * so this reveals nothing an agent could not already enumerate.
+   */
+  async resolveProject(hint: string): Promise<{
+    exact: string | null;
+    ambiguous: string[];
+    candidates: string[];
+    all: string[];
+  }> {
+    // Returned so the caller never has to ask again: `listProjects` is a scan
+    // of every Markdown file in the vault (~3.5 ms at 20k notes, on the app's
+    // main thread), and the miss branch used to repeat it just to say what
+    // exists.
+    const projects = await this.listProjects();
+    // Last path segment, so "/home/u/Git/coder-engram" and a bare repo name
+    // reduce to the same thing. Split on both separators: the hint is a string
+    // from another machine, whose conventions are not ours to assume.
+    const tail = hint.split(/[/\\]/).filter(Boolean).pop() ?? "";
+    const needle = projectKey(tail);
+    if (needle === "") return { exact: null, ambiguous: [], candidates: [], all: projects };
+    // Every key-equal match, not the first. `projectKey` folds separators, so
+    // "Acme Client" and "acme-client" collapse to one key — and picking the
+    // first would name one with confidence while the other vanished entirely,
+    // since the near-match filter below excludes anything key-equal. Silently
+    // answering the wrong project is precisely the failure this tool exists to
+    // prevent, so an ambiguous hint is reported as ambiguous.
+    const matches = projects.filter((p) => projectKey(p) === needle);
+    // Substring both ways: a repo "engram" should surface project "Coder
+    // Engram", and a repo "coder-engram-plugin" should surface "coder-engram".
+    //
+    // No `key !== needle` guard, because it cannot fire: a key-equal project is
+    // in `matches`, and every branch that renders candidates is one where
+    // `matches` is empty. Mutation testing is what showed it was dead — the
+    // guard could be deleted with no test noticing, which is the signal that it
+    // was protecting nothing.
+    const candidates = projects.filter((p) => {
+      const key = projectKey(p);
+      return key.includes(needle) || needle.includes(key);
+    });
+    return {
+      exact: matches.length === 1 ? matches[0] : null,
+      ambiguous: matches.length > 1 ? matches : [],
+      candidates,
+      all: projects,
+    };
   }
 
   async getProjectContext(name: string): Promise<ContextPart[]> {

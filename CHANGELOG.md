@@ -49,6 +49,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what was indexed, so the privacy controls are upstream of this by
   construction rather than by a filter here.
 
+- **`resolve_project` — stop guessing the project name.** The agent knows a
+  filesystem path; this plugin knows a folder name a person chose, and nothing
+  connected them. A near miss — `coder-engram` for `Coder Engram` — returned
+  empty context, which reads as "this project has nothing yet" rather than "you
+  asked for the wrong name": the worst failure mode a memory tool has, because
+  it looks like an answer. Matching folds case, Unicode form, and the `-`/`_`/
+  space separators that distinguish a repository directory from a folder name.
+
+  The hint is treated as text, never a path — only its last segment is read,
+  nothing is resolved, and no filesystem outside the vault is touched. An
+  ambiguous hint is reported as ambiguous rather than resolved to whichever
+  name sorted first, and a miss names the projects that do exist, since an
+  agent cannot otherwise tell a spelling error from a project nobody created.
+
+  **The same fix applies in Obsidian.** The **Default project** setting is free
+  text passed straight through, so a user who typed `coder-engram` for a folder
+  named `Coder Engram` got an empty project panel and an empty session note —
+  the identical silent miss. Both commands now resolve the typed name first,
+  falling back to it unchanged when there is no single match, so an ambiguous
+  or unknown name behaves exactly as before rather than being quietly
+  redirected somewhere the user did not name.
+
 ### Fixed
 
 - **Memory dedup missed a case-variant project name.** The proposal dedup key

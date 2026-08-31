@@ -88,6 +88,7 @@ describe("ToolRegistry", () => {
         "list_pending_memory",
         "list_projects",
         "reindex_vault",
+        "resolve_project",
         "search_vault_memory",
         "summarize_note",
       ].sort(),
@@ -1039,6 +1040,154 @@ describe("get_recent_changes", () => {
   });
 });
 
+describe("resolve_project", () => {
+  const seedProject = async (ctx: ToolContext, name: string) => {
+    await ctx.engine.createProject(name);
+  };
+
+  it("matches across the separator conventions a repo name and a folder name use", async () => {
+    // The whole point: an agent derives "coder-engram" from its working
+    // directory, a person named the folder "Coder Engram". Treating those as
+    // different names returns empty context, which reads as "this project has
+    // nothing yet" rather than "you asked for the wrong name".
+    const { ctx } = makeContext();
+    await seedProject(ctx, "Coder Engram");
+    const registry = new ToolRegistry();
+
+    for (const hint of ["coder-engram", "coder_engram", "CODER ENGRAM", "Coder Engram"]) {
+      const out = await registry.call("resolve_project", { hint }, ctx);
+      // Asserted on the positive branch's SHAPE — the resolved name first, on
+      // its own line. A bare /exact match/i is also satisfied by the phrase
+      // "No exact match", so it passed even when resolution had been broken.
+      expect(out, `hint ${hint}`).toMatch(/^Coder Engram\n\nExact match/);
+    }
+  });
+
+  it("reads only the last segment of a path, and never touches the filesystem", async () => {
+    const { ctx } = makeContext();
+    await seedProject(ctx, "Coder Engram");
+    const registry = new ToolRegistry();
+    // Absolute paths, Windows separators, and trailing slashes all reduce to
+    // the same tail. Nothing here is resolved as a path — it is matched as text
+    // against names the vault already exposes.
+    for (const hint of [
+      "/home/u/Git/coder-engram",
+      "C:\\src\\coder-engram",
+      "/home/u/Git/coder-engram/",
+      "../../coder-engram",
+    ]) {
+      expect(await registry.call("resolve_project", { hint }, ctx), `hint ${hint}`).toMatch(
+        /^Coder Engram\n\nExact match/,
+      );
+    }
+  });
+
+  it("reports an ambiguous hint as ambiguous rather than picking one", async () => {
+    // `projectKey` folds separators, so "Acme Client" and "acme-client" are one
+    // key. Naming the first as THE match would be a confident wrong answer —
+    // and the near-match filter excludes key-equal names, so the sibling would
+    // never appear at all. The agent would never learn it exists.
+    const { ctx } = makeContext();
+    await seedProject(ctx, "Acme Client");
+    await seedProject(ctx, "acme-client");
+    const out = await new ToolRegistry().call("resolve_project", { hint: "acme client" }, ctx);
+    expect(out).toMatch(/matches more than one project/i);
+    expect(out).toContain("Acme Client");
+    expect(out).toContain("acme-client");
+    expect(out).not.toMatch(/Exact match/);
+  });
+
+  it("returns exactly the exact-match reply, with nothing appended", async () => {
+    // Asserted with toBe on the WHOLE string. Prefix-anchored regexes left
+    // everything after line one uncovered: an "Also similar" clause could
+    // appear, list the match as similar to itself, or vanish, and every test
+    // stayed green.
+    const { ctx } = makeContext();
+    await seedProject(ctx, "Coder Engram");
+    await seedProject(ctx, "coder-engram-plugin");
+    await seedProject(ctx, "Unrelated");
+    const out = await new ToolRegistry().call(
+      "resolve_project",
+      { hint: "/home/u/Git/coder-engram" },
+      ctx,
+    );
+    expect(out).toBe("Coder Engram\n\nExact match — use this as the `project` argument.");
+  });
+
+  it("surfaces a shorter project name from a longer hint", async () => {
+    // The other direction of the substring rule, and documented behaviour:
+    // repo "coder-engram-plugin" should still find project "Coder Engram".
+    // Nothing covered it, so dropping that half of the condition passed.
+    const { ctx } = makeContext();
+    await seedProject(ctx, "Coder Engram");
+    const out = await new ToolRegistry().call(
+      "resolve_project",
+      { hint: "coder-engram-plugin" },
+      ctx,
+    );
+    expect(out).toMatch(/near matches/i);
+    expect(out).toContain("Coder Engram");
+  });
+
+  it("treats a hint with no usable name as a miss, not as a match for everything", async () => {
+    // Without the empty-needle guard, `key.includes("")` is true for every
+    // project, so a junk hint returns the whole vault's project list dressed up
+    // as near matches — confident nonsense.
+    const { ctx } = makeContext();
+    await seedProject(ctx, "Coder Engram");
+    await seedProject(ctx, "Unrelated");
+    const registry = new ToolRegistry();
+    for (const hint of ["/", "///", "\\"]) {
+      const out = await registry.call("resolve_project", { hint }, ctx);
+      expect(out, `hint ${JSON.stringify(hint)}`).toMatch(/no project matches/i);
+      expect(out, `hint ${JSON.stringify(hint)}`).not.toMatch(/near matches/i);
+    }
+  });
+
+  it("ignores a trailing separator on the hint", async () => {
+    const { ctx } = makeContext();
+    await seedProject(ctx, "Coder Engram");
+    const out = await new ToolRegistry().call("resolve_project", { hint: "coder-engram-" }, ctx);
+    expect(out).toBe("Coder Engram\n\nExact match — use this as the `project` argument.");
+  });
+
+  it("says how many project names it hid rather than truncating in silence", async () => {
+    // Silent truncation is the same failure this tool removes: an agent told a
+    // project does not exist, when it was past the cut.
+    const { ctx } = makeContext();
+    for (let i = 0; i < 30; i++) await seedProject(ctx, `Project ${i}`);
+    const out = await new ToolRegistry().call("resolve_project", { hint: "nothing-like-it" }, ctx);
+    expect(out).toMatch(/no project matches/i);
+    // The exact count, not just "some": a vaguer assertion passed even when the
+    // list was truncated to a single name.
+    expect(out).toMatch(/5 more not shown/);
+    expect(out.split("\n").filter((l) => l.startsWith("Project ")).length).toBe(25);
+  });
+
+  it("offers near matches instead of a bare miss", async () => {
+    const { ctx } = makeContext();
+    await seedProject(ctx, "Coder Engram");
+    const out = await new ToolRegistry().call("resolve_project", { hint: "engram" }, ctx);
+    expect(out).toContain("Coder Engram");
+    expect(out).toMatch(/near matches/i);
+  });
+
+  it("names what exists when nothing matches, and says so when nothing exists", async () => {
+    // A bare "not found" cannot be acted on: the agent cannot tell a spelling
+    // miss from a project that was never created.
+    const { ctx } = makeContext();
+    const registry = new ToolRegistry();
+    expect(await registry.call("resolve_project", { hint: "anything" }, ctx)).toMatch(
+      /no projects exist yet/i,
+    );
+
+    await seedProject(ctx, "Coder Engram");
+    const out = await registry.call("resolve_project", { hint: "totally-unrelated" }, ctx);
+    expect(out).toMatch(/no project matches/i);
+    expect(out).toContain("Coder Engram");
+  });
+});
+
 describe("the exposed tool surface", () => {
   it("is exactly the curated read/propose set — nothing that writes memory directly", () => {
     // SECURITY.md promises promotion of an inbox entry is UI-only and never
@@ -1059,6 +1208,7 @@ describe("the exposed tool surface", () => {
         "list_pending_memory",
         "list_projects",
         "reindex_vault",
+        "resolve_project",
         "search_vault_memory",
         "summarize_note",
       ].sort(),

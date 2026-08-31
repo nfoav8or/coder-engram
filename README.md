@@ -47,6 +47,7 @@ Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an a
 - **Honest extractive `summarize_note`.** Returns a selection of the note's **own sentences**, verbatim and in original order — never generated prose, because there is no LLM backend. Ranked by lexical frequency-centrality offline, or by embedding-centroid similarity with MMR when a provider is reachable.
 - **Every read is bounded in characters**, the unit an agent actually pays in, so no tool can return far more than its limit suggests.
 - **`get_recent_changes`** answers "what moved since I last looked" from the note→mtime map the index already holds — no query, no scoring, no I/O. Returns paths and dates rather than content, so the agent picks what to read next. An empty index is reported distinctly from "nothing changed": the answer is unknown, not negative.
+- **`resolve_project`** maps a working directory or repo name to the project name this vault actually uses, so a near miss stops returning empty context that reads as "nothing here yet".
 - **`list_pending_memory`** shows the proposals the agent has made that are still awaiting your review, so it stops re-proposing what is already queued. Read-only — approving or discarding stays in Obsidian, where a person does it.
 
 ### Attachments (opt-in)

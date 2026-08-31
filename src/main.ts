@@ -289,12 +289,40 @@ export default class EngramPlugin
     ).open();
   }
 
+  /**
+   * Resolve the typed default project to a folder that exists.
+   *
+   * `defaultProject` is free text, and `getProjectContext` resolves it by exact
+   * sanitized name — so a user who types "coder-engram" for a folder named
+   * "Coder Engram" got an empty panel, indistinguishable from a project with
+   * nothing in it. That is the same silent miss `resolve_project` fixes for the
+   * agent, and it was worth fixing on both sides rather than only the one the
+   * release notes mentioned.
+   *
+   * Falls back to the typed name when there is no single match: an ambiguous or
+   * unknown name behaves exactly as before rather than being quietly redirected
+   * to something the user did not name.
+   */
+  private async resolveDefaultProject(typed: string): Promise<string> {
+    try {
+      return (await this.engine.resolveProject(typed)).exact ?? typed;
+    } catch {
+      return typed;
+    }
+  }
+
   showProjectContext(): void {
-    const project = this.settings.defaultProject;
-    if (!project) {
+    const typed = this.settings.defaultProject;
+    if (!typed) {
       new Notice("Set a default project in settings first.");
       return;
     }
+    void this.resolveDefaultProject(typed).then((project) =>
+      this.openProjectContext(project),
+    );
+  }
+
+  private openProjectContext(project: string): void {
     void this.engine
       .getProjectContext(project)
       .then((parts) => {
@@ -491,11 +519,15 @@ export default class EngramPlugin
   }
 
   private startSessionNote(): void {
-    const project = this.settings.defaultProject;
-    if (!project) {
+    const typed = this.settings.defaultProject;
+    if (!typed) {
       new Notice("Set a default project in settings first.");
       return;
     }
+    void this.resolveDefaultProject(typed).then((project) => this.openSessionNote(project));
+  }
+
+  private openSessionNote(project: string): void {
     const stamp = formatSessionStamp(Date.now());
     void this.engine.startSession(project, stamp).then((path) => {
       new Notice(`Session note: ${path}`);

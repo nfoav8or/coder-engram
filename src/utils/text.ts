@@ -19,6 +19,24 @@ export function foldForCompare(value: string): string {
 }
 
 /**
+ * Fold a project NAME for matching against a free-form hint.
+ *
+ * Beyond case and Unicode form, this collapses the separators that distinguish
+ * a repository directory from a project folder a person named: `coder-engram`,
+ * `coder_engram` and `Coder Engram` are one project written three ways, and an
+ * agent deriving the name from its working directory will produce whichever
+ * one the filesystem happens to use. Treating them as different names is how a
+ * lookup returns empty context that reads as "this project has nothing yet".
+ *
+ * Deliberately NOT used for the exclusion or retrieval filters: those compare a
+ * name the user typed against a folder that exists, where collapsing
+ * separators would make two genuinely distinct folders collide.
+ */
+export function projectKey(value: string): string {
+  return foldForCompare(value).replace(/[-_\s]+/g, " ").trim();
+}
+
+/**
  * Fold a folder setting to the form the path comparisons use. Drops the empty
  * and `.` segments that `normalizeVaultRelativePath` drops everywhere else, so
  * "./Private", "/Private/" and "Private" all name the same folder here as they

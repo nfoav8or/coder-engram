@@ -131,6 +131,9 @@ const CHANGES_MAX_LIMIT = 200;
 const CHANGES_DEFAULT_LIMIT = 50;
 const CHANGES_DEFAULT_DAYS = 7;
 const CHANGES_MAX_DAYS = 365;
+// How many project names any one `resolve_project` reply lists. Shared by the
+// near-match and no-match branches so one reply cannot use two rules.
+const PROJECT_LIST_MAX = 25;
 const NOTE_CONTEXT_MAX_PER_MINUTE = 60;
 const NOTE_CONTEXT_DEFAULT_MAX_CHARS = 12_000;
 const NOTE_CONTEXT_MAX_CHARS = 50_000;
@@ -1030,6 +1033,85 @@ const getRecentChangesTool: Tool = {
   },
 };
 
+/**
+ * `resolve_project` — turn a working directory into the project name that
+ * actually exists.
+ *
+ * The agent knows a filesystem path; this plugin knows a folder name a person
+ * chose. Nothing connects them, so an agent had to guess on every call — and a
+ * near miss returned an empty context indistinguishable from a project with
+ * nothing in it yet, which is the worst possible failure for a memory tool
+ * because it reads as "no memory" rather than "wrong name".
+ *
+ * The hint is TEXT, never a path: only its last segment is used, nothing is
+ * resolved, and no filesystem outside the vault is touched. Matching runs over
+ * names `list_projects` already returns, so this exposes nothing new.
+ */
+const resolveProjectTool: Tool = {
+  definition: {
+    name: "resolve_project",
+    description:
+      "Map a working directory, repository name, or guess to the project name this vault " +
+      "actually uses, so project-scoped calls do not silently miss. Returns the exact match, " +
+      "or near matches, or — when two project names differ only by punctuation or case — both " +
+      "of them, so you pick rather than being given a confident guess. " +
+      "Call before get_project_context if unsure.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        hint: {
+          type: "string",
+          description:
+            "A working-directory path, repository name, or guess — e.g. /home/u/Git/coder-engram.",
+        },
+      },
+      required: ["hint"],
+      additionalProperties: false,
+    },
+  },
+  async handler(args, ctx) {
+    ctx.rateLimiter.enforceWindow("resolve_project", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
+    const obj = requireObject(args, "arguments");
+    const hint = requireString(obj, "hint", { maxLength: 1000 });
+    const { exact, ambiguous, candidates, all } = await ctx.engine.resolveProject(hint);
+    if (ambiguous.length > 0) {
+      // Two projects whose names differ only by separator or case. Naming one
+      // as "the" match would be a confident wrong answer, which is worse here
+      // than no answer: the agent would never learn the other exists.
+      return (
+        `"${hint}" matches more than one project:\n\n${ambiguous.join("\n")}\n\n` +
+        `They differ only by punctuation or case. Pass the exact name you mean as \`project\`.`
+      );
+    }
+    if (exact !== null) {
+      // Near matches are deliberately NOT appended here. On the one branch
+      // where the answer is unambiguous, they are noise the agent has no use
+      // for — and every extra clause is another thing to keep true.
+      return `${exact}\n\nExact match — use this as the \`project\` argument.`;
+    }
+    if (candidates.length > 0) {
+      return (
+        `No exact match for "${hint}". Near matches:\n\n${candidates.slice(0, PROJECT_LIST_MAX).join("\n")}\n\n` +
+        `Pass one of these as \`project\`, or create it with the Create Project Memory Folder command.`
+      );
+    }
+    // Naming what exists beats a bare "not found": the usual cause is that the
+    // project has not been created yet, and an agent cannot tell that apart
+    // from a spelling miss without seeing the list. `all` came back with the
+    // match above rather than from a second vault scan.
+    if (all.length === 0) {
+      return `No projects exist yet. Create one with the Create Project Memory Folder command in Obsidian.`;
+    }
+    // Says how many it hid, like `list_projects` does. Silently truncating is
+    // the same failure this tool exists to remove: an agent told a project does
+    // not exist, when it was item 26.
+    const shownAll = all.slice(0, PROJECT_LIST_MAX);
+    const hidden = all.length - shownAll.length;
+    const more = hidden > 0 ? `\n\n…(${hidden} more not shown)` : "";
+    return `No project matches "${hint}". Existing projects:\n\n${shownAll.join("\n")}${more}`;
+  },
+};
+
 const ALL_TOOLS: Tool[] = [
   searchTool,
   addMemoryTool,
@@ -1041,6 +1123,7 @@ const ALL_TOOLS: Tool[] = [
   listProjectsTool,
   listPendingMemoryTool,
   getRecentChangesTool,
+  resolveProjectTool,
   getRecentSessionsTool,
   reindexTool,
 ];
