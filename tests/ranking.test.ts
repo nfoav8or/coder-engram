@@ -24,6 +24,7 @@ function makeChunk(over: Partial<IndexedChunk> & { id: string }): IndexedChunk {
     tags: [],
     aliases: [],
     links: [],
+    symbols: [],
     mtime: 1000,
     text: "",
     ...over,
@@ -233,6 +234,7 @@ describe("tokenizeChunk", () => {
       tags: [],
       aliases: [],
       links: [],
+    symbols: [],
       mtime: 1000,
       text,
     };
@@ -264,6 +266,7 @@ describe("diversifyByNote", () => {
         tags: [],
         aliases: [],
         links: [],
+    symbols: [],
         mtime: 1000,
         text: "",
       },

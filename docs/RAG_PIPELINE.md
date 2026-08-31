@@ -61,6 +61,21 @@ Retrieval is defined by the `Retriever` interface (`retrieval/retriever.ts`), so
 - **Relevance eval.** `npm run eval` (`tests/relevance.bench.ts`, local-only like the scale bench) plants invented-term needle notes and reports recall@8 + MRR per query class (body / filename / heading / alias / plural / phrase). Ranking changes must move these numbers, not vibes. Current: all classes at 1.00 recall@8 (plural MRR 0.92); filename and alias were 0.00 before field matching.
 - **Results.** Each `RetrievalResult` carries the `chunk`, `score`, a `snippet` (the densest-match window via `buildSnippet` — the window covering the most matches, not merely the first), and the `matchedTerms` (whole-token matches). Results are sorted by score, then **diversified so a single long note cannot flood the page** (`diversifyByNote`: at most `ceil(limit/3)`, floor 2, chunks per note, with rank-order backfill so the page is never shorter than a plain top-`limit`), and snippets are built only for the survivors. This retriever-level diversity is always on — it shapes the desktop search results too. The MCP search tool re-applies the same cap at page size after its deeper fetch, and *that* pass is what the **Cap one note's share of a page** setting governs; with it off, the tool takes the ranked pool as it comes. Default limit `DEFAULT_LIMIT = 8`.
 
+### Code symbols (0.14.0)
+
+`core/symbol-extractor.ts` records the names a chunk's **fenced code** declares, onto `IndexedChunk.symbols`. This is why `INDEX_VERSION` moved to 7: the field is derived at chunk time, so an index written before it existed cannot be repaired by an incremental refresh — only notes whose mtime happened to move would gain symbols, leaving the corpus scored two different ways.
+
+- **Shallow on purpose.** A handful of declaration keywords (`function`/`class`/`interface`/`type`/`enum`/`struct`/`trait`/`impl`/`namespace`/`module`/`record`, `def`/`fn`/`func`/`sub`/`procedure`, Go's method receiver form, and `const`/`let`/`var` bound to something callable) that mean the same thing across the languages people paste into notes. No parser, no grammar per language, no dependency. It will miss declarations; that is the correct direction to err, because a missed symbol costs a boost while a wrong one mis-ranks a note for a name it never defined.
+- **Fenced code only.** Prose containing the word "class" is not a declaration, and treating it as one would put a symbol on nearly every chunk — the same as putting one on none. Fence tracking is the chunker's own `scanMarkdownLines`, so a mismatched inner marker cannot desynchronize it.
+- **A `const` counts only when it is callable.** Otherwise every local variable in every snippet becomes an API.
+- **Capped at 32 per chunk**, so a generated or minified block cannot bloat every persisted index.
+
+In `LexicalRetriever`, a query term naming a declared symbol earns `idf × SYMBOL_MATCH_WEIGHT` (2.0, about two average body occurrences). Two properties are load-bearing. It is credited **whether or not the body also holds the term**, unlike the filename/alias credit — a declaration line *is* body text, so gating it on absence meant it could never fire on the chunks it exists to promote (this was a real bug, caught by the regression test before release). And it **scales with IDF**, so it is decisive for a rare identifier and nearly nothing for a name the whole vault uses: the rarer the name, the more certain that its one declaration is what the query meant. Symbol terms are also posted to the term index, so a chunk that only *declares* a name still appears as a candidate for it.
+
+`EngramEngine.findSymbol` excludes the review inbox and drops retired sections through the shared `dropRetired`, so every path that serves chunk text answers "is this still current" the same way.
+
+`npm run eval` is unchanged by this (all classes 1.00 recall@8, plural MRR 0.92) — the golden corpus has no fenced declarations, so that result says the change did not regress ordinary retrieval, not that it measures the symbol path. The gain is pinned by a regression test instead.
+
 ### Post-ranking passes (0.14.0)
 
 Two engine-level passes run **after** the retriever has ranked, in this order, and neither touches the corpus:

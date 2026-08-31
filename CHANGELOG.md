@@ -7,7 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> **This release rebuilds your index once, on first load.** `INDEX_VERSION` moved
+> from 6 to 7 because chunks now carry the symbols their fenced code declares —
+> a derived field, so an older index cannot be repaired by a refresh: only notes
+> whose mtime happened to move would gain symbols, leaving the corpus scored two
+> different ways. Nothing in `Claude Code/Memory/` is touched; `Index/` is a
+> rebuildable cache and this is what rebuilding it is for.
+
 ### Added
+
+- **Code-aware chunking and a symbol index.** Retrieval treated every note as
+  prose, so a chunk containing `export function resolveInVault(…)` matched the
+  query "resolveInVault" as an ordinary body term — competing on frequency with
+  every passing mention of the same name. The declaration and the mention scored
+  the same, which is backwards: for an identifier, the place it is *defined* is
+  almost always the passage you wanted. Measured on a small corpus, the note
+  that merely name-dropped the symbol five times outranked the one that declared
+  it.
+
+  Chunks now carry the names their **fenced code** declares, and a query term
+  naming a declared symbol earns credit on top of whatever the body scores.
+  Unlike the filename/alias credit, it is **not** conditional on the term being
+  absent from the body — a declaration line *is* body text, so gating it that
+  way meant the boost could never fire on the very chunks it exists to promote.
+  It scales with IDF like every other component, so it is decisive for a rare
+  identifier and nearly nothing for a name the whole vault uses.
+
+  **`find_symbol`** answers the question a search answers badly: where is this
+  defined? An exact name match against declared symbols, returning locations and
+  snippets rather than every passage that mentions the name.
+
+  It **never answers with the review inbox**. That folder is an ordinary indexed
+  note and `add_memory` content lands in it verbatim, fences included, so an
+  agent that wrote a fenced function into a proposal could otherwise read its own
+  unreviewed text back as an authoritative declaration. Search *labels* inbox
+  hits because a proposal may still answer a query; a proposal is not a
+  definition, so here it is excluded outright. Its snippet is a **single line
+  windowed onto the declaration**, for two reasons found in review: slicing from
+  the chunk start returned snippets that never showed the declaration at all
+  (chunks run to 2,000 characters), and raw multi-line text let an indexed note
+  forge a second numbered entry attributing its content to a path the tool never
+  matched — the forgery this server already closes for search snippets.
+
+  The extraction is deliberately shallow — a handful of declaration keywords
+  that mean the same thing across languages, no parser and no dependency. It
+  will miss things, and that is the right trade: a missed symbol costs a boost,
+  while a wrong one mis-ranks a note for a name it never defined. Only fenced
+  code is read, because prose containing the word "class" is not a declaration,
+  and a `const` counts only when it is bound to something callable — otherwise
+  every local variable in every snippet becomes an API. Capped at 32 symbols per
+  chunk so a generated or minified block cannot bloat every persisted index.
+
+  `npm run eval` is unchanged (all classes 1.00 recall@8, plural MRR 0.92), which
+  says the change did not regress the golden queries. It does not measure the
+  gain: the eval corpus has no fenced declarations, so the symbol path is not
+  exercised by it. The improvement is demonstrated by a regression test instead.
 
 - **A per-call token budget.** The tools accepted `maxChars`, but characters are
   not the unit anyone budgets in: an agent has a context window measured in

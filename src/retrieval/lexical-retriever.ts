@@ -50,6 +50,8 @@ interface CorpusStats {
   /** Filename + alias + ancestor-heading tokens (see FIELD_MATCH_WEIGHT). The
    * chunk's OWN heading line is part of its text, so it needs no field entry. */
   fieldTerms: Set<string>[];
+  /** Declared-symbol terms per chunk (see SYMBOL_MATCH_WEIGHT). */
+  symbolTerms: Set<string>[];
   docLengths: number[];
   df: Map<string, number>;
   avgdl: number;
@@ -65,6 +67,22 @@ interface CorpusStats {
   postings: Map<string, number[]>;
 }
 
+/**
+ * Extra credit for a query term that names a symbol this chunk DECLARES.
+ *
+ * Above `FIELD_MATCH_WEIGHT` because a declaration is a stronger claim than a
+ * filename: a note called "auth" is about authentication, but a chunk holding
+ * `function verifyToken(` is *where verifyToken is*. Roughly two average body
+ * occurrences' worth, added on top of whatever the body itself scores.
+ *
+ * Unlike the filename/alias credit, this is NOT conditional on the term being
+ * absent from the body — see the scoring loop. It scales with IDF like every
+ * other component, so it is decisive for a rare identifier and nearly nothing
+ * for a name the whole vault uses, which is the right shape: the rarer the
+ * name, the more certain that its one declaration is what you meant.
+ */
+const SYMBOL_MATCH_WEIGHT = 2.0;
+
 function fieldTermsFor(chunk: IndexedChunk): Set<string> {
   // Strip whatever the real extension is, not just .md: attachments are
   // indexed too, and "pdf"/"docx" as a near-zero-df field term would score
@@ -78,12 +96,30 @@ function fieldTermsFor(chunk: IndexedChunk): Set<string> {
   return field;
 }
 
+/**
+ * Tokens of the symbols a chunk declares.
+ *
+ * Tokenized rather than compared whole, so a query for `resolveInVault` and one
+ * for `resolve in vault` both reach it — the tokenizer splits on non-letters,
+ * not on camel case, so a single-word identifier stays one token and a
+ * `snake_case` one becomes its parts.
+ */
+function symbolTermsFor(chunk: IndexedChunk): Set<string> {
+  const terms = new Set<string>();
+  for (const s of chunk.symbols) {
+    terms.add(s.toLowerCase());
+    for (const t of tokenize(s)) terms.add(t);
+  }
+  return terms;
+}
+
 /** Per-chunk statistics — corpus-INDEPENDENT, so they survive any filtering. */
 interface ChunkStats {
   tf: Map<string, number>;
   docLength: number;
   headingTerms: Set<string>;
   fieldTerms: Set<string>;
+  symbolTerms: Set<string>;
 }
 
 /**
@@ -106,6 +142,7 @@ function chunkStatsFor(chunk: IndexedChunk): ChunkStats {
     docLength: doc.length,
     headingTerms: new Set(tokenize(chunk.heading)),
     fieldTerms: fieldTermsFor(chunk),
+    symbolTerms: symbolTermsFor(chunk),
   };
   chunkStatsCache.set(chunk, stats);
   return stats;
@@ -115,6 +152,7 @@ function buildStats(chunks: IndexedChunk[]): CorpusStats {
   const tf: Map<string, number>[] = [];
   const headingTerms: Set<string>[] = [];
   const fieldTerms: Set<string>[] = [];
+  const symbolTerms: Set<string>[] = [];
   const docLengths: number[] = [];
   const df = new Map<string, number>();
   const postings = new Map<string, number[]>();
@@ -139,14 +177,20 @@ function buildStats(chunks: IndexedChunk[]): CorpusStats {
       post(term, i);
     }
     for (const term of cs.fieldTerms) post(term, i);
+    // Posted like any other term source, so a chunk that only DECLARES a symbol
+    // still appears in that term's posting list — otherwise the boost below
+    // could never fire, the postings being what bounds the candidate set.
+    for (const term of cs.symbolTerms) post(term, i);
     headingTerms.push(cs.headingTerms);
     fieldTerms.push(cs.fieldTerms);
+    symbolTerms.push(cs.symbolTerms);
   }
   return {
     chunks,
     tf,
     headingTerms,
     fieldTerms,
+    symbolTerms,
     docLengths,
     df,
     avgdl: totalLen / (chunks.length || 1),
@@ -222,6 +266,12 @@ export class LexicalRetriever implements Retriever {
       let score = 0;
       for (let t = 0; t < uniqueQueryTerms.length; t++) {
         const term = uniqueQueryTerms[t];
+        // Credited whether or not the body also holds the term, unlike the
+        // filename/alias credit below. A declaration line IS body text, so the
+        // chunk that defines `resolveInVault` essentially always mentions it —
+        // gating this on absence meant the boost could never fire on the very
+        // chunks it exists to promote.
+        if (stats.symbolTerms[i].has(term)) score += idf[t] * SYMBOL_MATCH_WEIGHT;
         const f = tf.get(term);
         if (!f) {
           if (stats.fieldTerms[i].has(term)) score += idf[t] * FIELD_MATCH_WEIGHT;
@@ -246,7 +296,12 @@ export class LexicalRetriever implements Retriever {
       chunk: s.chunk,
       score: s.score,
       snippet: buildSnippet(s.chunk.text, uniqueQueryTerms),
-      matchedTerms: uniqueQueryTerms.filter((t) => stats.tf[s.i].has(t) || stats.fieldTerms[s.i].has(t)),
+      matchedTerms: uniqueQueryTerms.filter(
+        (t) =>
+          stats.tf[s.i].has(t) ||
+          stats.fieldTerms[s.i].has(t) ||
+          stats.symbolTerms[s.i].has(t),
+      ),
     }));
   }
 }

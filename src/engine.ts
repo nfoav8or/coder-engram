@@ -701,6 +701,8 @@ export class EngramEngine {
       retired.size === 0
         ? results
         : results.filter((r) => !retired.has(supersessionKey(r.chunk.notePath, r.chunk.heading)));
+    // Not `dropRetired`: results wrap their chunk, so the key comes from one
+    // level deeper. Kept explicit rather than bent into a shared shape.
     // Ageing runs last, on the ranked list: the retriever's scores are
     // comparable within one result set, and weighting the corpus first would
     // move the statistics every score is computed against.
@@ -874,6 +876,52 @@ export class EngramEngine {
   }
 
   /**
+   * Chunks that DECLARE `name`, newest note first.
+   *
+   * A lookup, not a search: an exact (case-folded) match against the symbols
+   * the chunker extracted, so "where is this defined" is answered by the
+   * definition rather than by whichever passage mentions it most. Retired
+   * sections are dropped here as everywhere else that serves chunk text.
+   */
+  async findSymbol(name: string, limit: number): Promise<IndexedChunk[]> {
+    const want = foldForCompare(name.trim());
+    if (want === "") return [];
+    const matches = this.index
+      .getChunks()
+      .filter((c) => c.symbols.some((s) => foldForCompare(s) === want))
+      // The Inbox is excluded outright, not labelled as search labels it. This
+      // tool answers "where is this defined", and an unreviewed proposal is not
+      // a definition — an agent that wrote `function resolveInVault(…)` into
+      // `add_memory` would otherwise read its own unreviewed text back as an
+      // authoritative declaration. The ledgers hold copies of proposal content
+      // for the same reason, so the whole folder goes.
+      .filter((c) => !this.isInboxPath(c.notePath));
+    return (await this.dropRetired(matches))
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, limit);
+  }
+
+  /** True when a vault path lies in the plugin-managed review folder. Total:
+   * an unparseable path is not the inbox, which leaves it visible. */
+  private isInboxPath(notePath: string): boolean {
+    try {
+      return isInsideRoot(this.paths.inbox, notePath);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Drop chunks whose section a reviewer retired. Every path that serves chunk
+   * text goes through here, so there is one answer to "is this still current". */
+  private async dropRetired<T extends { notePath: string; heading: string }>(
+    chunks: T[],
+  ): Promise<T[]> {
+    const retired = await this.writer.supersededKeys();
+    if (retired.size === 0) return chunks;
+    return chunks.filter((c) => !retired.has(supersessionKey(c.notePath, c.heading)));
+  }
+
+  /**
    * A note's chunks with retired sections removed — what may be SERVED to a
    * caller, as opposed to what the index holds.
    *
@@ -887,10 +935,7 @@ export class EngramEngine {
    * retirement does not change.
    */
   async getReadableNoteChunks(notePath: string): Promise<IndexedChunk[]> {
-    const chunks = this.getNoteChunks(notePath);
-    const retired = await this.writer.supersededKeys();
-    if (retired.size === 0) return chunks;
-    return chunks.filter((c) => !retired.has(supersessionKey(c.notePath, c.heading)));
+    return this.dropRetired(this.getNoteChunks(notePath));
   }
 
   /**

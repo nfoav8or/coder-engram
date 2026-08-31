@@ -14,6 +14,7 @@ import { VaultAdapter } from "../core/vault-adapter";
 import { asError, toMessage } from "../utils/errors";
 import { Layout, SHARD_COUNT, chooseLayout, shardOf, shardPath } from "../utils/sharding";
 import { chunkMarkdown, ChunkOptions } from "../core/markdown-chunker";
+import { extractSymbols } from "../core/symbol-extractor";
 import { ScannedNote, ScanResult, isUnchangedNote } from "./vault-scanner";
 import { Logger, NULL_LOGGER } from "../utils/logger";
 import { setTimer } from "../utils/timeout";
@@ -69,7 +70,14 @@ import { setTimer } from "../utils/timeout";
 // Same reasoning as every bump above: the fix only changes what happens the
 // next time a note is read, so the bump is what evicts notes that are indexed
 // now and should not be. Re-chunks only; cached vectors are still reused.
-export const INDEX_VERSION = 6;
+/**
+ * Bumped to 7 for `IndexedChunk.symbols`: the field is derived at chunk time,
+ * so an index written before it exists cannot be repaired by a refresh — only
+ * notes whose mtime moved would gain symbols, leaving the corpus scoring two
+ * different ways. A version change discards the cache and rebuilds it, which is
+ * the honest cost of adding a derived field.
+ */
+export const INDEX_VERSION = 7;
 
 export interface IndexedChunk {
   id: string;
@@ -82,6 +90,8 @@ export interface IndexedChunk {
   tags: string[];
   aliases: string[];
   links: string[];
+  /** Names declared by fenced code in this chunk. See `core/symbol-extractor`. */
+  symbols: string[];
   mtime: number;
 }
 
@@ -117,7 +127,8 @@ function isIndexedChunk(value: unknown): value is IndexedChunk {
     isStringArray(chunk.headingPath) &&
     isStringArray(chunk.tags) &&
     isStringArray(chunk.aliases) &&
-    isStringArray(chunk.links)
+    isStringArray(chunk.links) &&
+    isStringArray(chunk.symbols)
   );
 }
 
@@ -221,6 +232,7 @@ export function chunkNote(note: ScannedNote, chunkOptions?: ChunkOptions): Index
     tags: note.metadata.tags,
     aliases: note.metadata.aliases,
     links: note.metadata.links,
+    symbols: extractSymbols(c.text),
     mtime: note.mtime,
   }));
 }

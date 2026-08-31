@@ -22,7 +22,7 @@ import { EngramEngine } from "../engine";
 import { EngramSettings } from "../settings/settings";
 import { Logger } from "../utils/logger";
 import { ValidationError } from "../utils/errors";
-import { MS_PER_DAY, formatModifiedDate } from "../utils/format";
+import { MS_PER_DAY, formatLineRange, formatModifiedDate } from "../utils/format";
 import { charsForTokens, estimateTokens } from "../utils/tokens";
 import {
   requireObject,
@@ -158,6 +158,11 @@ const CHANGES_MAX_DAYS = 365;
 // How many project names any one `resolve_project` reply lists. Shared by the
 // near-match and no-match branches so one reply cannot use two rules.
 const PROJECT_LIST_MAX = 25;
+const SYMBOL_MAX_LIMIT = 20;
+const SYMBOL_DEFAULT_LIMIT = 5;
+// A declaration's value is its signature, not the whole chunk — the follow-up
+// is a `get_note_context` on the line range this names.
+const SYMBOL_SNIPPET_CHARS = 300;
 // Batched search. The cap is low on purpose: in vector or hybrid mode EVERY
 // query costs its own embedding round trip, so this multiplies network work
 // even though it is one MCP call. Five covers the real use — a handful of
@@ -1744,12 +1749,132 @@ const searchBatchTool: Tool = {
   },
 };
 
+/**
+ * A one-line window onto the declaration itself.
+ *
+ * Two things this must not do, both learned the hard way. It must not slice
+ * from the START of the chunk: chunks run to 2,000 characters, so any chunk
+ * with a few paragraphs of prose above its fenced block returned a snippet that
+ * never showed the declaration at all — the one thing the caller asked for. And
+ * it must be a SINGLE line, like every other snippet this server emits: the
+ * listing numbers its entries `N. path › heading (lines, date)`, and raw chunk
+ * text with its newlines intact lets an indexed note forge an extra entry
+ * attributing its own content to a path the tool never matched.
+ */
+function declarationSnippet(text: string, name: string): string {
+  const at = text.toLowerCase().indexOf(name.toLowerCase());
+  // Start at the beginning of the declaration's own line, so the snippet opens
+  // on the signature rather than mid-identifier.
+  const from = at < 0 ? 0 : text.lastIndexOf("\n", at) + 1;
+  const window = text.slice(from, from + SYMBOL_SNIPPET_CHARS);
+  const collapsed = window.replace(/\s+/g, " ").trim();
+  return from > 0 ? `… ${collapsed}` : collapsed;
+}
+
+/**
+ * `find_symbol` — where is this defined?
+ *
+ * The question a search cannot answer well. Asking `search_vault_memory` for an
+ * identifier returns every passage that mentions it, ranked by how often, and
+ * the declaration is rarely the chattiest of them. This is a lookup instead: an
+ * exact match against the names the chunker extracted from fenced code, so the
+ * answer is the definition or nothing.
+ *
+ * Reads the same index every other tool reads, so an excluded note has no
+ * symbols to find and a retired section is dropped like everywhere else. It
+ * returns locations and a snippet, not whole files — the follow-up is
+ * `get_note_context` on a path it names.
+ */
+const findSymbolTool: Tool = {
+  definition: {
+    name: "find_symbol",
+    description:
+      "Find where a code symbol is DEFINED — a function, class, type, or method " +
+      "declared in a fenced code block. Exact name match, not a search: use this " +
+      "instead of search_vault_memory when you want the definition rather than " +
+      "every mention. Returns locations and snippets, never whole notes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Exact symbol name, e.g. resolveInVault." },
+        limit: {
+          type: "number",
+          description: `Max declarations (1–${SYMBOL_MAX_LIMIT}, default ${SYMBOL_DEFAULT_LIMIT}).`,
+        },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string" },
+        declarations: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              heading: { type: "string" },
+              startLine: { type: "number" },
+              endLine: { type: "number" },
+              modified: { type: "string" },
+            },
+            required: ["path", "startLine", "endLine"],
+          },
+        },
+      },
+      required: ["symbol", "declarations"],
+    },
+  },
+  async handler(args, ctx) {
+    ctx.rateLimiter.enforceWindow("find_symbol", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
+    const obj = requireObject(args, "arguments");
+    const name = requireString(obj, "name", { maxLength: 200 });
+    const limit = Math.trunc(
+      optionalNumber(obj, "limit", SYMBOL_DEFAULT_LIMIT, { min: 1, max: SYMBOL_MAX_LIMIT }),
+    );
+    const found = await ctx.engine.findSymbol(name, limit);
+    if (found.length === 0) {
+      // Named as a miss on the INDEX, not on the vault: symbols come from
+      // fenced code, so a symbol only discussed in prose genuinely has no
+      // declaration here and search is the right next call.
+      return {
+        text:
+          `No indexed code block declares "${name}". It may be described in prose ` +
+          `rather than defined in a fenced block — try search_vault_memory.`,
+        structured: { symbol: name, declarations: [] },
+      };
+    }
+    const blocks = found.map(
+      (c, i) =>
+        `${i + 1}. ${c.notePath} › ${chunkHeadingLabel(c)} ` +
+        `(${formatLineRange(c.startLine, c.endLine)}, ${formatModifiedDate(c.mtime)})\n` +
+        `${declarationSnippet(c.text, name)}`,
+    );
+    return {
+      text: `${found.length} declaration(s) of "${name}", most recently changed first:\n\n${blocks.join("\n\n")}`,
+      structured: {
+        symbol: name,
+        declarations: found.map((c) => ({
+          path: c.notePath,
+          heading: chunkHeadingLabel(c),
+          startLine: c.startLine + 1,
+          endLine: Math.max(c.startLine + 1, c.endLine + 1),
+          modified: formatModifiedDate(c.mtime),
+        })),
+      },
+    };
+  },
+};
+
 const ALL_TOOLS: Tool[] = [
   searchTool,
   addMemoryTool,
   summarizeNoteTool,
   getNoteContextTool,
   findRelatedNotesTool,
+  findSymbolTool,
   getProjectContextTool,
   getGlobalContextTool,
   listProjectsTool,

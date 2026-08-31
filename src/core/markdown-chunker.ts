@@ -87,7 +87,13 @@ export interface MarkdownHeading {
  */
 export function scanMarkdownLines(
   lines: string[],
-  visit: (index: number, line: string, heading: MarkdownHeading | null) => void,
+  visit: (
+    index: number,
+    line: string,
+    heading: MarkdownHeading | null,
+    /** True for every line of a fenced block, its delimiters included. */
+    fenced: boolean,
+  ) => void,
   startLine = 0,
 ): void {
   let inFence = false;
@@ -95,16 +101,22 @@ export function scanMarkdownLines(
   for (let i = startLine; i < lines.length; i++) {
     const line = lines[i];
     const fence = line.match(FENCE);
+    // Both delimiters count as part of the block: the opening one carries the
+    // language tag, which a reader of fenced content wants, and neither is
+    // prose.
+    let fenced = inFence;
     if (fence) {
       if (!inFence) {
         inFence = true;
         fenceMarker = fence[2];
+        fenced = true;
       } else if (line.trimStart().startsWith(fenceMarker)) {
         inFence = false;
+        fenced = true;
       }
     }
     const m = inFence ? null : line.match(HEADING);
-    visit(i, line, m ? { level: m[1].length, text: m[2].trim() } : null);
+    visit(i, line, m ? { level: m[1].length, text: m[2].trim() } : null, fenced);
   }
 }
 

@@ -820,3 +820,80 @@ describe("memory ageing in search", () => {
     expect(after.score).toBeCloseTo(before.score, 10);
   });
 });
+
+describe("code symbols", () => {
+  const DEFINITION =
+    "# Utils\n\n```ts\nexport function resolveInVault(root: string, sub: string) {\n" +
+    "  return join(root, sub);\n}\n```\n";
+  const MENTIONS =
+    "# Notes on paths\n\nresolveInVault is important. We call resolveInVault everywhere. " +
+    "Always resolveInVault before writing. Never skip resolveInVault. resolveInVault again.\n";
+
+  it("ranks the declaration above a note that merely mentions it more often", async () => {
+    // The point of the whole stage: term frequency alone put the chattiest
+    // passage first, and for an identifier the declaration is what you wanted.
+    //
+    // Filler notes are not padding: the symbol credit scales with IDF, so in a
+    // two-document corpus where the term appears in both, IDF is near zero and
+    // every weight is near zero with it. A corpus where the name is actually
+    // rare is the condition this feature is for, and the only one where the
+    // measurement means anything.
+    const seed: Record<string, string> = {
+      "Code/utils.md": DEFINITION,
+      "Notes/chatter.md": MENTIONS,
+    };
+    for (let i = 0; i < 12; i++) {
+      seed[`Notes/filler-${i}.md`] = `# Filler ${i}\nUnrelated prose about other matters.`;
+    }
+    const { engine } = makeEngine(seed);
+    await engine.reindex();
+    const hits = await engine.search({ query: "resolveInVault" });
+    expect(hits[0].chunk.notePath).toBe("Code/utils.md");
+  });
+
+  it("records the symbols a chunk declares, and nothing from prose", async () => {
+    const { engine } = makeEngine({
+      "Code/utils.md": DEFINITION,
+      "Notes/chatter.md": MENTIONS,
+    });
+    await engine.reindex();
+    expect(engine.getNoteChunks("Code/utils.md")[0].symbols).toContain("resolveInVault");
+    expect(engine.getNoteChunks("Notes/chatter.md")[0].symbols).toEqual([]);
+  });
+
+  it("finds a definition by exact name, and says so when there is none", async () => {
+    const { engine } = makeEngine({
+      "Code/utils.md": DEFINITION,
+      "Notes/chatter.md": MENTIONS,
+    });
+    await engine.reindex();
+
+    const found = await engine.findSymbol("resolveInVault", 5);
+    expect(found).toHaveLength(1);
+    expect(found[0].notePath).toBe("Code/utils.md");
+
+    // Case-folded like every other name comparison here.
+    expect(await engine.findSymbol("RESOLVEINVAULT", 5)).toHaveLength(1);
+    // But a mention is not a declaration.
+    expect(await engine.findSymbol("chatter", 5)).toEqual([]);
+    expect(await engine.findSymbol("   ", 5)).toEqual([]);
+  });
+
+  it("does not return a declaration inside a retired memory", async () => {
+    const decisions = "Claude Code/Memory/Projects/Engram/decisions.md";
+    const { engine } = makeEngine({
+      [decisions]: "## Decision — api\n\n```ts\nfunction oldApi() {}\n```\n",
+    });
+    await engine.reindex();
+    await engine.addMemory({
+      type: "decision",
+      content: "The API changed.",
+      project: "Engram",
+      supersedes: `${decisions}#Decision — api`,
+    });
+    const [pending] = (await engine.getPendingMemory()).entries;
+    expect((await engine.applyPendingMemory(pending)).superseded).toBe("recorded");
+
+    expect(await engine.findSymbol("oldApi", 5)).toEqual([]);
+  });
+});

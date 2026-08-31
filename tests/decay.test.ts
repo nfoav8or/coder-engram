@@ -16,6 +16,7 @@ function chunk(heading: string, mtime: number, notePath = "Claude Code/Memory/a.
     tags: [],
     aliases: [],
     links: [],
+    symbols: [],
     mtime,
   };
 }

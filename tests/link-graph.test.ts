@@ -14,6 +14,7 @@ function chunk(notePath: string, links: string[], id = notePath): IndexedChunk {
     tags: [],
     aliases: [],
     links,
+    symbols: [],
     mtime: 1000,
   };
 }

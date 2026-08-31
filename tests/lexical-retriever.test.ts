@@ -24,6 +24,7 @@ function chunk(partial: Partial<IndexedChunk> & { id: string; text: string }): I
     tags: partial.tags ?? [],
     aliases: [],
     links: [],
+    symbols: [],
     mtime: partial.mtime ?? 1000,
     ...partial,
   };
