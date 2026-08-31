@@ -1,6 +1,6 @@
 # Roadmap
 
-Coder Engram is built in milestones. Milestones 1 through 15 are complete (through 0.11.0); the releases from 0.9.1 to 0.12.1 are listed under "Patch releases since 0.9.0", the Obsidian review findings and what was done about each under "Plugin review findings", work not yet released under "In progress", and anything not scheduled under "Deferred / future".
+Coder Engram is built in milestones. Milestones 1 through 15 are complete (through 0.11.0); the releases from 0.9.1 to 0.13.0 are listed under "Patch releases since 0.9.0", the Obsidian review findings and what was done about each under "Plugin review findings", work not yet released under "In progress", and anything not scheduled under "Deferred / future".
 
 ## Milestone 1 — local memory + lexical RAG (done)
 
@@ -209,6 +209,7 @@ described in full in [CHANGELOG.md](../CHANGELOG.md); the short version:
 | 0.10.7 | The large-vault P1 set: `embeddings.json` v2 stores vectors as binary Float32 bytes with precomputed norms (~40% smaller, migrated in place — no re-embed), lexical retrieval scores only the union of the query terms' posting lists instead of the whole corpus, the embedding pass checkpoints every ~1,024 chunks so an interrupted first pass resumes, and a new Concurrent batches setting (default 1) speeds first passes against local providers. |
 | 0.11.1 | A hardening pass over the subsystems 0.11.0's persistence work did not touch. **Tag extraction failed open twice** — an inline tag was only recognized after whitespace or `(`, so `**#private**`, `urgent,#private,todo` and `"#private"` extracted nothing, and an unterminated frontmatter block discarded its `tags:` list — meaning notes the user had excluded were indexed and served (`INDEX_VERSION` bumped to 4 to evict them). Also: the last chunk of a note ending in a newline reported an `endLine` past the end; `summarize_note` split sentences on abbreviation periods; `add_memory` re-parsed the whole review inbox per call (now mtime-cached); and the two source findings from Obsidian's automated 0.11.0 review are closed. |
 | 0.11.2 | A correctness and honesty release. **Three ways tag exclusion could fail open** — a UTF-8 BOM hid a note's whole frontmatter block, an unterminated block discarded its `tags:` list, and an inline tag was missed after most punctuation — each letting a note the user had excluded be indexed and served (`INDEX_VERSION` 5). Two costs 0.11.1 introduced: an index-version bump forced a full **paid re-embed**, and hybrid search then silently degraded to lexical while still reporting "hybrid". Also: a settings change mid-pass could discard a whole reindex, a blank Excluded-folders entry disabled indexing outright, the inbox dedup cache could drop a new memory, and `scripts/install.sh` installed unverified when its checksum manifest could not be fetched. The plugin stopped claiming embedding updates it had not performed. |
+| 0.13.0 | **Four new MCP tools, closing loops an agent could not close before.** `list_pending_memory` lets an agent see its own proposals — `add_memory` reported only that one landed, so it re-proposed facts it had already contributed and the writer's dedup silently absorbed them. `get_recent_changes` answers "what moved since I last looked" from the index's note→mtime map: no query, no scoring, no I/O. `resolve_project` maps a working directory or repo name to the project name the vault actually uses, and the same fix landed on the **Default project** setting in Obsidian, which had the identical silent miss. `search_batch` runs several related queries in one call and merges them by Reciprocal Rank Fusion, so agreement across queries becomes a ranking signal that does not exist when the questions are asked separately. Also fixed: memory dedup missed a case-variant project name, holding open the very re-proposal loop the first tool closes. `fuseByRank` and `candidateDepthFor` were extracted from `HybridRetriever` at their second use and are now shared. **No index rebuild.** |
 | 0.12.1 | **Security: an over-complex excluded path pattern stopped excluding anything.** Past the safety caps (256 characters or 12 wildcards) a pattern is not compiled to a RegExp — the `[^/]*` and `.*` a glob expands to backtrack catastrophically once combined — and the fallback stripped the wildcards and tested `includes` on the remainder, turning `Private/**/*.md` into the literal `Private/.md`. The exclusion matched nothing and the notes it was meant to hide were indexed and served over the MCP server, silently. The fallback is now an ordered-literal match that is a deliberate superset of the glob, and the degradation is logged. **No `INDEX_VERSION` bump** — verified, not assumed: path eligibility is re-evaluated on every scan including the mtime fast path, so the first refresh evicts anything wrongly indexed. |
 | 0.12.0 | **`minAppVersion` raised to 1.13.0**, which let the imperative settings tab go — about 450 lines duplicating every settings row, which Obsidian has ignored since 1.13 whenever `getSettingDefinitions()` returns anything. Older apps are not stranded: `versions.json` still maps releases up to 0.11.4 to 1.7.2, so they are offered 0.11.4 and keep a working plugin. The deletion was gated on diffing the two paths row by row (35 labels, all covered), which turned up one real gap — the sentence stating that nothing is written outside the vault existed only in the imperative tab, so 1.13+ users had already stopped seeing it; restored as a definition. `npm test` now also fails if the README's stated minimum Obsidian version drifts from the manifest, which caught this release's own stale line. |
 | 0.11.4 | A review-and-hardening release with **no user-visible behaviour change and no index rebuild**. Two server guards made to fail closed: the DNS-rebinding check compared the `Host` hostname against the bound host without requiring either to be non-empty, and a whitespace-only configured host survived its `127.0.0.1` fallback to bind every interface. Retrieval and summarization now hold their own vector invariants rather than trusting the caller — the stored cosine norm is recomputed instead of read back on faith, where a desynced one would inflate a score past 1 and outrank every honest match. Property fuzzing closed four contract gaps, one reachable (`add_memory` with a blank related path wrote a malformed bullet the parser then dropped). Both remaining Obsidian review findings closed at the class level: `no-throw-literal` runs with `allowThrowingAny`/`allowThrowingUnknown` off and every rethrow goes through `asError`, and all nine timer sites schedule through a host-aware `setTimer`/`clearTimer`. |
@@ -236,7 +237,47 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing unreleased — 0.12.1 has just been cut.
+- Nothing unreleased — 0.13.0 has just been cut.
+
+### Agent-capability track (new in 0.13.0)
+
+Ten expansions were ranked by cost against reward for Claude Code, and the four
+cheapest-with-highest-reward shipped in 0.13.0: `list_pending_memory`,
+`get_recent_changes`, `resolve_project`, and `search_batch`. What they had in
+common is that the machinery already existed — an engine method, a filter, a
+fusion routine — so each was a thin query over something built and tested.
+
+Still open from that ranking, in the order they were judged worth doing:
+
+1. **Supersede a stale memory** (medium cost, high reward). Dedup deliberately
+   keeps a restatement that adds detail, so contradictory memories accumulate
+   and stale memory is worse than none. Needs a new optional field in the inbox
+   block format — whose parse ⇄ render round-trip must hold — plus a review-UI
+   affordance to approve the replacement.
+2. **A per-call token budget** (medium / medium-high). The trimming helpers
+   exist but are wired to settings rather than to the call; needs a token
+   estimator and the budget threaded through.
+3. **Structured results** (high / high). `ToolHandler` and `registry.call`
+   return `string`; emitting MCP `structuredContent` alongside the prose would
+   touch the protocol layer and every handler, but would make citations exact.
+4. **Code-aware chunking and a symbol index** (high / medium-high). The only
+   item that forces every existing user to re-chunk on upgrade, so it wants its
+   own release and an `INDEX_VERSION` bump.
+5. **Retrieval feedback** (high / unproven). Highest ceiling, lowest certainty;
+   it adds persisted state and should not ship before `npm run eval` can
+   measure whether it helps.
+
+Deliberately NOT taken: letting the agent append to the session note. It reads
+as continuity but the inbox-first invariant means it would have to queue for
+review, which makes it another proposal queue rather than a journal. Changing
+that is an invariant decision in its own right, not a feature to slip in
+alongside others.
+
+One cost this release documented rather than fixed: `readInbox` is uncached
+while `proposeToInbox` keeps an mtime-keyed dedup cache, so the flow
+`list_pending_memory` prescribes — check before proposing — parses the same
+file twice. A shared parse cache is the fix; it carries invalidation risk and
+was not worth taking mid-release.
 
 **Next, in order**, per [LARGE_VAULTS.md](LARGE_VAULTS.md):
 
@@ -244,11 +285,11 @@ sees it.
 2. **P3.1 IVF vector search** behind the existing `Retriever` interface, plus the **P3.2 large-vault mode** switch. Gated on a real-vault recall eval added to `npm run eval` — the spike's 43–57× speedup at ≥99.7% recall was measured on a deliberately clustered synthetic corpus, which flatters recall. LARGE_VAULTS.md also records a measured ~22 ms of a 65.7 ms vector query spent on a full sort that a bounded top-K would reclaim; that change is deliberately deferred to this step rather than made as a patch, because it reorders tied results.
 3. **P2.3 Web Worker offload** for initial chunking, wherever in-Obsidian verification is available. The cooperative-yield fallback shipped in 0.11.0 already removes the renderer-freeze failure mode, so this is throughput rather than correctness.
 
-Standing work between releases: the review loop that produced 0.10.1–0.12.1 keeps running — audit what is already shipped, fix what fails open first, and treat a stale document as an unfinished release. Nine passes in, the highest-yield technique has been pointing an adversarial review at the *previous pass's own commits*: it found a real defect in five consecutive ones.
+Standing work between releases: the review loop that produced 0.10.1–0.13.0 keeps running — audit what is already shipped, fix what fails open first, and treat a stale document as an unfinished release. Nine passes in, the highest-yield technique has been pointing an adversarial review at the *previous pass's own commits*: it found a real defect in five consecutive ones.
 
 ## Open questions for the maintainer
 
-- **Enforce `additionalProperties: false` on MCP tool arguments?** All ten tools advertise it in
+- **Enforce `additionalProperties: false` on MCP tool arguments?** All fourteen tools advertise it in
   their `inputSchema`; no handler enforces it, so an extra key is currently ignored rather than
   refused. This is not a vulnerability — unknown keys never reach a sink — but the schema
   promises something the server does not do. Enforcing it is a breaking change for any client

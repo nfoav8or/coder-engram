@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-08-28
+
 ### Added
 
 - **`list_pending_memory` — the agent can finally see its own proposals.**
@@ -1389,6 +1391,7 @@ First working local memory + lexical RAG layer.
 - No cloud services or API keys required for the default experience.
 
 [Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.11.3...HEAD
+[0.13.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.13.0
 [0.12.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.12.1
 [0.12.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.12.0
 [0.11.4]: https://github.com/nfoav8or/coder-engram/releases/tag/0.11.4
