@@ -172,6 +172,69 @@ export function buildSnippet(text: string, queryTerms: string[], window = 220): 
 }
 
 /** Per-note cap for a result page of `limit` (default `ceil(limit/3)`, floor 2). */
+/** RRF dampening constant; 60 is the value from the original RRF paper. */
+export const RRF_K = 60;
+
+/**
+ * How deep to fetch from each list before fusing, given a page size.
+ *
+ * RRF can only reward agreement it can SEE: a chunk has to appear in a list's
+ * candidate pool to be credited by it, so fusing shallow pools collapses toward
+ * whichever list ranked something first. Nearly free to go deeper — the
+ * retrievers score the whole corpus and then slice, so this lengthens a slice
+ * rather than adding scoring work.
+ */
+export const CANDIDATE_MULTIPLIER = 4;
+export const MIN_CANDIDATES = 20;
+
+/** Candidate depth per list for a fused page of `limit` results. */
+export function candidateDepthFor(limit: number): number {
+  return Math.max(limit * CANDIDATE_MULTIPLIER, MIN_CANDIDATES);
+}
+
+/**
+ * Fuse several ranked lists into one by Reciprocal Rank Fusion.
+ *
+ * Combines by RANK rather than raw score, because the scales being combined are
+ * not comparable — BM25 against cosine in hybrid retrieval, or one query's
+ * scores against another's in a batched search. A chunk that ranks well in
+ * several lists rises; one that ranks well in a single list still places.
+ *
+ * `preferPayload` decides which copy of a chunk survives when it appears in
+ * more than one list. The payload carries the snippet and matched terms, and
+ * they are not equally useful: the lexical list's matched terms drive
+ * highlighting, so hybrid retrieval folds the vector list first and the lexical
+ * list last with `preferPayload` set. Later lists win.
+ *
+ * `sources` reports which lists contributed a chunk, by index. Fusion is the
+ * only place that knows — it collapses a chunk to one entry and discards list
+ * membership — so returning it here saves the caller a second full traversal to
+ * rebuild what this loop already visited. Hybrid ignores it; batched search
+ * uses it to tell the agent which of its queries a result answered.
+ */
+export function fuseByRank<T extends { chunk: IndexedChunk }>(
+  lists: Array<{ results: T[]; preferPayload: boolean }>,
+): Array<{ result: T; score: number; sources: number[] }> {
+  const fused = new Map<string, { result: T; score: number; sources: number[] }>();
+  for (let list = 0; list < lists.length; list++) {
+    const { results, preferPayload } = lists[list];
+    for (let rank = 0; rank < results.length; rank++) {
+      const r = results[rank];
+      const id = r.chunk.id;
+      const contribution = 1 / (RRF_K + rank + 1);
+      const existing = fused.get(id);
+      if (existing) {
+        existing.score += contribution;
+        existing.sources.push(list);
+        if (preferPayload) existing.result = r;
+      } else {
+        fused.set(id, { result: r, score: contribution, sources: [list] });
+      }
+    }
+  }
+  return Array.from(fused.values()).sort((a, b) => b.score - a.score);
+}
+
 export function maxPerNoteFor(limit: number): number {
   return Math.max(2, Math.ceil(limit / 3));
 }

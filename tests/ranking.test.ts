@@ -8,6 +8,9 @@ import {
   maxPerNoteFor,
   applyFilters,
   dropNearDuplicates,
+  fuseByRank,
+  candidateDepthFor,
+  RRF_K,
 } from "../src/retrieval/ranking";
 import { IndexedChunk } from "../src/indexing/index-manager";
 
@@ -26,6 +29,85 @@ function makeChunk(over: Partial<IndexedChunk> & { id: string }): IndexedChunk {
     ...over,
   };
 }
+
+describe("fuseByRank", () => {
+  const hit = (id: string, payload: string) => ({ chunk: makeChunk({ id }), payload });
+
+  it("keeps the payload of the preferPayload list and discards the other", () => {
+    // `preferPayload` is this function's only parameter and the documented
+    // reason it has one: the lexical list's matched terms drive highlighting,
+    // so hybrid folds vector first and lexical last with it set. Nothing
+    // covered it — both "always overwrite" and "never overwrite" passed every
+    // test in the suite.
+    const a = [hit("shared", "from-A"), hit("onlyA", "a")];
+    const b = [hit("shared", "from-B"), hit("onlyB", "b")];
+
+    const bWins = fuseByRank([
+      { results: a, preferPayload: false },
+      { results: b, preferPayload: true },
+    ]);
+    expect(bWins.find((e) => e.result.chunk.id === "shared")!.result.payload).toBe("from-B");
+
+    // Reversing which list is preferred reverses the surviving payload — so
+    // neither "always overwrite" nor "never overwrite" can satisfy both halves.
+    const aWins = fuseByRank([
+      { results: b, preferPayload: false },
+      { results: a, preferPayload: true },
+    ]);
+    expect(aWins.find((e) => e.result.chunk.id === "shared")!.result.payload).toBe("from-A");
+  });
+
+  it("weights by rank, not merely by how many lists contain a chunk", () => {
+    // Dropping `rank` from the contribution turns RRF into a "how many lists is
+    // it in" count, and the multi-query ordering test cannot see that — a
+    // two-list hit still beats a one-list hit under counting.
+    //
+    // This can. Both chunks appear in exactly ONE list, so counting scores them
+    // identically and the stable sort keeps insertion order — which puts the
+    // DEEP one first, because its list is folded first. Real RRF orders by
+    // rank instead: 1/(60+1) beats 1/(60+41).
+    const deepList = [
+      ...Array.from({ length: 40 }, (_, i) => hit(`filler${i}`, "f")),
+      hit("deep", "d"),
+    ];
+    const topList = [hit("top", "t")];
+
+    const fused = fuseByRank([
+      { results: deepList, preferPayload: false },
+      { results: topList, preferPayload: false },
+    ]);
+    const rank = (id: string) => fused.findIndex((e) => e.result.chunk.id === id);
+    expect(1 / (RRF_K + 1)).toBeGreaterThan(1 / (RRF_K + 41));
+    expect(rank("top")).toBeLessThan(rank("deep"));
+
+    // And agreement still outweighs depth, which is the other half of RRF's
+    // behaviour and the reason the dampening constant is 60: a chunk two lists
+    // agree on beats a single list's top hit even when buried.
+    const agreed = fuseByRank([
+      { results: topList, preferPayload: false },
+      { results: deepList, preferPayload: false },
+      { results: deepList, preferPayload: false },
+    ]);
+    const agreedRank = (id: string) => agreed.findIndex((e) => e.result.chunk.id === id);
+    expect(agreedRank("deep")).toBeLessThan(agreedRank("top"));
+  });
+
+  it("reports which lists contributed each chunk, zero-based", () => {
+    const fused = fuseByRank([
+      { results: [hit("shared", "a"), hit("onlyA", "a")], preferPayload: false },
+      { results: [hit("shared", "b")], preferPayload: true },
+    ]);
+    expect(fused.find((e) => e.result.chunk.id === "shared")!.sources).toEqual([0, 1]);
+    expect(fused.find((e) => e.result.chunk.id === "onlyA")!.sources).toEqual([0]);
+  });
+
+  it("fuses deeply enough for agreement to be visible", () => {
+    // The depth rule fusion depends on: RRF can only reward agreement it sees,
+    // so a shallow pool collapses toward whichever list ranked something first.
+    expect(candidateDepthFor(2)).toBeGreaterThanOrEqual(20);
+    expect(candidateDepthFor(25)).toBe(100);
+  });
+});
 
 describe("dropNearDuplicates", () => {
   const r = (id: string, text: string) => ({ chunk: makeChunk({ id, text }) });

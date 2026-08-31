@@ -71,6 +71,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or unknown name behaves exactly as before rather than being quietly
   redirected somewhere the user did not name.
 
+- **`search_batch` — several related questions, one call, one budget.** An agent
+  exploring a topic asks three or four overlapping questions. One at a time that
+  is three or four round trips returning heavily overlapping results, each paid
+  for separately in context. Batching removes the overlap once: a chunk
+  answering three of the questions comes back a single time, annotated with
+  which ones it answered.
+
+  Fused by Reciprocal Rank Fusion — the same rank-based combination
+  `HybridRetriever` already used to merge lexical with vector, now extracted to
+  `retrieval/ranking.ts` as `fuseByRank` and shared by both. Scores from
+  different queries are not comparable, so rank is the only honest way to
+  interleave them, and a chunk several queries agree on ranks above one only a
+  single query found — a signal lost entirely when the questions are asked
+  separately.
+
+  **It is not cheaper in provider work.** Each query still embeds separately in
+  vector or hybrid mode, and the queries run sequentially so a batch never
+  becomes a concurrent burst of provider calls. What it saves is round trips and
+  duplicated context. It is charged once per query against the same budget as
+  `search_vault_memory`, so a batch of five costs what five searches cost —
+  batching is never the cheap way around the rate limit.
+
 ### Fixed
 
 - **Memory dedup missed a case-variant project name.** The proposal dedup key

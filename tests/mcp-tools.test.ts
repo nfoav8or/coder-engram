@@ -89,6 +89,7 @@ describe("ToolRegistry", () => {
         "list_projects",
         "reindex_vault",
         "resolve_project",
+        "search_batch",
         "search_vault_memory",
         "summarize_note",
       ].sort(),
@@ -1188,6 +1189,219 @@ describe("resolve_project", () => {
   });
 });
 
+describe("search_batch", () => {
+  const seed = {
+    "Notes/rrf.md": "# Fusion\n\nReciprocal rank fusion merges lexical and vector rankings.",
+    "Notes/bm25.md": "# Lexical\n\nBM25 scores lexical relevance with term frequency.",
+    "Notes/vec.md": "# Vectors\n\nCosine similarity scores vector relevance.",
+  };
+
+  it("merges overlapping queries into one page, each hit naming what it answered", async () => {
+    // The saving is the de-duplication: run separately, a chunk answering two
+    // questions is returned — and paid for — twice.
+    const { ctx } = makeContext(seed);
+    await ctx.engine.reindex();
+    const out = await new ToolRegistry().call(
+      "search_batch",
+      { queries: ["lexical relevance", "vector relevance"] },
+      ctx,
+    );
+    expect(out).toMatch(/merged result/i);
+    expect(out).toContain('q1: "lexical relevance"');
+    expect(out).toContain('q2: "vector relevance"');
+    // Every hit is annotated with the queries it answered.
+    expect(out).toMatch(/\[q[0-9,]+\]/);
+    // A path appears once however many queries matched it.
+    for (const path of ["Notes/bm25.md", "Notes/vec.md"]) {
+      const hits = out.split("\n").filter((l) => l.includes(path)).length;
+      expect(hits, `${path} appeared ${hits} times`).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("marks a chunk that answered several queries", async () => {
+    const { ctx } = makeContext(seed);
+    await ctx.engine.reindex();
+    const out = await new ToolRegistry().call(
+      "search_batch",
+      { queries: ["relevance", "scores relevance"] },
+      ctx,
+    );
+    // Multi-query hits are the useful signal batching adds — lost entirely when
+    // the same questions are asked one at a time.
+    expect(out).toMatch(/\[q1,2\]/);
+  });
+
+  it("ranks a chunk that answered several queries above one that answered one", async () => {
+    // The point of fusing by RANK rather than concatenating: agreement across
+    // queries is evidence. Asserting only the [q1,2] annotation left the score
+    // accumulation untested — fusion could stop summing contributions and every
+    // other test stayed green, silently reducing this to "results of the last
+    // query, in its order".
+    const { ctx } = makeContext({
+      "Notes/both.md": "# Both\n\nalpha beta together in one note.",
+      "Notes/alpha-only.md": "# Alpha\n\nalpha alone here.",
+      "Notes/beta-only.md": "# Beta\n\nbeta alone here.",
+    });
+    await ctx.engine.reindex();
+    const out = await new ToolRegistry().call(
+      "search_batch",
+      { queries: ["alpha", "beta"] },
+      ctx,
+    );
+    const posBoth = out.indexOf("Notes/both.md");
+    expect(posBoth, "the two-query hit is missing").toBeGreaterThanOrEqual(0);
+    for (const single of ["Notes/alpha-only.md", "Notes/beta-only.md"]) {
+      const pos = out.indexOf(single);
+      if (pos >= 0) {
+        expect(posBoth, `${single} outranked the two-query hit`).toBeLessThan(pos);
+      }
+    }
+    expect(out).toMatch(/Notes\/both\.md.*\[q1,2\]/);
+  });
+
+  it("charges the rate limiter once per query, not once per call", async () => {
+    // Otherwise a batch is the cheap way around the search limit.
+    const { ctx } = makeContext(seed);
+    await ctx.engine.reindex();
+    const seen: string[] = [];
+    const real = ctx.rateLimiter.enforceWindow.bind(ctx.rateLimiter);
+    ctx.rateLimiter.enforceWindow = (name: string, max: number, win: number) => {
+      seen.push(name);
+      return real(name, max, win);
+    };
+    await new ToolRegistry().call("search_batch", { queries: ["a", "b", "c"] }, ctx);
+    expect(seen.filter((n) => n === "search_vault_memory").length).toBe(3);
+  });
+
+  it("rejects an empty or over-long batch", async () => {
+    const { ctx } = makeContext(seed);
+    await ctx.engine.reindex();
+    const registry = new ToolRegistry();
+    for (const bad of [{ queries: [] }, { queries: ["", "   "] }, { queries: ["a", "b", "c", "d", "e", "f"] }]) {
+      await expect(
+        registry.call("search_batch", bad, ctx),
+        `accepted ${JSON.stringify(bad)}`,
+      ).rejects.toThrow();
+    }
+  });
+
+  it("still merges and annotates correctly with context savings on", async () => {
+    // Both savings are off by default, so every other batch test exercises one
+    // branch of the pipeline. This is the other one: `dropNearDuplicates` and
+    // `diversifyByNote` reshape the list AFTER fusion, and the per-hit query
+    // annotation is looked up by chunk id — so a mismatch between the surviving
+    // results and their annotations would only ever show up here.
+    const savings = {
+      collapseNearDuplicates: true,
+      capPerNoteShare: true,
+      mergeOverlappingPassages: true,
+    };
+    const { ctx } = makeContext(
+      {
+        "Notes/a.md": "# A\n\nalpha beta relevance scoring here.",
+        "Notes/b.md": "# B\n\nalpha beta relevance scoring here.",
+        "Notes/c.md": "# C\n\nalpha unique content entirely.",
+      },
+      { contextSavings: savings },
+    );
+    await ctx.engine.reindex();
+    const out = await new ToolRegistry().call("search_batch", { queries: ["alpha", "beta"] }, ctx);
+
+    const results = (out.match(/^\d+\. /gm) ?? []).length;
+    const annotations = (out.match(/\[q[0-9,]+\]/g) ?? []).length;
+    // Every result carries exactly one annotation — no orphans either way.
+    expect(annotations).toBe(results);
+    expect(results).toBeGreaterThan(0);
+    // The near-duplicate really was collapsed: without savings this returns 3.
+    expect(results).toBeLessThan(3);
+    expect(out).toMatch(/\[q1,2\]/);
+  });
+
+  it("applies the scope filters and the limit to every query", async () => {
+    // Both were unverified: dropping `filters` from the batch search, or
+    // ignoring `limit`, left every other test green. Duplicated, untested
+    // validation is how a folder restriction silently stops applying on one of
+    // two code paths.
+    const { ctx } = makeContext({
+      "Keep/one.md": "# One\n\nalpha relevance here.",
+      "Keep/two.md": "# Two\n\nalpha relevance here.",
+      "Keep/three.md": "# Three\n\nalpha relevance here.",
+      "Drop/secret.md": "# Secret\n\nalpha relevance here.",
+    });
+    await ctx.engine.reindex();
+    const registry = new ToolRegistry();
+
+    const scoped = await registry.call(
+      "search_batch",
+      { queries: ["alpha", "relevance"], folder: "Keep" },
+      ctx,
+    );
+    expect(scoped).toContain("Keep/");
+    expect(scoped, "folder filter did not apply").not.toContain("Drop/secret.md");
+
+    const limited = await registry.call(
+      "search_batch",
+      { queries: ["alpha", "relevance"], limit: 2 },
+      ctx,
+    );
+    expect((limited.match(/^\d+\. /gm) ?? []).length).toBe(2);
+  });
+
+  it("fuses deeply enough that agreement survives a small limit", async () => {
+    // The candidate pool per query is the depth RRF gets to work with. Fetching
+    // only `limit` would make cross-query agreement invisible at small pages —
+    // the tool would quietly degrade toward "whatever the first query ranked
+    // highest", which is precisely the thing batching is for.
+    // The shared note must rank LOW for q1, or it sits in the page anyway and
+    // the depth makes no difference. Fillers repeat "alpha" so they dominate
+    // it on term frequency; the shared note mentions it once, among other text.
+    const seedMany: Record<string, string> = {};
+    for (let i = 0; i < 12; i++) {
+      seedMany[`Notes/n${i}.md`] = `# N${i}\n\nalpha alpha alpha alpha number ${i}.`;
+    }
+    seedMany["Notes/both.md"] =
+      "# Both\n\nA longer note mentioning alpha once, and discussing beta at length: beta beta beta.";
+    const { ctx } = makeContext(seedMany);
+    await ctx.engine.reindex();
+    const out = await new ToolRegistry().call(
+      "search_batch",
+      { queries: ["alpha", "beta"], limit: 2 },
+      ctx,
+    );
+    // `Notes/both.md` is one of thirteen alpha matches, so at limit 2 it only
+    // earns its [q1,2] if the pool went deeper than the page.
+    expect(out).toMatch(/Notes\/both\.md.*\[q1,2\]/);
+  });
+
+  it("charges the limiter before validating, so malformed batches are bounded", async () => {
+    // A limiter consulted after validation makes a flood of malformed calls
+    // free to send and never bounded.
+    const { ctx } = makeContext(seed);
+    const seen: string[] = [];
+    const real = ctx.rateLimiter.enforceWindow.bind(ctx.rateLimiter);
+    ctx.rateLimiter.enforceWindow = (name: string, max: number, win: number) => {
+      seen.push(name);
+      return real(name, max, win);
+    };
+    await expect(
+      new ToolRegistry().call("search_batch", { queries: [] }, ctx),
+    ).rejects.toThrow();
+    expect(seen, "rejected before reaching the limiter").toContain("search_batch");
+  });
+
+  it("says so when nothing matches any query", async () => {
+    const { ctx } = makeContext(seed);
+    await ctx.engine.reindex();
+    const out = await new ToolRegistry().call(
+      "search_batch",
+      { queries: ["zzzznotpresent", "qqqqalsoabsent"] },
+      ctx,
+    );
+    expect(out).toMatch(/no results for any of/i);
+    expect(out).toContain("zzzznotpresent");
+  });
+});
+
 describe("the exposed tool surface", () => {
   it("is exactly the curated read/propose set — nothing that writes memory directly", () => {
     // SECURITY.md promises promotion of an inbox entry is UI-only and never
@@ -1209,6 +1423,7 @@ describe("the exposed tool surface", () => {
         "list_projects",
         "reindex_vault",
         "resolve_project",
+        "search_batch",
         "search_vault_memory",
         "summarize_note",
       ].sort(),

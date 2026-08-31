@@ -17,6 +17,7 @@ import { LexicalRetriever } from "./retrieval/lexical-retriever";
 import { VectorRetriever } from "./retrieval/vector-retriever";
 import { HybridRetriever } from "./retrieval/hybrid-retriever";
 import { Retriever, RetrievalQuery, RetrievalResult } from "./retrieval/retriever";
+import { candidateDepthFor, fuseByRank } from "./retrieval/ranking";
 import { EmbeddingProvider } from "./embeddings/embedding-provider";
 import { EmbeddingStore, contentHash } from "./embeddings/embedding-store";
 import { createEmbeddingProvider } from "./embeddings/provider-factory";
@@ -904,6 +905,50 @@ export class EngramEngine {
       });
       return undefined;
     }
+  }
+
+  /**
+   * Run several queries and return ONE fused, ranked list.
+   *
+   * This lives in the engine and not in the MCP handler that calls it, for the
+   * same reason `resolveProject` does: it is ranking, not transport. Choosing a
+   * candidate depth and combining rankings are retrieval decisions — the
+   * hybrid retriever keeps its equivalent constants inside itself, never in a
+   * caller — and putting them behind the facade is also what makes a future
+   * multi-query UI, or embedding all N queries in a single provider round trip,
+   * reachable at all.
+   *
+   * Sequential rather than concurrent: in vector or hybrid mode each query
+   * embeds separately, and fanning five requests at a possibly rate-limited
+   * endpoint is not something a single tool call should do on the user's
+   * behalf.
+   *
+   * `sources` on each result lists which query indices found it. Agreement
+   * across queries is evidence — a chunk several of them surface ranks above
+   * one only a single query found — and that signal does not exist when the
+   * questions are asked one at a time.
+   */
+  async searchBatch(
+    queries: string[],
+    options: { limit: number; filters: RetrievalQuery["filters"] },
+  ): Promise<Array<RetrievalResult & { sources: number[] }>> {
+    const { limit, filters } = options;
+    // Depth matters more here than for a single search. RRF can only reward
+    // agreement it can SEE, so a chunk has to sit inside each query's candidate
+    // pool to be credited by it — with a shallow pool the tool quietly degrades
+    // toward "whatever the first query ranked highest". Same rule the hybrid
+    // retriever uses before its own fusion, and it is nearly free: the
+    // retrievers score the whole corpus and then slice, so a deeper pool
+    // lengthens a slice rather than adding scoring work.
+    const candidates = candidateDepthFor(limit);
+    const perQuery: RetrievalResult[][] = [];
+    for (const query of queries) {
+      // eslint-disable-next-line no-await-in-loop -- deliberate: see above, these must not fan out
+      perQuery.push(await this.search({ query, limit: candidates, filters }));
+    }
+    return fuseByRank(perQuery.map((results) => ({ results, preferPayload: true }))).map(
+      (entry) => ({ ...entry.result, score: entry.score, sources: entry.sources }),
+    );
   }
 
   /**

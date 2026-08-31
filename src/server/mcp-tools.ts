@@ -34,6 +34,7 @@ import {
 import { MemoryEntry, MEMORY_TYPES } from "../memory/memory-types";
 import { dropNearDuplicates, diversifyByNote } from "../retrieval/ranking";
 import { IndexedChunk } from "../indexing/index-manager";
+import type { RetrievalQuery, RetrievalResult } from "../retrieval/retriever";
 
 /** JSON-Schema-shaped tool description advertised via `tools/list`. */
 export interface ToolDefinition {
@@ -134,6 +135,11 @@ const CHANGES_MAX_DAYS = 365;
 // How many project names any one `resolve_project` reply lists. Shared by the
 // near-match and no-match branches so one reply cannot use two rules.
 const PROJECT_LIST_MAX = 25;
+// Batched search. The cap is low on purpose: in vector or hybrid mode EVERY
+// query costs its own embedding round trip, so this multiplies network work
+// even though it is one MCP call. Five covers the real use — a handful of
+// related questions asked at once — without turning one call into a burst.
+const BATCH_MAX_QUERIES = 5;
 const NOTE_CONTEXT_MAX_PER_MINUTE = 60;
 const NOTE_CONTEXT_DEFAULT_MAX_CHARS = 12_000;
 const NOTE_CONTEXT_MAX_CHARS = 50_000;
@@ -204,6 +210,80 @@ function dedupWindowText(prevText: string, c: IndexedChunk): { text: string; car
 
 function sameSection(a: IndexedChunk, b: IndexedChunk): boolean {
   return a.heading === b.heading && a.headingPath.join("\u0000") === b.headingPath.join("\u0000");
+}
+
+/**
+ * The `limit` and scope filters shared by `search_vault_memory` and
+ * `search_batch`.
+ *
+ * Extracted because the duplicate copy was INPUT VALIDATION, and mutation
+ * testing showed the second one was entirely unverified — dropping the filters
+ * from the batch search left every test green. Duplicating untested validation
+ * is how a folder, tag, or project restriction silently stops applying on one
+ * of two paths.
+ */
+function parseSearchScope(
+  obj: Record<string, unknown>,
+  ctx: ToolContext,
+): { limit: number; filters: RetrievalQuery["filters"] } {
+  const limit = Math.trunc(
+    optionalNumber(obj, "limit", SEARCH_DEFAULT_LIMIT, { min: 1, max: SEARCH_MAX_LIMIT }),
+  );
+  const sinceDays = optionalNumber(obj, "sinceDays", 0, { min: 0, max: 36_500 });
+  return {
+    limit,
+    filters: {
+      folder: optionalString(obj, "folder", "", 1000) || undefined,
+      tag: optionalString(obj, "tag", "", 200) || undefined,
+      project: optionalString(obj, "project", "", 200) || undefined,
+      sinceMtime: sinceDays > 0 ? ctx.clock() - sinceDays * MS_PER_DAY : undefined,
+    },
+  };
+}
+
+/**
+ * Apply the opt-in context savings to a ranked page.
+ *
+ * Each saving hides something the user may have wanted — a second copy of a
+ * memory, a long note's later hits — so neither is applied unless asked for.
+ * With both off this is the ranked results cut to `limit`.
+ */
+function applyContextSavings<T extends { chunk: IndexedChunk }>(
+  results: T[],
+  limit: number,
+  settings: EngramSettings,
+): T[] {
+  const savings = settings.contextSavings;
+  const collapsed = savings.collapseNearDuplicates ? dropNearDuplicates(results) : results;
+  return savings.capPerNoteShare ? diversifyByNote(collapsed, limit) : collapsed.slice(0, limit);
+}
+
+/**
+ * The one-line label above a search hit: path, heading, line range, modified
+ * date, and a pending-review marker.
+ *
+ * Shared by `search_vault_memory` and `search_batch` so the two cannot drift —
+ * an agent that learns to read one is reading the other. The format is
+ * deliberately lean: enough to locate or fetch the passage, and no score float,
+ * because rank order already conveys that and every token should aid recall.
+ *
+ * The modified date is what lets an agent judge staleness when two memories
+ * conflict — a deliberate alternative to recency RANKING, which would change
+ * scoring semantics. Day granularity, ~11 characters per result.
+ *
+ * Inbox hits are marked because they are agent PROPOSALS awaiting human review,
+ * not accepted memory: without the marker an agent's own unreviewed write comes
+ * back through search looking like the user's settled knowledge.
+ */
+function searchResultLabel(r: RetrievalResult, pendingPath: string): string {
+  const heading = chunkHeadingLabel(r.chunk);
+  const start = r.chunk.startLine + 1;
+  const end = Math.max(start, r.chunk.endLine + 1);
+  const lines = start === end ? `L${start}` : `L${start}–${end}`;
+  const modified = formatModifiedDate(r.chunk.mtime);
+  const pending =
+    r.chunk.notePath === pendingPath ? " [PENDING REVIEW — proposed, not yet accepted]" : "";
+  return `${r.chunk.notePath} › ${heading} (${lines}, ${modified})${pending}`;
 }
 
 /** Clip `text` to `maxChars`, flagging the cut with a follow-up hint. */
@@ -296,21 +376,12 @@ const searchTool: Tool = {
     ctx.rateLimiter.enforceWindow("search_vault_memory", SEARCH_MAX_PER_MINUTE, RATE_WINDOW_MS);
     const obj = requireObject(args, "arguments");
     const query = requireString(obj, "query", { maxLength: 2000 });
-    const limit = Math.trunc(optionalNumber(obj, "limit", SEARCH_DEFAULT_LIMIT, { min: 1, max: SEARCH_MAX_LIMIT }));
-    const folder = optionalString(obj, "folder", "", 1000) || undefined;
-    const tag = optionalString(obj, "tag", "", 200) || undefined;
-    const project = optionalString(obj, "project", "", 200) || undefined;
-    const sinceDays = optionalNumber(obj, "sinceDays", 0, { min: 0, max: 36_500 });
-    const sinceMtime = sinceDays > 0 ? ctx.clock() - sinceDays * MS_PER_DAY : undefined;
+    const { limit, filters } = parseSearchScope(obj, ctx);
 
     // Fetch a deeper candidate pool than the page so the near-duplicate drop
     // below can backfill with distinct results instead of leaving the page
     // short of `limit`.
-    const results = await ctx.engine.search({
-      query,
-      limit: limit * 2,
-      filters: { folder, tag, project, sinceMtime },
-    });
+    const results = await ctx.engine.search({ query, limit: limit * 2, filters });
 
     if (results.length === 0) {
       return `No results for "${query}".`;
@@ -327,27 +398,14 @@ const searchTool: Tool = {
     // may have wanted (a second copy of a memory; a long note's later hits), so
     // neither is applied unless asked for. With both off the page is simply the
     // ranked results cut to `limit`.
-    const savings = ctx.settings.contextSavings;
-    const collapsed = savings.collapseNearDuplicates ? dropNearDuplicates(results) : results;
-    const distinct = savings.capPerNoteShare
-      ? diversifyByNote(collapsed, limit)
-      : collapsed.slice(0, limit);
+    const distinct = applyContextSavings(results, limit, ctx.settings);
     // Hits from the review inbox are agent PROPOSALS awaiting human review, not
     // accepted memory — mark them so an agent's own unreviewed write can't come
     // back through search looking like the user's settled knowledge.
     const pendingPath = ctx.engine.getPaths().pendingMemoryFile;
-    const blocks = distinct.map((r, i) => {
-      const heading = chunkHeadingLabel(r.chunk);
-      const start = r.chunk.startLine + 1;
-      const end = Math.max(start, r.chunk.endLine + 1);
-      const lines = start === end ? `L${start}` : `L${start}–${end}`;
-      // The note's modified date lets the agent judge staleness when memories
-      // conflict — a deliberate alternative to recency-RANKING, which would
-      // change scoring semantics. Day granularity; ~11 chars per result.
-      const modified = formatModifiedDate(r.chunk.mtime);
-      const pending = r.chunk.notePath === pendingPath ? " [PENDING REVIEW — proposed, not yet accepted]" : "";
-      return `${i + 1}. ${r.chunk.notePath} › ${heading} (${lines}, ${modified})${pending}\n${r.snippet}`;
-    });
+    const blocks = distinct.map(
+      (r, i) => `${i + 1}. ${searchResultLabel(r, pendingPath)}\n${r.snippet}`,
+    );
     return `${distinct.length} result(s):\n\n${blocks.join("\n\n")}`;
   },
 };
@@ -1112,6 +1170,96 @@ const resolveProjectTool: Tool = {
   },
 };
 
+/**
+ * `search_batch` — several related questions, one call, one budget.
+ *
+ * An agent exploring a topic asks three or four overlapping questions, and one
+ * at a time that is three or four round trips returning heavily overlapping
+ * results, each paid for separately in context. Batching lets the overlap be
+ * removed ONCE, which is the actual saving: a chunk that answers three of the
+ * questions is returned a single time, annotated with which ones it answered.
+ *
+ * Fused by Reciprocal Rank Fusion, the same rank-based combination the hybrid
+ * retriever uses to merge lexical with vector — for the same reason. Scores
+ * from different queries are not comparable, so combining them by rank is the
+ * only honest way to interleave them.
+ *
+ * This is NOT cheaper than the individual calls in vector or hybrid mode: each
+ * query still embeds separately. What it saves is round trips and duplicated
+ * context, not provider work.
+ */
+const searchBatchTool: Tool = {
+  definition: {
+    name: "search_batch",
+    description:
+      "Run several related queries in one call and get one merged, de-duplicated result page. " +
+      "Each result says which of your queries it answered. Use when exploring a topic from a " +
+      "few angles at once; use search_vault_memory for a single question.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        queries: {
+          type: "array",
+          items: { type: "string" },
+          description: `The questions (1–${BATCH_MAX_QUERIES}). Related but distinct works best.`,
+        },
+        limit: {
+          type: "number",
+          description: `Max merged results (1–${SEARCH_MAX_LIMIT}, default ${SEARCH_DEFAULT_LIMIT}).`,
+        },
+        folder: { type: "string", description: "Restrict to notes under this vault-relative folder." },
+        tag: { type: "string", description: "Restrict to notes carrying this tag (no leading #)." },
+        project: { type: "string", description: "Restrict to a project under the projects root." },
+        sinceDays: { type: "number", description: "Only notes modified within this many days." },
+      },
+      required: ["queries"],
+      additionalProperties: false,
+    },
+  },
+  async handler(args, ctx) {
+    // Charged in two steps, and the order matters. First under this tool's own
+    // name BEFORE any validation, because a limiter consulted after validation
+    // makes a flood of malformed calls free to send and never bounded.
+    ctx.rateLimiter.enforceWindow("search_batch", SEARCH_MAX_PER_MINUTE, RATE_WINDOW_MS);
+    const obj = requireObject(args, "arguments");
+    const raw = optionalStringArray(obj, "queries", BATCH_MAX_QUERIES, 2000);
+    const queries = raw.map((q) => q.trim()).filter((q) => q !== "");
+    if (queries.length === 0) {
+      throw new ValidationError(`Field "queries" must contain at least one non-blank query`);
+    }
+    // Then once per query against the SEARCH budget, so a batch of five costs
+    // what five searches cost. Without this, batching is simply the cheap way
+    // around the search limit.
+    for (let i = 0; i < queries.length; i++) {
+      ctx.rateLimiter.enforceWindow("search_vault_memory", SEARCH_MAX_PER_MINUTE, RATE_WINDOW_MS);
+    }
+
+    const { limit, filters } = parseSearchScope(obj, ctx);
+
+    // Running the queries and fusing them is the ENGINE's job — it is ranking,
+    // not transport. See `EngramEngine.searchBatch`.
+    const fused = await ctx.engine.searchBatch(queries, { limit, filters });
+
+    if (fused.length === 0) {
+      return `No results for any of: ${queries.map((q) => `"${q}"`).join(", ")}.`;
+    }
+
+    const distinct = applyContextSavings(fused, limit, ctx.settings);
+
+    const pendingPath = ctx.engine.getPaths().pendingMemoryFile;
+    const blocks = distinct.map((r, i) => {
+      // Named so the agent can tell a chunk that answered one question from one
+      // that answered several — the second is usually the better memory, and
+      // that signal is lost entirely when the queries are run separately.
+      // `sources` is 0-based from fusion; the header numbers queries from 1.
+      const which = ` [q${r.sources.map((n) => n + 1).join(",")}]`;
+      return `${i + 1}. ${searchResultLabel(r, pendingPath)}${which}\n${r.snippet}`;
+    });
+    const asked = queries.map((q, i) => `q${i + 1}: "${q}"`).join("\n");
+    return `${distinct.length} merged result(s) for:\n${asked}\n\n${blocks.join("\n\n")}`;
+  },
+};
+
 const ALL_TOOLS: Tool[] = [
   searchTool,
   addMemoryTool,
@@ -1124,6 +1272,7 @@ const ALL_TOOLS: Tool[] = [
   listPendingMemoryTool,
   getRecentChangesTool,
   resolveProjectTool,
+  searchBatchTool,
   getRecentSessionsTool,
   reindexTool,
 ];
