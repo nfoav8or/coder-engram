@@ -82,6 +82,58 @@ export class InboxLock {
 }
 
 /**
+ * A value derived from one file, cached against that file's mtime.
+ *
+ * Three of these existed inline before they were worth naming — the rejection
+ * ledger's keys, the supersession ledger's keys, and (added here) the parsed
+ * inbox. They had drifted apart in small ways while claiming to follow one
+ * rule, which is how a cache quietly stops being correct.
+ *
+ * The rule: a null mtime means there is nothing to read, so the caller's
+ * `missing` value is returned and nothing is cached. Every writer in this class
+ * SEEDS or CLEARS explicitly rather than trusting the mtime to move, because
+ * mtime resolution is coarse on some filesystems and two writes in one tick can
+ * share a value — and a stale hit here is not a slow path, it is a wrong
+ * answer. The mtime check then catches everyone else: a user editing the file
+ * in Obsidian, another tool touching it.
+ *
+ * `MemoryWriter.dedupCache` deliberately does NOT use this. Its null-mtime rule
+ * is the opposite — it falls back to a full parse rather than assuming the file
+ * is absent — because there it guards an APPEND, and treating "no mtime" as "no
+ * file" would overwrite an inbox full of unreviewed memory.
+ */
+class FileDerivedCache<T> {
+  private entry: { mtime: number; value: T } | null = null;
+
+  constructor(
+    private readonly adapter: VaultAdapter,
+    private readonly path: string,
+  ) {}
+
+  async read(missing: T, build: () => Promise<T>): Promise<T> {
+    const mtime = await this.adapter.getMtime(this.path);
+    if (mtime === null) {
+      this.entry = null;
+      return missing;
+    }
+    if (this.entry?.mtime === mtime) return this.entry.value;
+    const value = await build();
+    this.entry = { mtime, value };
+    return value;
+  }
+
+  /** Record what this class just wrote, so the next read does not re-derive it. */
+  async seed(value: T): Promise<void> {
+    const mtime = await this.adapter.getMtime(this.path);
+    this.entry = mtime === null ? null : { mtime, value };
+  }
+
+  clear(): void {
+    this.entry = null;
+  }
+}
+
+/**
  * Content key for inbox dedup: Unicode-normalized, case-folded, with runs of
  * whitespace collapsed.
  *
@@ -237,9 +289,21 @@ export class MemoryWriter {
    * record in Obsidian to un-reject a memory is the expected case, and it must
    * take effect on the next proposal).
    */
-  private rejectionCache: { mtime: number; keys: Map<string, RejectionMatch> } | null = null;
+  private readonly rejectionCache: FileDerivedCache<Map<string, RejectionMatch>>;
   /** Retired-section keys as of the supersession ledger's `mtime`. */
-  private supersededCache: { mtime: number; keys: Set<string> } | null = null;
+  private readonly supersededCache: FileDerivedCache<ReadonlySet<string>>;
+  /**
+   * The PARSED inbox, as of its mtime.
+   *
+   * `readInbox` re-read and re-parsed the whole file on every call while
+   * `proposeToInbox` kept a cache of its own, so the flow `list_pending_memory`
+   * prescribes — check what is pending, then propose — parsed the same file
+   * twice. The review UI re-reads it after every apply and discard as well.
+   *
+   * Callers get the cached parse by reference and must treat it as read-only;
+   * every one of them either filters into a new object or reads fields.
+   */
+  private readonly inboxCache: FileDerivedCache<ParsedInbox>;
 
   constructor(
     private readonly adapter: VaultAdapter,
@@ -248,6 +312,9 @@ export class MemoryWriter {
   ) {
     this.logger = options.logger ?? NULL_LOGGER;
     this.inboxLock = options.inboxLock ?? new InboxLock();
+    this.inboxCache = new FileDerivedCache(adapter, paths.pendingMemoryFile);
+    this.rejectionCache = new FileDerivedCache(adapter, paths.rejectedMemoryFile);
+    this.supersededCache = new FileDerivedCache(adapter, paths.supersededMemoryFile);
   }
 
   /** See InboxLock: shared when the caller supplies one, private otherwise. */
@@ -308,6 +375,7 @@ export class MemoryWriter {
       // memory. The mtime below is only ever a cache key.
       if (!(await this.adapter.exists(target))) {
         await this.adapter.write(target, INBOX_HEADER + block);
+        this.inboxCache.clear();
         // The file's whole contents are known here — one entry — so seed the
         // cache rather than forcing the next call to parse what we just wrote.
         const created = await this.adapter.getMtime(target);
@@ -333,6 +401,13 @@ export class MemoryWriter {
       if (!keys) {
         const parsed = parsePendingInbox(await this.adapter.read(target));
         keys = new Set(parsed.entries.map(pendingKey));
+        // Share the parse rather than throwing it away: a propose that follows
+        // a `list_pending_memory` miss would otherwise parse the same file the
+        // next read parses again. Seeded, not read through `readInbox`, because
+        // the dedup path must keep its own null-mtime rule — falling back to a
+        // full parse rather than assuming an absent file, since here that would
+        // let a duplicate through instead of merely costing a re-read.
+        await this.inboxCache.seed(parsed);
       }
 
       if (keys.has(entryKey(entry))) {
@@ -341,6 +416,7 @@ export class MemoryWriter {
         return { path: target, duplicate: true, rejection: null };
       }
       await this.adapter.append(target, block);
+      this.inboxCache.clear();
       // Keep the cache warm across consecutive proposals: record our own new
       // key and the mtime the append produced, so a run of add_memory calls
       // costs one parse in total rather than one per call.
@@ -385,12 +461,9 @@ export class MemoryWriter {
    * header) when the inbox file does not exist yet.
    */
   async readInbox(): Promise<ParsedInbox> {
-    const target = this.paths.pendingMemoryFile;
-    if (!(await this.adapter.exists(target))) {
-      return { header: INBOX_HEADER, entries: [] };
-    }
-    const text = await this.adapter.read(target);
-    return parsePendingInbox(text);
+    return this.inboxCache.read({ header: INBOX_HEADER, entries: [] }, async () =>
+      parsePendingInbox(await this.adapter.read(this.paths.pendingMemoryFile)),
+    );
   }
 
   /**
@@ -420,8 +493,11 @@ export class MemoryWriter {
       // mtime resolution is coarse on some filesystems, and an apply followed
       // immediately by a propose can land in the same tick — in which case a
       // stale cache would report a genuinely new memory as a duplicate and
-      // silently drop it.
+      // silently drop it. The parsed-inbox cache goes with it, for the same
+      // reason and by the same rule: this class never trusts an mtime to have
+      // moved after its own write.
       this.dedupCache = null;
+      this.inboxCache.clear();
       if (!(await this.adapter.exists(target))) {
         throw new ConfigError("The pending-memory inbox no longer exists.");
       }
@@ -446,6 +522,14 @@ export class MemoryWriter {
         await this.adapter.write(destination, block);
       }
       await this.adapter.write(target, next);
+      // AFTER the write, not only before it. `readInbox` runs outside this lock
+      // (the review UI and `list_pending_memory` both call it), so a read
+      // landing between the pre-clear and the write repopulates the cache with
+      // pre-write content — and if this write's mtime collides with the one it
+      // cached under, nothing would ever clear it again and the applied entry
+      // would read as pending forever.
+      this.inboxCache.clear();
+      this.dedupCache = null;
       this.logger.info("Applied pending memory", { destination, type: entry.type });
       return { destination, superseded: await this.recordSupersession(entry) };
     });
@@ -498,13 +582,9 @@ export class MemoryWriter {
       // Seeded rather than invalidated: this set is read by every search and
       // every context assembly, so the next one would otherwise re-read and
       // re-parse a ledger whose contents we just wrote.
-      const mtime = await this.adapter.getMtime(this.paths.supersededMemoryFile);
-      const keys = new Set([supersessionKey(ref.path, ref.heading)]);
-      for (const e of entries) {
-        const prior = e.supersedes ? parseSupersedesRef(e.supersedes, this.paths.memory) : null;
-        if (prior) keys.add(supersessionKey(prior.path, prior.heading));
-      }
-      this.supersededCache = mtime === null ? null : { mtime, keys };
+      const keys = this.supersessionKeysOf(entries);
+      keys.add(supersessionKey(ref.path, ref.heading));
+      await this.supersededCache.seed(keys);
       return "recorded";
     } catch (err) {
       this.logger.warn("Applied, but could not record the supersession", {
@@ -531,21 +611,21 @@ export class MemoryWriter {
    * outlive the file either.
    */
   async supersededKeys(): Promise<ReadonlySet<string>> {
-    const mtime = await this.adapter.getMtime(this.paths.supersededMemoryFile);
     // A null mtime means nothing is retired. Failing open here shows a stale
     // memory, which a reader can see and act on; failing closed would hide a
     // live one, which they cannot.
-    if (mtime === null) {
-      this.supersededCache = null;
-      return EMPTY_KEYS;
-    }
-    if (this.supersededCache?.mtime === mtime) return this.supersededCache.keys;
+    return this.supersededCache.read(EMPTY_KEYS, async () =>
+      this.supersessionKeysOf((await this.readSupersessions()).entries),
+    );
+  }
+
+  /** The retired-section keys named by a set of ledger records. */
+  private supersessionKeysOf(entries: PendingBlockFields[]): Set<string> {
     const keys = new Set<string>();
-    for (const e of (await this.readSupersessions()).entries) {
+    for (const e of entries) {
       const ref = e.supersedes ? parseSupersedesRef(e.supersedes, this.paths.memory) : null;
       if (ref) keys.add(supersessionKey(ref.path, ref.heading));
     }
-    this.supersededCache = { mtime, keys };
     return keys;
   }
 
@@ -567,8 +647,9 @@ export class MemoryWriter {
   ): Promise<{ recorded: boolean }> {
     return this.inboxLock.run(async () => {
       const target = this.paths.pendingMemoryFile;
-      // See applyPending: the cache cannot outlive a rewrite of the inbox.
+      // See applyPending: neither cache can outlive a rewrite of the inbox.
       this.dedupCache = null;
+      this.inboxCache.clear();
       if (!(await this.adapter.exists(target))) {
         throw new ConfigError("The pending-memory inbox no longer exists.");
       }
@@ -580,6 +661,10 @@ export class MemoryWriter {
         );
       }
       await this.adapter.write(target, next);
+      // See applyPending: cleared after the write as well as before it, because
+      // an unlocked reader can repopulate the cache in between.
+      this.inboxCache.clear();
+      this.dedupCache = null;
       this.logger.info("Discarded pending memory", { type: entry.type });
       let recorded = false;
       try {
@@ -666,27 +751,18 @@ export class MemoryWriter {
 
   /** Rejection keys as of the ledger's current mtime; see {@link rejectionCache}. */
   private async rejectionKeys(): Promise<Map<string, RejectionMatch>> {
-    // One probe, not an exists() and then a getMtime(): a null mtime means
-    // there is nothing to read, and reading nothing means nothing is
-    // suppressed. That is the direction this check must fail in — a lost
-    // suppression costs a duplicate the reviewer dismisses, where a phantom
-    // one would silently withhold a memory nobody ruled on.
-    const mtime = await this.adapter.getMtime(this.paths.rejectedMemoryFile);
-    if (mtime === null) {
-      this.rejectionCache = null;
-      return new Map();
-    }
-    if (this.rejectionCache?.mtime === mtime) return this.rejectionCache.keys;
-    const { entries } = await this.readRejections();
-    const keys = rejectionKeysOf(entries);
-    this.rejectionCache = { mtime, keys };
-    return keys;
+    // A null mtime means there is nothing to read, and reading nothing means
+    // nothing is suppressed. That is the direction this must fail in: a lost
+    // suppression costs a duplicate the reviewer dismisses, where a phantom one
+    // would silently withhold a memory nobody ruled on.
+    return this.rejectionCache.read(new Map(), async () =>
+      rejectionKeysOf((await this.readRejections()).entries),
+    );
   }
 
   /** Record the ledger state this class just wrote, so the next proposal does
    * not re-read and re-parse a file whose contents we already know. */
   private async seedRejections(entries: PendingBlockFields[]): Promise<void> {
-    const mtime = await this.adapter.getMtime(this.paths.rejectedMemoryFile);
-    this.rejectionCache = mtime === null ? null : { mtime, keys: rejectionKeysOf(entries) };
+    await this.rejectionCache.seed(rejectionKeysOf(entries));
   }
 }

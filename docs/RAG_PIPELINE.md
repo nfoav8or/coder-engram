@@ -98,6 +98,18 @@ Retrieval is measured by an on-demand benchmark (`npm run bench`, `tests/scale.b
 | 2,000 notes | ~19k | ~55 ms | scan ~2 ms + refresh ~8 ms (10 changed) | 15 / 19 ms | 31 / 34 ms |
 | 5,000 notes | ~48k | ~120 ms | scan ~4 ms + refresh ~19 ms (10 changed) | 55 / 63 ms | 102 / 114 ms |
 
+**What 0.14.0 cost, measured before and after on the same machine and corpus** (2,000 notes → 14,407 chunks, `npm run bench` at `5af9208` vs. the release):
+
+| metric | 0.13.0 | 0.14.0 | change |
+| --- | --- | --- | --- |
+| full build | 56 ms | 57 ms | +2% |
+| incremental refresh | 6.3 ms | 6.6 ms | +5% |
+| `chunks.json` | 16.1 MB | 16.3 MB | +1.2% |
+| lexical query p50/p95 | 13.9 / 16.0 ms | 15.1 / 18.0 ms | +9% / +12% |
+| hybrid query p50/p95 | 22.9 / 25.5 ms | 24.9 / 27.4 ms | +8% / +7% |
+
+The query cost is real and is the price of three things added to every search: the symbol terms in the posting lists and the per-term symbol check in scoring, the supersession filter's mtime probe, and the ageing pass (which returns its input by identity when the feature is off, so most of that is the probe rather than the pass). One to two milliseconds at this scale, and the shape is unchanged. It is recorded here rather than smoothed over: a release that adds work to the hot path should say how much.
+
 Notes: incremental refresh reuses unchanged chunk objects and skips reading unchanged files entirely (the skip-unchanged scan cut the re-scan from ~60 ms to ~2 ms at 2k notes even on the in-memory adapter; on a real vault the saving is disk I/O, which is the part that matters). Lexical scoring is bounded by an inverted index: the corpus-stats memo also carries per-term posting lists (body + field terms — exactly the two sources scoring credits), so a query iterates the union of its terms' postings rather than the whole corpus. A query of common terms still approaches O(corpus); selective terms touch only their matches. The hybrid vector stage remains a deliberate brute-force O(chunks × dim) scan per query — interactive well past tens of thousands of chunks; beyond that the lever is approximate-nearest-neighbour search, deliberately not built yet. Run `BENCH_NOTES=5000 npm run bench` to reproduce.
 
 ### Embedding abstraction

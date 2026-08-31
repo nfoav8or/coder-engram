@@ -16,6 +16,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The inbox is parsed once, not on every read.** `readInbox` re-read and
+  re-parsed the whole file on every call while `proposeToInbox` kept a cache of
+  its own — so the flow `list_pending_memory` prescribes (check what is pending,
+  then propose) parsed the same file twice, and the review UI re-parsed it after
+  every apply and discard. 0.13.0 documented this cost rather than fixing it;
+  this fixes it.
+
+  The three mtime-keyed caches in `MemoryWriter` — the rejection ledger's keys,
+  the supersession ledger's keys, and now the parsed inbox — became one
+  `FileDerivedCache`. They had drifted apart in small ways while claiming to
+  follow one rule, which is how a cache quietly stops being correct. The rule is
+  now stated once: a null mtime means nothing to read, and every writer in the
+  class **seeds or clears explicitly** rather than trusting the mtime to have
+  moved, because mtime resolution is coarse on some filesystems and two writes in
+  one tick can share a value.
+
+  Apply and discard clear the inbox cache **after** their write as well as
+  before it. `readInbox` deliberately runs outside the inbox lock — the review UI
+  and `list_pending_memory` both call it — so a read landing between a pre-write
+  clear and the write itself repopulates the cache with pre-write content, and
+  if that write's mtime collides with the one it cached under, nothing clears it
+  again: the applied or discarded entry reads as pending forever. Caught in
+  review, with a regression that reproduces the interleaving. The dedup cache deliberately stays outside it — its
+  null-mtime rule is the opposite, because there it guards an append and treating
+  "no mtime" as "no file" would overwrite an inbox full of unreviewed memory.
+
 - **Code-aware chunking and a symbol index.** Retrieval treated every note as
   prose, so a chunk containing `export function resolveInVault(…)` matched the
   query "resolveInVault" as an ordinary body term — competing on frequency with

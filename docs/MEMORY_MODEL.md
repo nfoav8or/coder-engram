@@ -62,6 +62,19 @@ A proposed memory (from the Add Memory command, or from the server) is modeled b
 
 By default, every proposed entry is appended to `Memory/Inbox/pending-memory.md` as a reviewable block (`formatMemoryEntry` in `src/memory/memory-writer.ts`). If the inbox file does not exist yet, it is created with a short header first. Proposals are **de-duplicated**: an entry whose content, type, and project match one already pending is not appended again (the caller is told it is already pending), so a looping agent cannot flood the inbox with repeated proposals. Content is matched after collapsing whitespace, folding case, and normalizing Unicode form to NFC, because an agent re-proposing a fact across sessions rarely reproduces its own wording byte-for-byte — and the same accented words arrive decomposed when they came from a path or filename read on macOS, composed when typed or pasted elsewhere. Those two encodings render identically, so without normalizing them the reviewer sees two cards that look the same with no way to tell why both are there. That is still an **exact** comparison of the words themselves, deliberately not a fuzzy one: a restatement that adds genuine detail is a different memory and is kept, since suppressing it would lose information permanently, while a duplicate costs the reviewer one dismissal.
 
+Reading the inbox is cached too, against the file's mtime — `readInbox` used to
+re-read and re-parse the whole file on every call, so checking what is pending
+and then proposing parsed it twice, and the review UI parsed it again after
+every action. That cache and the two ledger caches share one `FileDerivedCache`
+with a single stated rule: a null mtime means nothing to read, and the writer
+seeds or clears explicitly after its own writes rather than trusting the mtime
+to have moved.
+
+Apply and discard clear it **after** the write as well as before. `readInbox`
+runs outside the inbox lock on purpose, so a read landing in between caches the
+pre-write parse — and on a filesystem whose mtime does not move between those
+two writes, nothing would clear it again.
+
 The dedup check does not re-read and re-parse the whole inbox on every proposal. That cost is O(inbox), and the inbox grows with how much the agent proposes rather than with vault size, so a backlog left unreviewed made every later `add_memory` slower. The parsed dedup keys are cached instead, and invalidated two ways, because neither alone is sound. The writer clears the cache outright whenever *it* rewrites the inbox (an apply or a discard). Everything else — a hand-edit in Obsidian, another tool touching the file — is caught by comparing the file's **mtime** against the one the cache was built from. Relying on mtime alone was a real bug, not a theoretical one: mtime resolution is coarse on some filesystems, and a discard followed immediately by a proposal can land in the same tick, so a surviving cache would report a genuinely new memory as a duplicate and silently drop it. The two layers together mean the cache cannot outlive a change it did not make. One key function serves both the cache and the comparison it replaces, so the two cannot drift apart on what "the same memory" means. Example block:
 
 ```markdown

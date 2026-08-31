@@ -581,3 +581,169 @@ describe("an ambiguous supersession target", () => {
     expect(await adapter.read(targetPath)).toContain("Replacement.");
   });
 });
+
+describe("the parsed-inbox cache", () => {
+  /** Counts reads of one path so a cache hit is observable, not assumed. */
+  class CountingAdapter extends InMemoryVaultAdapter {
+    reads = 0;
+    async read(path: string): Promise<string> {
+      if (path === paths.pendingMemoryFile) this.reads++;
+      return super.read(path);
+    }
+  }
+
+  function newWriter(adapter: InMemoryVaultAdapter): MemoryWriter {
+    return new MemoryWriter(adapter, paths, { appendOnly: true, allowDirectWrites: false });
+  }
+
+  it("parses the inbox once across repeated reads", async () => {
+    // The flow list_pending_memory prescribes — check what is pending, then
+    // propose — parsed the same file twice, and the review UI re-reads it after
+    // every action.
+    const adapter = new CountingAdapter("v", {});
+    const writer = newWriter(adapter);
+    await writer.proposeToInbox(entry());
+
+    adapter.reads = 0;
+    await writer.readInbox();
+    await writer.readInbox();
+    await writer.readInbox();
+    expect(adapter.reads).toBe(1);
+  });
+
+  it("shares the parse the dedup check already paid for", async () => {
+    // A propose that misses the dedup cache parses the inbox; without sharing
+    // it, the next readInbox parses the same bytes again — which is exactly the
+    // double parse this cache exists to remove.
+    const adapter = new CountingAdapter("v", {});
+    const writer = newWriter(adapter);
+    await writer.proposeToInbox(entry());
+
+    // A fresh writer over the same vault: its dedup cache is cold, so the next
+    // propose must read and parse.
+    const second = newWriter(adapter);
+    adapter.reads = 0;
+    await second.proposeToInbox(entry({ content: "A different fact." }));
+    const readsForDedup = adapter.reads;
+    expect(readsForDedup).toBeGreaterThan(0);
+
+    await second.readInbox();
+    await second.readInbox();
+    // The append invalidated the seeded parse, so exactly one further read —
+    // never one per call.
+    expect(adapter.reads).toBe(readsForDedup + 1);
+  });
+
+  it("re-reads after this writer changes the inbox", async () => {
+    const adapter = new CountingAdapter("v", {});
+    const writer = newWriter(adapter);
+    await writer.proposeToInbox(entry());
+    expect((await writer.readInbox()).entries).toHaveLength(1);
+
+    await writer.proposeToInbox(entry({ content: "A second fact." }));
+    expect((await writer.readInbox()).entries).toHaveLength(2);
+
+    const [first] = (await writer.readInbox()).entries;
+    await writer.discardPending(first, { reason: "no" });
+    expect((await writer.readInbox()).entries).toHaveLength(1);
+  });
+
+  it("re-reads after the file is edited outside the writer", async () => {
+    // A user editing the inbox in Obsidian is the ordinary case, and a cache
+    // that outlived it would show them entries they had just deleted.
+    const adapter = new CountingAdapter("v", {});
+    const writer = newWriter(adapter);
+    await writer.proposeToInbox(entry());
+    expect((await writer.readInbox()).entries).toHaveLength(1);
+
+    await adapter.write(paths.pendingMemoryFile, INBOX_HEADER);
+    expect((await writer.readInbox()).entries).toHaveLength(0);
+  });
+
+  it("does not report entries after an mtime that could not move", async () => {
+    // mtime resolution is coarse on some filesystems, so this class clears its
+    // own caches rather than trusting the clock to have ticked.
+    class FrozenMtimeAdapter extends CountingAdapter {
+      async getMtime(): Promise<number | null> {
+        return 7;
+      }
+    }
+    const adapter = new FrozenMtimeAdapter("v", {});
+    const writer = newWriter(adapter);
+    await writer.proposeToInbox(entry());
+    expect((await writer.readInbox()).entries).toHaveLength(1);
+
+    const [pending] = (await writer.readInbox()).entries;
+    await writer.discardPending(pending, { reason: "no" });
+    expect((await writer.readInbox()).entries).toHaveLength(0);
+  });
+
+  it("reports an absent inbox as empty without reading anything", async () => {
+    const adapter = new CountingAdapter("v", {});
+    const writer = newWriter(adapter);
+    const inbox = await writer.readInbox();
+    expect(inbox.entries).toEqual([]);
+    expect(inbox.header).toBe(INBOX_HEADER);
+    expect(adapter.reads).toBe(0);
+  });
+});
+
+describe("a read racing an inbox rewrite", () => {
+  /**
+   * Freezes mtime so a write cannot be detected by the clock, and runs a hook
+   * mid-write — the window in which an unlocked `readInbox` can repopulate the
+   * cache with pre-write content.
+   */
+  class RacingAdapter extends InMemoryVaultAdapter {
+    onWrite: (() => Promise<void>) | null = null;
+    async getMtime(): Promise<number | null> {
+      return 7;
+    }
+    async write(path: string, content: string): Promise<void> {
+      if (path === paths.pendingMemoryFile && this.onWrite) {
+        const hook = this.onWrite;
+        this.onWrite = null;
+        await hook();
+      }
+      return super.write(path, content);
+    }
+  }
+
+  it("does not leave a discarded entry readable forever", async () => {
+    // readInbox is deliberately not under the inbox lock — the review UI and
+    // list_pending_memory both call it — so clearing the cache only BEFORE the
+    // write left a window where a reader cached the pre-write parse under an
+    // mtime the write then reused.
+    const adapter = new RacingAdapter("v", {});
+    const writer = new MemoryWriter(adapter, paths, {
+      appendOnly: true,
+      allowDirectWrites: false,
+    });
+    await writer.proposeToInbox(entry());
+    const [pending] = (await writer.readInbox()).entries;
+
+    adapter.onWrite = async () => {
+      await writer.readInbox();
+    };
+    await writer.discardPending(pending, { reason: "no" });
+
+    expect((await writer.readInbox()).entries).toHaveLength(0);
+  });
+
+  it("does not leave an applied entry readable forever", async () => {
+    const adapter = new RacingAdapter("v", {});
+    const writer = new MemoryWriter(adapter, paths, {
+      appendOnly: true,
+      allowDirectWrites: false,
+    });
+    await writer.proposeToInbox(entry());
+    const [pending] = (await writer.readInbox()).entries;
+
+    adapter.onWrite = async () => {
+      await writer.readInbox();
+    };
+    await writer.applyPending(pending);
+
+    expect((await writer.readInbox()).entries).toHaveLength(0);
+  });
+});

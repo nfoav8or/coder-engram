@@ -273,11 +273,10 @@ review, which makes it another proposal queue rather than a journal. Changing
 that is an invariant decision in its own right, not a feature to slip in
 alongside others.
 
-One cost this release documented rather than fixed: `readInbox` is uncached
-while `proposeToInbox` keeps an mtime-keyed dedup cache, so the flow
-`list_pending_memory` prescribes — check before proposing — parses the same
-file twice. A shared parse cache is the fix; it carries invalidation risk and
-was not worth taking mid-release.
+The cost 0.13.0 documented rather than fixed — `readInbox` uncached while
+`proposeToInbox` kept a dedup cache, so checking before proposing parsed the
+same file twice — was fixed in 0.14.0, along with collapsing the three
+mtime-keyed caches that had accumulated into one.
 
 **Next, in order**, per [LARGE_VAULTS.md](LARGE_VAULTS.md):
 
