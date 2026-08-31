@@ -4,6 +4,7 @@ import { InMemoryVaultAdapter } from "../src/core/vault-adapter";
 import { DEFAULT_SETTINGS, EngramSettings } from "../src/settings/settings";
 import { NULL_LOGGER } from "../src/utils/logger";
 import { ToolRegistry, ToolContext, RateLimiter } from "../src/server/mcp-tools";
+import { charsForTokens } from "../src/utils/tokens";
 
 /**
  * `startClock` seeds the fake adapter's mtimes and pins the tool clock just
@@ -915,6 +916,7 @@ describe("list_pending_memory", () => {
       "limit",
       "maxChars",
       "project",
+      "tokenBudget",
     ]);
   });
 });
@@ -1636,7 +1638,165 @@ describe("list_rejected_memory", () => {
       "limit",
       "maxChars",
       "project",
+      "tokenBudget",
     ]);
+  });
+});
+
+describe("tokenBudget", () => {
+  async function seedNotes(ctx: ToolContext, adapter: InMemoryVaultAdapter, n: number) {
+    for (let i = 0; i < n; i++) {
+      await adapter.write(`Notes/kokako-${i}.md`, `# Kokako ${i}\n${"kokako ".repeat(60)}`);
+    }
+    await ctx.engine.reindex();
+  }
+
+  it("returns less than the budget, never more", async () => {
+    const { ctx, adapter } = makeContext();
+    await seedNotes(ctx, adapter, 12);
+    const registry = new ToolRegistry();
+
+    const unbounded = await registry.callText(
+      "search_vault_memory",
+      { query: "kokako", limit: 12 },
+      ctx,
+    );
+    const bounded = await registry.call(
+      "search_vault_memory",
+      { query: "kokako", limit: 12, tokenBudget: 300 },
+      ctx,
+    );
+    expect(bounded.text.length).toBeLessThan(unbounded.length);
+    expect((bounded.structured as { estimatedTokens: number }).estimatedTokens)
+      .toBeLessThanOrEqual(300);
+  });
+
+  it("cuts at result boundaries, never mid-snippet", async () => {
+    // A budget that halved a snippet would spend tokens on a passage the agent
+    // cannot use — the opposite of what it asked for.
+    const { ctx, adapter } = makeContext();
+    await seedNotes(ctx, adapter, 12);
+    const out = await new ToolRegistry().call(
+      "search_vault_memory",
+      { query: "kokako", limit: 12, tokenBudget: 300 },
+      ctx,
+    );
+    const results = (out.structured as { results: { snippet: string }[] }).results;
+    expect(results.length).toBeGreaterThan(0);
+    // Every result the payload names appears whole in the prose.
+    for (const r of results) expect(out.text).toContain(r.snippet);
+    expect(out.text).not.toMatch(/truncated at/);
+  });
+
+  it("takes the tighter of tokenBudget and maxChars", async () => {
+    // Two spellings of one request. Resolving it any other way would let a
+    // generous maxChars quietly undo an explicit token budget.
+    const { ctx } = makeContext();
+    const registry = new ToolRegistry();
+    for (let i = 0; i < 6; i++) {
+      await registry.callText("add_memory", { content: `fact ${i} ${"x".repeat(900)}` }, ctx);
+    }
+    const wide = await registry.call(
+      "list_pending_memory",
+      { limit: 6, maxChars: 50_000, tokenBudget: 300 },
+      ctx,
+    );
+    const narrow = await registry.call(
+      "list_pending_memory",
+      { limit: 6, maxChars: 1200, tokenBudget: 16_000 },
+      ctx,
+    );
+    expect(wide.text.length).toBeLessThanOrEqual(charsForTokens(300) + 200);
+    expect(narrow.text.length).toBeLessThanOrEqual(1400);
+  });
+
+  it("is offered by exactly the tools whose output can be large", async () => {
+    // Pinned because the docs name this list. An enforced-but-undeclared
+    // argument is a feature that does not exist for a client that builds its
+    // call from the published schema — which is how search_batch shipped it.
+    const declared = new ToolRegistry()
+      .list()
+      .filter((d) => (d.inputSchema.properties as Record<string, unknown>)?.tokenBudget)
+      .map((d) => d.name)
+      .sort();
+    expect(declared).toEqual([
+      "get_global_context",
+      "get_note_context",
+      "get_project_context",
+      "get_recent_changes",
+      "get_recent_sessions",
+      "list_pending_memory",
+      "list_rejected_memory",
+      "search_batch",
+      "search_vault_memory",
+    ]);
+  });
+
+  it("is reachable on search_batch, which enforces it", async () => {
+    // The handler enforced it while the schema omitted it, and the schema also
+    // says additionalProperties: false — so a client building its call from the
+    // published schema could never send it. An enforced-but-undeclared argument
+    // is a feature that does not exist for the clients that matter.
+    const { ctx, adapter } = makeContext();
+    await seedNotes(ctx, adapter, 12);
+    const registry = new ToolRegistry();
+
+    const def = registry.list().find((d) => d.name === "search_batch");
+    expect(Object.keys(def!.inputSchema.properties ?? {})).toContain("tokenBudget");
+
+    const unbounded = await registry.callText(
+      "search_batch",
+      { queries: ["kokako", "kokako 1"], limit: 12 },
+      ctx,
+    );
+    const bounded = await registry.call(
+      "search_batch",
+      { queries: ["kokako", "kokako 1"], limit: 12, tokenBudget: 300 },
+      ctx,
+    );
+    expect(bounded.text.length).toBeLessThan(unbounded.length);
+    expect((bounded.structured as { estimatedTokens: number }).estimatedTokens)
+      .toBeLessThanOrEqual(300);
+  });
+
+  it("bounds get_note_context, the largest read on the surface", async () => {
+    // A full-note read after a search hit is exactly when an agent is nearest
+    // its context limit, and this tool's own ceiling is 50,000 characters.
+    const { ctx, adapter } = makeContext();
+    await adapter.write("Notes/long.md", `# Long\n${"paragraph of words. ".repeat(400)}`);
+    await ctx.engine.reindex();
+    const registry = new ToolRegistry();
+
+    const full = await registry.callText("get_note_context", { path: "Notes/long.md" }, ctx);
+    const bounded = await registry.callText(
+      "get_note_context",
+      { path: "Notes/long.md", tokenBudget: 300 },
+      ctx,
+    );
+    expect(bounded.length).toBeLessThan(full.length);
+    expect(bounded.length).toBeLessThanOrEqual(charsForTokens(300) + 400);
+  });
+
+  it("changes nothing for a caller that does not ask", async () => {
+    const { ctx, adapter } = makeContext();
+    await seedNotes(ctx, adapter, 4);
+    const registry = new ToolRegistry();
+    const plain = await registry.callText("search_vault_memory", { query: "kokako" }, ctx);
+    const capped = await registry.callText(
+      "search_vault_memory",
+      { query: "kokako", tokenBudget: 16_000 },
+      ctx,
+    );
+    expect(capped).toBe(plain);
+  });
+
+  it("refuses a budget below the useful floor", async () => {
+    // Below it a page has room for a preamble and little else; a caller is
+    // better served by a narrower query than a page too small to answer.
+    const { ctx } = makeContext();
+    await expect(
+      new ToolRegistry().call("search_vault_memory", { query: "x", tokenBudget: 10 }, ctx),
+    ).rejects.toThrow(/tokenBudget/i);
   });
 });
 

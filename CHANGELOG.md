@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A per-call token budget.** The tools accepted `maxChars`, but characters are
+  not the unit anyone budgets in: an agent has a context window measured in
+  tokens, and converting between the two in its head is exactly the arithmetic
+  it should not have to do. **`tokenBudget`** lets it ask in its own unit, on
+  the nine tools whose output can be large: `search_vault_memory`,
+  `search_batch`, `get_note_context`, `get_project_context`,
+  `get_global_context`, `get_recent_sessions`, `get_recent_changes`, and both
+  inbox listings. The rest already answer in a sentence or under a fixed
+  ceiling, where a budget would be a knob with nothing behind it.
+
+  It is an **estimate**, named like one, and conservative in the direction that
+  matters: a budget converts to fewer characters than it might really buy, and a
+  reported estimate is higher than the text probably costs. Overshoot is the
+  dangerous side — an agent that asked for 2,000 tokens and got 3,000 has had
+  the decision taken away from it. No tokenizer is bundled; one would be a poor
+  trade for a plugin whose point is to stay small and offline.
+
+  Given both `tokenBudget` and `maxChars`, the **tighter wins** — they are two
+  spellings of one request, and resolving it any other way would let a generous
+  `maxChars` quietly undo an explicit budget. Search trims at **result
+  boundaries**, never mid-snippet: a half-snippet spends tokens on a passage the
+  agent cannot use. The budget is validated with the other arguments rather than
+  where it is first used, so a bad value is refused whatever the results turn out
+  to be, instead of being accepted on an empty vault and rejected on a full one.
+  Tools with a structured payload report `estimatedTokens` in it, so an agent can
+  calibrate rather than guess.
+
 - **Structured results — citations as fields, not a parsed label.** The seven
   tools whose answers are lists now return MCP `structuredContent` beside their
   prose: `search_vault_memory`, `search_batch`, `list_pending_memory`,

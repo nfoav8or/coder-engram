@@ -23,6 +23,7 @@ import { EngramSettings } from "../settings/settings";
 import { Logger } from "../utils/logger";
 import { ValidationError } from "../utils/errors";
 import { MS_PER_DAY, formatModifiedDate } from "../utils/format";
+import { charsForTokens, estimateTokens } from "../utils/tokens";
 import {
   requireObject,
   requireString,
@@ -371,15 +372,73 @@ function blocksThatFit(blocks: string[], maxChars: number, sepLen: number): numb
   return blocks.length;
 }
 
-/** Parsed optional `maxChars` argument for the bulk context reads. */
+/**
+ * Cut a page to `maxChars` at ITEM boundaries, returning the items and their
+ * rendered blocks as one slice.
+ *
+ * One routine for every place that does this, because the two halves of a
+ * result must be built from the same decision — the bug this replaced rendered
+ * everything and sliced only the prose, leaving the structured payload
+ * describing entries the text had thrown away.
+ */
+function sliceToFit<T>(
+  maxChars: number,
+  items: T[],
+  blocks: string[],
+  sepLen: number,
+): { items: T[]; blocks: string[] } {
+  const fits = blocksThatFit(blocks, maxChars, sepLen);
+  return { items: items.slice(0, fits), blocks: blocks.slice(0, fits) };
+}
+
+/**
+ * The character budget for a bulk read: `maxChars`, narrowed by `tokenBudget`
+ * when the caller gave one.
+ *
+ * The smaller of the two wins. They are two spellings of one request, and a
+ * caller that sends both means the tighter of them — resolving it any other way
+ * would let a generous `maxChars` quietly undo an explicit token budget. Only
+ * `tokenBudget` may take the result below `maxChars`'s own floor, because there
+ * it is what the caller actually asked for rather than a default they inherited.
+ */
 function contextMaxChars(obj: Record<string, unknown>): number {
-  return Math.trunc(
+  const maxChars = Math.trunc(
     optionalNumber(obj, "maxChars", CONTEXT_DEFAULT_MAX_CHARS, {
       min: 1000,
       max: CONTEXT_MAX_CHARS,
     }),
   );
+  const budget = tokenBudgetChars(obj);
+  return budget === null ? maxChars : Math.min(maxChars, budget);
 }
+
+/** `tokenBudget` as a character count, or null when the caller gave none. */
+function tokenBudgetChars(obj: Record<string, unknown>): number | null {
+  if (obj.tokenBudget === undefined) return null;
+  const tokens = Math.trunc(
+    optionalNumber(obj, "tokenBudget", MAX_TOKEN_BUDGET, {
+      min: MIN_TOKEN_BUDGET,
+      max: MAX_TOKEN_BUDGET,
+    }),
+  );
+  return charsForTokens(tokens);
+}
+
+/**
+ * Smallest budget worth honouring. Below this a page has room for a preamble
+ * and little else, and a caller is better served by a narrower query than by a
+ * page too small to answer anything.
+ */
+const MIN_TOKEN_BUDGET = 256;
+const MAX_TOKEN_BUDGET = 16_000;
+
+const TOKEN_BUDGET_SCHEMA = {
+  type: "number",
+  description:
+    `Cap this call's output at roughly this many tokens (${MIN_TOKEN_BUDGET}–${MAX_TOKEN_BUDGET}). ` +
+    `Estimated, not exact, and deliberately conservative — you will get a little ` +
+    `less than you asked for rather than more. Combined with maxChars, the smaller wins.`,
+} as const;
 
 const MAX_CHARS_SCHEMA = {
   type: "number",
@@ -509,6 +568,7 @@ const searchTool: Tool = {
         tag: { type: "string", description: "Restrict to notes carrying this tag (no leading #)." },
         project: { type: "string", description: "Restrict to a project under the projects root." },
         sinceDays: { type: "number", description: "Only notes modified within this many days." },
+        tokenBudget: TOKEN_BUDGET_SCHEMA,
       },
       required: ["query"],
       additionalProperties: false,
@@ -520,6 +580,10 @@ const searchTool: Tool = {
     const obj = requireObject(args, "arguments");
     const query = requireString(obj, "query", { maxLength: 2000 });
     const { limit, filters } = parseSearchScope(obj, ctx);
+    // Resolved with the other arguments, not where it is first used: a bad
+    // budget must be refused whatever the results turn out to be, or it is
+    // accepted on an empty vault and rejected on a full one.
+    const budget = tokenBudgetChars(obj);
 
     // Fetch a deeper candidate pool than the page so the near-duplicate drop
     // below can backfill with distinct results instead of leaving the page
@@ -549,9 +613,19 @@ const searchTool: Tool = {
     const blocks = distinct.map(
       (r, i) => `${i + 1}. ${searchResultLabel(r, pendingPath)}\n${r.snippet}`,
     );
+    // Trimmed at RESULT boundaries, and the same slice feeds both halves — a
+    // budget that cut a snippet in half would spend tokens on a passage the
+    // agent cannot use, which is the opposite of what it asked for.
+    // "\n\n" between blocks. Untouched when no budget was given, which is the
+    // common case and must cost nothing.
+    const page = budget === null ? { items: distinct, blocks } : sliceToFit(budget, distinct, blocks, 2);
+    const text = `${page.items.length} result(s):\n\n${page.blocks.join("\n\n")}`;
     return {
-      text: `${distinct.length} result(s):\n\n${blocks.join("\n\n")}`,
-      structured: { results: distinct.map((r) => searchResultRecord(r, pendingPath)) },
+      text,
+      structured: {
+        results: page.items.map((r) => searchResultRecord(r, pendingPath)),
+        estimatedTokens: estimateTokens(text),
+      },
     };
   },
 };
@@ -657,6 +731,7 @@ const getProjectContextTool: Tool = {
       properties: {
         project: { type: "string", description: "Project name." },
         maxChars: MAX_CHARS_SCHEMA,
+        tokenBudget: TOKEN_BUDGET_SCHEMA,
       },
       required: ["project"],
       additionalProperties: false,
@@ -682,7 +757,7 @@ const getGlobalContextTool: Tool = {
     description: "Return the concatenated global memory (profile + preferences + conventions).",
     inputSchema: {
       type: "object",
-      properties: { maxChars: MAX_CHARS_SCHEMA },
+      properties: { maxChars: MAX_CHARS_SCHEMA, tokenBudget: TOKEN_BUDGET_SCHEMA },
       additionalProperties: false,
     },
   },
@@ -755,6 +830,7 @@ const getRecentSessionsTool: Tool = {
         project: { type: "string", description: "Project name." },
         limit: { type: "number", description: `Max sessions (1–${SESSIONS_MAX_LIMIT}, default 5).` },
         maxChars: MAX_CHARS_SCHEMA,
+        tokenBudget: TOKEN_BUDGET_SCHEMA,
       },
       required: ["project"],
       additionalProperties: false,
@@ -865,6 +941,7 @@ const getNoteContextTool: Tool = {
             `Max characters returned (1000–${NOTE_CONTEXT_MAX_CHARS}, default ` +
             `${NOTE_CONTEXT_DEFAULT_MAX_CHARS}); the note is truncated past this.`,
         },
+        tokenBudget: TOKEN_BUDGET_SCHEMA,
         startLine: {
           type: "number",
           description: "Only passages ending at/after this 1-based line (e.g. a search hit's start).",
@@ -888,12 +965,18 @@ const getNoteContextTool: Tool = {
     ctx.rateLimiter.enforceWindow("get_note_context", NOTE_CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
     const obj = requireObject(args, "arguments");
     const path = requireString(obj, "path", { maxLength: 1000 });
-    const maxChars = Math.trunc(
+    // This tool's own ceiling is the highest on the surface (50,000), and a
+    // full-note read after a search hit is exactly when an agent is nearest its
+    // context limit — so it takes a budget like the other bulk reads, narrowing
+    // its own `maxChars` rather than adding a second truncation rule.
+    const budget = tokenBudgetChars(obj);
+    const requested = Math.trunc(
       optionalNumber(obj, "maxChars", NOTE_CONTEXT_DEFAULT_MAX_CHARS, {
         min: 1000,
         max: NOTE_CONTEXT_MAX_CHARS,
       }),
     );
+    const maxChars = budget === null ? requested : Math.min(requested, budget);
 
     // 1-based, matching the line ranges shown by search_vault_memory; 0 = unset
     // (the fallback bypasses min-validation by design).
@@ -1168,9 +1251,9 @@ function renderInboxListing(
     return `## ${pendingHead(e)}${claims}${why}\n\n${neutralizeBlockStructure(e.content.trim())}`;
   });
   // ONE decision about what this page contains, used for both halves.
-  const fits = blocksThatFit(blocks, maxChars, 7); // "\n\n---\n\n"
-  const shown = newestFirst.slice(0, fits);
-  const body = blocks.slice(0, fits).join("\n\n---\n\n");
+  const page = sliceToFit(maxChars, newestFirst, blocks, 7); // "\n\n---\n\n"
+  const shown = page.items;
+  const body = page.blocks.join("\n\n---\n\n");
   const preamble =
     shown.length === entries.length
       ? `${entries.length} ${noun}, newest first.`
@@ -1217,6 +1300,7 @@ const INBOX_LISTING_SCHEMA = {
       description: `Max entries (1–${PENDING_MAX_LIMIT}, default ${PENDING_DEFAULT_LIMIT}).`,
     },
     maxChars: MAX_CHARS_SCHEMA,
+    tokenBudget: TOKEN_BUDGET_SCHEMA,
   },
   additionalProperties: false,
 } as const;
@@ -1338,6 +1422,7 @@ const getRecentChangesTool: Tool = {
           description: `Max notes (1–${CHANGES_MAX_LIMIT}, default ${CHANGES_DEFAULT_LIMIT}).`,
         },
         maxChars: MAX_CHARS_SCHEMA,
+        tokenBudget: TOKEN_BUDGET_SCHEMA,
       },
       additionalProperties: false,
     },
@@ -1404,10 +1489,9 @@ const getRecentChangesTool: Tool = {
     const lines = changed.map((c) => `${c.path} — ${formatModifiedDate(c.mtime)}`);
     // Same one-decision rule as the inbox listings: the payload must describe
     // the notes the prose actually listed, not the ones it would have.
-    const shown = changed.slice(0, blocksThatFit(lines, maxChars, 1));
-    const body = `${shown.length} changed ${window}, newest first:\n\n${lines
-      .slice(0, shown.length)
-      .join("\n")}`;
+    const page = sliceToFit(maxChars, changed, lines, 1);
+    const shown = page.items;
+    const body = `${shown.length} changed ${window}, newest first:\n\n${page.blocks.join("\n")}`;
     return {
       text: clipContext(body, maxChars, "narrow `sinceDays` or lower `limit`"),
       structured: {
@@ -1574,6 +1658,7 @@ const searchBatchTool: Tool = {
         tag: { type: "string", description: "Restrict to notes carrying this tag (no leading #)." },
         project: { type: "string", description: "Restrict to a project under the projects root." },
         sinceDays: { type: "number", description: "Only notes modified within this many days." },
+        tokenBudget: TOKEN_BUDGET_SCHEMA,
       },
       required: ["queries"],
       additionalProperties: false,
@@ -1616,6 +1701,7 @@ const searchBatchTool: Tool = {
     }
 
     const { limit, filters } = parseSearchScope(obj, ctx);
+    const budget = tokenBudgetChars(obj);
 
     // Running the queries and fusing them is the ENGINE's job — it is ranking,
     // not transport. See `EngramEngine.searchBatch`.
@@ -1640,11 +1726,14 @@ const searchBatchTool: Tool = {
       return `${i + 1}. ${searchResultLabel(r, pendingPath)}${which}\n${r.snippet}`;
     });
     const asked = queries.map((q, i) => `q${i + 1}: "${q}"`).join("\n");
+    const page = budget === null ? { items: distinct, blocks } : sliceToFit(budget, distinct, blocks, 2);
+    const text = `${page.items.length} merged result(s) for:\n${asked}\n\n${page.blocks.join("\n\n")}`;
     return {
-      text: `${distinct.length} merged result(s) for:\n${asked}\n\n${blocks.join("\n\n")}`,
+      text,
       structured: {
         queries,
-        results: distinct.map((r) => ({
+        estimatedTokens: estimateTokens(text),
+        results: page.items.map((r) => ({
           ...searchResultRecord(r, pendingPath),
           // 0-based from fusion, as the prose's `[q1,q3]` is 1-based. Named
           // rather than renumbered so a consumer can index `queries` directly.
