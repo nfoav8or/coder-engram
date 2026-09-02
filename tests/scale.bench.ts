@@ -84,6 +84,15 @@ function makeNote(i: number): string {
   const sections = 3 + Math.floor(rng() * 4); // 3..6 sections
   for (let s = 0; s < sections; s++) {
     lines.push(`## ${words(rng, 2)}`, "");
+    // ~1 section in 6 carries fenced code that DECLARES something. Without
+    // this the corpus held no fences at all, so `extractSymbols` returned []
+    // for all 14,407 chunks and the benchmark could not see the symbol index
+    // it was being used to judge — the "probe that cannot detect the thing it
+    // is measuring" this repo has been caught by three times before.
+    if (rng() < 0.17) {
+      const name = `${words(rng, 1)}${i}${s}`;
+      lines.push("```ts", `export function ${name}(input: string): string {`, "  return input;", "}", "```", "");
+    }
     // ~1/3 of sections are long enough (> chunker maxChars 1200) to window.
     const paras = rng() < 0.34 ? 3 + Math.floor(rng() * 3) : 1;
     for (let p = 0; p < paras; p++) {
@@ -168,6 +177,7 @@ describe(`scale benchmark (${NOTES} notes, dim ${DIM}, ${QUERIES} queries)`, () 
       const [scanned, scanMs] = await timedAsync(() => scanner.scan(SCAN_CONFIG));
       const [index, buildMs] = await timedAsync(() => im.build(scanned));
       const chunkCount = index.chunks.length;
+      const symbolChunks = index.chunks.filter((c) => c.symbols.length > 0).length;
 
       // --- footprint (E2): deterministic on-disk / in-memory sizes ---
       const chunksBytes = JSON.stringify(index.chunks).length;
@@ -224,6 +234,9 @@ describe(`scale benchmark (${NOTES} notes, dim ${DIM}, ${QUERIES} queries)`, () 
       /* eslint-disable no-console */
       console.log(`\n===== Engram scale benchmark =====`);
       console.log(`corpus:          ${NOTES} notes -> ${chunkCount} chunks (${(chunkCount / NOTES).toFixed(1)} chunks/note)`);
+      // Reported so a run that stops exercising the symbol index says so on its
+      // own, rather than quietly measuring an always-empty code path.
+      console.log(`chunks w/ symbols: ${symbolChunks} (${((100 * symbolChunks) / chunkCount).toFixed(1)}%)`);
       console.log(`generate:        ${genMs.toFixed(0)} ms`);
       console.log(`scan:            ${scanMs.toFixed(0)} ms`);
       console.log(`full build:      ${buildMs.toFixed(0)} ms`);

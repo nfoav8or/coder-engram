@@ -51,7 +51,7 @@ interface CorpusStats {
    * chunk's OWN heading line is part of its text, so it needs no field entry. */
   fieldTerms: Set<string>[];
   /** Declared-symbol terms per chunk (see SYMBOL_MATCH_WEIGHT). */
-  symbolTerms: Set<string>[];
+  symbolTerms: ReadonlySet<string>[];
   docLengths: number[];
   df: Map<string, number>;
   avgdl: number;
@@ -104,7 +104,13 @@ function fieldTermsFor(chunk: IndexedChunk): Set<string> {
  * not on camel case, so a single-word identifier stays one token and a
  * `snake_case` one becomes its parts.
  */
-function symbolTermsFor(chunk: IndexedChunk): Set<string> {
+const NO_SYMBOLS: ReadonlySet<string> = new Set<string>();
+
+function symbolTermsFor(chunk: IndexedChunk): ReadonlySet<string> {
+  // Most chunks are prose and declare nothing. Sharing one empty set spares a
+  // per-chunk allocation across the whole corpus and costs nothing else: the
+  // sets are read-only after construction.
+  if (chunk.symbols.length === 0) return NO_SYMBOLS;
   const terms = new Set<string>();
   for (const s of chunk.symbols) {
     terms.add(s.toLowerCase());
@@ -119,7 +125,7 @@ interface ChunkStats {
   docLength: number;
   headingTerms: Set<string>;
   fieldTerms: Set<string>;
-  symbolTerms: Set<string>;
+  symbolTerms: ReadonlySet<string>;
 }
 
 /**
@@ -152,7 +158,7 @@ function buildStats(chunks: IndexedChunk[]): CorpusStats {
   const tf: Map<string, number>[] = [];
   const headingTerms: Set<string>[] = [];
   const fieldTerms: Set<string>[] = [];
-  const symbolTerms: Set<string>[] = [];
+  const symbolTerms: ReadonlySet<string>[] = [];
   const docLengths: number[] = [];
   const df = new Map<string, number>();
   const postings = new Map<string, number[]>();
