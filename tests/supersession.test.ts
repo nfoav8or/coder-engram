@@ -5,6 +5,7 @@ import {
   stripSupersededSections,
   supersessionKey,
 } from "../src/memory/supersession";
+import { formatAppliedBlock } from "../src/memory/pending-inbox";
 
 const MEMORY_ROOT = "Claude Code/Memory";
 
@@ -223,5 +224,46 @@ describe("a stray fence cannot widen what is stripped", () => {
     expect(removed).toBe(1);
     expect(text).toContain("Must survive.");
     expect(text).not.toContain("echo hi");
+  });
+
+  it("retires the whole applied block even when its content holds headings", () => {
+    // `formatAppliedBlock` writes agent-supplied content verbatim under a `##`
+    // heading, and a section ends at the next heading of the same or a
+    // shallower level — so a plain `## X` line inside the content ended the
+    // section early. Retiring the memory removed the text above that line and
+    // left everything below it being served, while `recordSupersession`
+    // reported "recorded" and the reviewer was told the memory was retired.
+    const block = formatAppliedBlock({
+      type: "note",
+      content: "Sensitive rollout note.\n\n## Decoy\n\nHidden payload.",
+      tags: [],
+      relatedPaths: [],
+      source: "test",
+      timestampLabel: "2026-09-01 09:00",
+    } as unknown as Parameters<typeof formatAppliedBlock>[0]);
+    const blockHeading = block.split("\n")[0].replace(/^##\s*/, "");
+    const { text, removed } = stripSupersededSections(
+      block,
+      "Global/profile.md",
+      new Set([supersessionKey("Global/profile.md", blockHeading)]),
+    );
+    expect(removed).toBe(1);
+    expect(text).not.toContain("Hidden payload");
+    expect(text).not.toContain("Sensitive rollout note.");
+    // The author's structure survives as a heading, nested under the block.
+    expect(block).toContain("### Decoy");
+  });
+
+  it("returns the canonical path, so a recorded retirement can be matched", () => {
+    // `isInsideRoot` normalizes before comparing, so a reference carrying a dot
+    // segment validated — but the key was built from the raw string while every
+    // consumer builds it from a real note path, so the retirement never matched
+    // anything and the memory kept being served as if nothing had happened.
+    const root = "Claude Code/Memory";
+    const ref = parseSupersedesRef("Claude Code/Memory/Global/./profile.md#Some Heading", root);
+    expect(ref?.path).toBe("Claude Code/Memory/Global/profile.md");
+    expect(supersessionKey(ref!.path, ref!.heading)).toBe(
+      supersessionKey("Claude Code/Memory/Global/profile.md", "Some Heading"),
+    );
   });
 });

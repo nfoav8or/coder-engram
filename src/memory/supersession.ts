@@ -18,7 +18,7 @@
  */
 
 import { scanMarkdownLines } from "../core/markdown-chunker";
-import { isInsideRoot } from "../utils/paths";
+import { isInsideRoot, normalizeVaultRelativePath } from "../utils/paths";
 import { foldForCompare } from "../utils/text";
 
 /** A parsed, root-validated supersession target. */
@@ -71,10 +71,16 @@ export function parseSupersedesRef(raw: string, memoryRoot: string): SupersedesR
   if (!path || !heading) return null;
   try {
     if (!isInsideRoot(memoryRoot, path)) return null;
+    // The CANONICAL path, not the one that was typed. `isInsideRoot` normalizes
+    // before comparing, so `Memory/Global/./profile.md` passes validation — but
+    // the key is built from this string, while every place the key is later
+    // consulted builds it from a real note path. A reference that differed only
+    // by a dot segment recorded a retirement that could never match: the
+    // reviewer was told the memory was retired and search kept returning it.
+    return { path: normalizeVaultRelativePath(path), heading };
   } catch {
     return null;
   }
-  return { path, heading };
 }
 
 /**

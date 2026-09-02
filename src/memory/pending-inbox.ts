@@ -15,6 +15,7 @@
  */
 
 import { MemoryPaths, resolveProjectPaths } from "./memory-types";
+import { scanMarkdownLines } from "../core/markdown-chunker";
 import { fnv1a32 } from "../utils/hash";
 
 /** The header written above the first entry when the inbox file is created. */
@@ -460,6 +461,31 @@ function balanceFences(content: string): string {
   return open === null ? content : `${content}\n${open}`;
 }
 
+/** Heading level `formatAppliedBlock` gives every applied memory. */
+const APPLIED_HEADING_LEVEL = 2;
+
+/**
+ * Push any heading in applied content below the block's own `## `.
+ *
+ * `stripSupersededSections` ends a retired section at the next heading of the
+ * same or a shallower level, so a `#` or `##` line inside the content ended the
+ * block early: retiring that memory removed the text above the line and left
+ * everything below it in place, while the reviewer and the agent were both told
+ * the memory had been retired. Demoting rather than neutralizing keeps the
+ * author's structure — the lines stay headings, nested under the block they
+ * were always describing. Fence-aware via the one heading scanner, so a `##`
+ * inside a code sample is left exactly as written.
+ */
+function nestHeadingsUnderBlock(content: string): string {
+  const lines = content.split("\n");
+  const out = [...lines];
+  scanMarkdownLines(lines, (i, line, heading) => {
+    if (!heading || heading.level > APPLIED_HEADING_LEVEL) return;
+    out[i] = line.replace(/^#+/, "#".repeat(APPLIED_HEADING_LEVEL + 1));
+  });
+  return out.join("\n");
+}
+
 /**
  * Render the Markdown block appended to a memory file when an entry is applied.
  * Distinct from the pending block: it carries no `Status: pending` marker and
@@ -487,7 +513,7 @@ export function formatAppliedBlock(entry: PendingEntry): string {
   // point to the end of the file — which made one crafted memory able to hide
   // every section after it. Closing the fence is additive and visible; nothing
   // in the content is altered or removed.
-  lines.push(balanceFences(entry.content.trim()));
+  lines.push(nestHeadingsUnderBlock(balanceFences(entry.content.trim())));
   if (entry.relatedPaths.length > 0) {
     lines.push("");
     lines.push("Related files:");
