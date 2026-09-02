@@ -579,6 +579,14 @@ describe("superseded memory is not served through the note-reading doors", () =>
     await made.engine.reindex();
 
     await expect(made.engine.summarizeNote(DECISIONS)).rejects.toThrow(/superseded/i);
+    // The note-reading door had its own copy of this refusal and knew only one
+    // of the two empties, so it told the agent to reindex a note that IS
+    // indexed and deliberately empty — the engine owns the distinction now.
+    expect(made.engine.unservableNote(DECISIONS, 0, "read")).toMatch(/superseded/i);
+    expect(made.engine.unservableNote("Notes/never-existed.md", 0, "read")).toMatch(
+      /not indexed/i,
+    );
+    expect(made.engine.unservableNote(DECISIONS, 3, "read")).toBeNull();
   });
 });
 

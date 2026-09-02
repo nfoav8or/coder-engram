@@ -1835,6 +1835,65 @@ describe("tokenBudget", () => {
     ]);
   });
 
+  it("is never exceeded by one oversized result", async () => {
+    // Nothing bounds a Markdown heading — a pasted line starting with `#` is
+    // one — and every result label and structured record embeds the chunk's
+    // heading path. `blocksThatFit` keeps the first block whatever its size, and
+    // the two search tools were the only budget-takers that never applied the
+    // hard ceiling its contract asks for, so a 5,000-character heading answered
+    // a 256-token request with 5,271 characters, in the prose AND the payload.
+    const cap = charsForTokens(256);
+    for (const [tool, args] of [
+      ["search_vault_memory", { query: "kokako", tokenBudget: 256 }],
+      ["search_batch", { queries: ["kokako"], tokenBudget: 256 }],
+    ] as const) {
+      const { ctx, adapter } = makeContext();
+      await adapter.write("Notes/huge.md", `# ${"A".repeat(5000)}\n${"kokako ".repeat(60)}`);
+      await ctx.engine.reindex();
+      const out = await new ToolRegistry().call(tool, args, ctx);
+      expect(out.text.length, `${tool} prose over budget`).toBeLessThanOrEqual(cap);
+      expect(
+        JSON.stringify(out.structured).length,
+        `${tool} payload over budget`,
+      ).toBeLessThanOrEqual(cap * 2);
+    }
+  });
+
+  it("never cuts an astral character in half", async () => {
+    // Every cap lands on an arbitrary offset and an emoji is two UTF-16 units,
+    // so a cut between them left a lone surrogate — not valid text: encoding
+    // the response to UTF-8 turns it into U+FFFD, and the caller gets a
+    // corrupted final character rather than a short one.
+    const { ctx, adapter } = makeContext();
+    await adapter.write("Notes/emoji.md", `# Kokako\n${"kokako 😀 ".repeat(300)}`);
+    await ctx.engine.reindex();
+    for (let cap = 1000; cap < 1040; cap++) {
+      const out = await new ToolRegistry().callText("get_note_context", {
+        path: "Notes/emoji.md",
+        maxChars: cap,
+      }, ctx);
+      // A lone surrogate is a code unit with no paired partner; iterating by
+      // code point and re-joining is lossless only when none is orphaned.
+      expect([...out].join(""), `orphaned surrogate at maxChars=${cap}`).toBe(out);
+      expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(out))
+        .toBe(false);
+    }
+  });
+
+  it("counts the truncation notice against the cap, not on top of it", async () => {
+    // A cap is a promise about the size of the answer. Appending sixty
+    // characters of "…(truncated at N chars)" to a page already cut to N broke
+    // that promise in precisely the case the caller was nearest to it.
+    const { ctx, adapter } = makeContext(undefined, undefined, { startClock: 1_700_000_000_000 });
+    for (let i = 0; i < 60; i++) {
+      await adapter.write(`Notes/a-long-enough-note-name-to-fill-a-page-${i}.md`, `# K ${i}\nkokako`);
+    }
+    await ctx.engine.reindex();
+    const out = await new ToolRegistry().callText("get_recent_changes", { maxChars: 1000 }, ctx);
+    expect(out).toMatch(/truncated at 1000 chars/);
+    expect(out.length).toBeLessThanOrEqual(1000);
+  });
+
   it("is reachable on search_batch, which enforces it", async () => {
     // The handler enforced it while the schema omitted it, and the schema also
     // says additionalProperties: false — so a client building its call from the
@@ -2046,6 +2105,26 @@ describe("structured results", () => {
         "search_vault_memory",
       ].sort(),
     );
+
+    // Every declaring tool actually emits one, including when it has nothing
+    // to report: MCP 2025-06-18 says a server that declares an output schema
+    // MUST return structured results, and the empty branch is the one that
+    // returns early and so the one that forgets.
+    const probes: Record<string, unknown> = {
+      search_vault_memory: { query: "nothing-matches-this" },
+      list_projects: {},
+      list_pending_memory: {},
+      list_rejected_memory: {},
+      get_recent_changes: {},
+      resolve_project: { hint: "nothing-like-it" },
+      search_batch: { queries: ["nothing-matches-this"] },
+      find_symbol: { name: "noSuchSymbolAnywhere" },
+    };
+    for (const name of declared) {
+      expect(Object.keys(probes), `no empty-case probe for ${name}`).toContain(name);
+      const out = await registry.call(name, probes[name], ctx);
+      expect(out.structured, `${name} declared a schema but returned no payload`).toBeDefined();
+    }
 
     // And a tool with no schema emits no payload, so the promise holds both ways.
     const plain = await registry.call("get_global_context", {}, ctx);

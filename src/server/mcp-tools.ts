@@ -19,6 +19,7 @@
  */
 
 import { EngramEngine } from "../engine";
+import type { ContextPart } from "../memory/memory-store";
 import { EngramSettings } from "../settings/settings";
 import { Logger } from "../utils/logger";
 import { ValidationError } from "../utils/errors";
@@ -110,7 +111,7 @@ export interface ToolContext {
   rateLimiter: RateLimiter;
 }
 
-export type ToolHandler = (args: unknown, ctx: ToolContext) => Promise<string | ToolResult>;
+type ToolHandler = (args: unknown, ctx: ToolContext) => Promise<string | ToolResult>;
 
 interface Tool {
   definition: ToolDefinition;
@@ -206,9 +207,39 @@ const LIST_PROJECTS_MAX_CHARS = 4_000;
  * chunker excludes the section's own heading), so joining it alone drops the
  * most specific level — "Doc" instead of "Doc › Alpha".
  */
+/**
+ * Slice to `n` UTF-16 units without cutting a surrogate pair in half.
+ *
+ * Every cap in this file lands on an arbitrary offset, and an astral character
+ * — an emoji, some CJK extensions — occupies two units. Cutting between them
+ * leaves a lone surrogate, which is not valid text: encoding the JSON response
+ * to UTF-8 replaces it with U+FFFD, so the caller receives a corrupted final
+ * character rather than a short one. Backing off a single unit is always safe,
+ * because a cap is an upper bound.
+ */
+function sliceUnits(text: string, n: number): string {
+  const end = Math.max(0, Math.min(n, text.length));
+  if (end === 0 || end >= text.length) return text.slice(0, end);
+  const last = text.charCodeAt(end - 1);
+  // A high surrogate at the cut means its low half is on the far side.
+  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? end - 1 : end);
+}
+
+/**
+ * A heading is a line of someone's Markdown, and nothing bounds its length —
+ * a pasted line that happens to start with `#` is a heading. Every label and
+ * every structured record embeds one, so an unbounded heading walked straight
+ * through `tokenBudget`: a 5,000-character heading answered a 256-token
+ * request (896 characters) with 5,271, in both the prose and the payload.
+ * Bounding it here rather than in each tool keeps one answer to "how long can
+ * a result line get", which is what makes the budget arithmetic hold.
+ */
+const HEADING_LABEL_MAX = 120;
+
 function chunkHeadingLabel(c: IndexedChunk): string {
   const parts = [...c.headingPath, c.heading].filter(Boolean);
-  return parts.length ? parts.join(" › ") : "(top)";
+  const label = parts.length ? parts.join(" › ") : "(top)";
+  return label.length <= HEADING_LABEL_MAX ? label : `${sliceUnits(label, HEADING_LABEL_MAX)}…`;
 }
 
 /**
@@ -314,10 +345,29 @@ function searchResultLabel(r: RetrievalResult, pendingPath: string): string {
   return `${r.chunk.notePath} › ${heading} (${lines}, ${modified})${pending}`;
 }
 
-/** Clip `text` to `maxChars`, flagging the cut with a follow-up hint. */
+/**
+ * The hard ceiling a budgeted page owes its caller, or the text unchanged when
+ * no budget was asked for. A page trimmed at result boundaries can still run
+ * over by one result — `blocksThatFit` keeps the first block whatever its size,
+ * because a page with nothing on it helps nobody — and a caller that asked for
+ * 256 tokens has to be able to rely on the number it gave.
+ */
+function withCeiling(text: string, budget: number | null): string {
+  return budget === null ? text : clipContext(text, budget, "narrow the query or raise the budget");
+}
+
+/**
+ * Clip `text` to `maxChars`, flagging the cut with a follow-up hint.
+ *
+ * The notice counts against the budget rather than being added on top of it.
+ * A cap is a promise about the size of the answer, and appending sixty
+ * characters of explanation to a page already cut to the limit broke that
+ * promise in exactly the case the caller was most likely to be near it.
+ */
 function clipContext(text: string, maxChars: number, hint: string): string {
   if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}\n\n…(truncated at ${maxChars} chars; ${hint})`;
+  const notice = `\n\n…(truncated at ${maxChars} chars; ${hint})`;
+  return `${sliceUnits(text, maxChars - notice.length)}${notice}`;
 }
 
 /**
@@ -338,7 +388,7 @@ function assembleLabeledBlocks(
     if (omitted.length > 0 || used + sep + block.length > maxChars) {
       // A single oversized first block is still clipped (hard ceiling).
       if (kept.length === 0) {
-        kept.push(block.slice(0, maxChars));
+        kept.push(sliceUnits(block, maxChars));
         omitted.push(`${path} (truncated)`);
       } else {
         omitted.push(path);
@@ -497,9 +547,19 @@ const SEARCH_RESULT_ITEM_SCHEMA = {
   required: ["path", "heading", "startLine", "endLine", "pendingReview"],
 } as const;
 
+/** Declared wherever it is emitted: a field a client cannot see in the schema
+ * is a field a client building from the schema cannot use. */
+const ESTIMATED_TOKENS_SCHEMA = {
+  type: "number",
+  description: "Approximate token cost of this answer's text (no tokenizer is bundled).",
+} as const;
+
 const SEARCH_OUTPUT_SCHEMA = {
   type: "object",
-  properties: { results: { type: "array", items: SEARCH_RESULT_ITEM_SCHEMA } },
+  properties: {
+    results: { type: "array", items: SEARCH_RESULT_ITEM_SCHEMA },
+    estimatedTokens: ESTIMATED_TOKENS_SCHEMA,
+  },
   required: ["results"],
 } as const;
 
@@ -513,7 +573,7 @@ const SEARCH_OUTPUT_SCHEMA = {
  * 1,000-character request.
  */
 function inboxEntryRecord(e: PendingEntry, maxChars: number): Record<string, unknown> {
-  const clip = (s: string) => (s.length <= maxChars ? s : `${s.slice(0, maxChars)}…`);
+  const clip = (s: string) => (s.length <= maxChars ? s : `${sliceUnits(s, maxChars)}…`);
   return {
     type: e.type,
     project: e.project ?? null,
@@ -624,7 +684,14 @@ const searchTool: Tool = {
     // "\n\n" between blocks. Untouched when no budget was given, which is the
     // common case and must cost nothing.
     const page = budget === null ? { items: distinct, blocks } : sliceToFit(budget, distinct, blocks, 2);
-    const text = `${page.items.length} result(s):\n\n${page.blocks.join("\n\n")}`;
+    // `blocksThatFit` always keeps the first block whatever its size, so its
+    // own contract puts a hard ceiling on the caller. The two search tools were
+    // the ones that never applied it, which is how a budget could be exceeded
+    // by a single oversized result rather than merely approached.
+    const text = withCeiling(
+      `${page.items.length} result(s):\n\n${page.blocks.join("\n\n")}`,
+      budget,
+    );
     return {
       text,
       structured: {
@@ -725,6 +792,25 @@ const addMemoryTool: Tool = {
   },
 };
 
+/**
+ * Render whole-file memory parts as path-labeled blocks under a cap. The two
+ * context tools differ only in which memory they ask the engine for and what
+ * they say when there is none; `get_recent_sessions` deliberately does NOT use
+ * this — its blocks carry a `## ` heading, which is a different format, not a
+ * different argument.
+ */
+function renderContextParts(
+  parts: ContextPart[],
+  maxChars: number,
+  emptyMessage: string,
+): string {
+  if (parts.length === 0) return emptyMessage;
+  return assembleLabeledBlocks(
+    parts.map((p) => ({ path: p.path, block: `${p.path}:\n${p.content}` })),
+    maxChars,
+  );
+}
+
 const getProjectContextTool: Tool = {
   definition: {
     name: "get_project_context",
@@ -747,11 +833,10 @@ const getProjectContextTool: Tool = {
     const obj = requireObject(args, "arguments");
     const project = requireString(obj, "project", { maxLength: 200 });
     const maxChars = contextMaxChars(obj);
-    const parts = await ctx.engine.getProjectContext(project);
-    if (parts.length === 0) return `No project memory found for "${project}".`;
-    return assembleLabeledBlocks(
-      parts.map((p) => ({ path: p.path, block: `${p.path}:\n${p.content}` })),
+    return renderContextParts(
+      await ctx.engine.getProjectContext(project),
       maxChars,
+      `No project memory found for "${project}".`,
     );
   },
 };
@@ -770,11 +855,10 @@ const getGlobalContextTool: Tool = {
     ctx.rateLimiter.enforceWindow("get_global_context", CONTEXT_MAX_PER_MINUTE, RATE_WINDOW_MS);
     const obj = requireObject(args ?? {}, "arguments");
     const maxChars = contextMaxChars(obj);
-    const parts = await ctx.engine.getGlobalContext();
-    if (parts.length === 0) return "No global memory recorded yet.";
-    return assembleLabeledBlocks(
-      parts.map((p) => ({ path: p.path, block: `${p.path}:\n${p.content}` })),
+    return renderContextParts(
+      await ctx.engine.getGlobalContext(),
       maxChars,
+      "No global memory recorded yet.",
     );
   },
 };
@@ -998,12 +1082,8 @@ const getNoteContextTool: Tool = {
     // Readable, not raw: a retired section must not come back through this
     // door after search and the context reads stopped returning it.
     const allChunks = await ctx.engine.getReadableNoteChunks(path);
-    if (allChunks.length === 0) {
-      throw new ValidationError(
-        `Note "${path}" is not indexed (it may be excluded or outside the vault). ` +
-          `Only indexed notes can be read.`,
-      );
-    }
+    const refusal = ctx.engine.unservableNote(path, allChunks.length, "read");
+    if (refusal) throw new ValidationError(refusal);
 
     // Range filter: keep passages overlapping [startLine, endLine]. Runs AFTER
     // the indexed-only gate so an excluded note is refused, never "empty range".
@@ -1100,7 +1180,7 @@ const getNoteContextTool: Tool = {
         const overhead = blockText ? 0 : label.length + 1 + (blocks.length > 0 ? 2 : 0);
         if (used + overhead + addition.length > maxChars) {
           if (blocks.length === 0 && blockText === "") {
-            blockText = piece.slice(0, Math.max(0, maxChars - label.length - 1));
+            blockText = sliceUnits(piece, maxChars - label.length - 1);
             used += label.length + 1 + blockText.length;
           } else {
             // Truncation mid-group leaves the group label spanning the whole
@@ -1672,6 +1752,7 @@ const searchBatchTool: Tool = {
       type: "object",
       properties: {
         queries: { type: "array", items: { type: "string" } },
+        estimatedTokens: ESTIMATED_TOKENS_SCHEMA,
         results: {
           type: "array",
           items: {
@@ -1732,7 +1813,10 @@ const searchBatchTool: Tool = {
     });
     const asked = queries.map((q, i) => `q${i + 1}: "${q}"`).join("\n");
     const page = budget === null ? { items: distinct, blocks } : sliceToFit(budget, distinct, blocks, 2);
-    const text = `${page.items.length} merged result(s) for:\n${asked}\n\n${page.blocks.join("\n\n")}`;
+    const text = withCeiling(
+      `${page.items.length} merged result(s) for:\n${asked}\n\n${page.blocks.join("\n\n")}`,
+      budget,
+    );
     return {
       text,
       structured: {

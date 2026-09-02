@@ -533,10 +533,6 @@ export class EngramEngine {
     );
   }
 
-  getMemoryStore(): MemoryStore {
-    return this.store;
-  }
-
   /** Create the base memory folder scaffold. */
   async ensureScaffold(): Promise<void> {
     await this.store.ensureScaffold();
@@ -947,13 +943,32 @@ export class EngramEngine {
    * index only, so unresolved links (to excluded or non-existent notes) are
    * dropped and never surface.
    */
+  /**
+   * Why a note has no servable passages, or `null` when it has some.
+   *
+   * Three call sites asked this and each wrote its own answer, so the
+   * note-reading tool reported a note whose sections a reviewer RETIRED as "not
+   * indexed" — sending an agent to reindex a note that is indexed and
+   * deliberately empty of servable content. The distinction belongs here: this
+   * is the only layer that knows both what is indexed and what was retired.
+   *
+   * `servable` is what the CALLER counts as usable, which is not the same
+   * question for all three: the reading tools pass their retirement-filtered
+   * chunks, while link-graph navigation passes the unfiltered count, because
+   * retiring a memory's text does not remove the note from the link graph.
+   */
+  unservableNote(notePath: string, servable: number, verb: string): string | null {
+    if (servable > 0) return null;
+    return this.getNoteChunks(notePath).length > 0
+      ? `Every section of "${notePath}" has been superseded, so nothing can be ${verb}.`
+      : `Note "${notePath}" is not indexed (it may be excluded or outside the vault). ` +
+          `Only indexed notes can be ${verb}.`;
+  }
+
   getRelatedNotes(notePath: string): RelatedNotes {
     const normalized = normalizeVaultRelativePath(notePath);
-    if (this.getNoteChunks(normalized).length === 0) {
-      throw new ConfigError(
-        `Note "${normalized}" is not indexed (it may be excluded or outside the vault). Only indexed notes can be navigated.`,
-      );
-    }
+    const refusal = this.unservableNote(normalized, this.getNoteChunks(normalized).length, "navigated");
+    if (refusal) throw new ConfigError(refusal);
     return relatedNotes(normalized, this.index.getChunks());
   }
 
@@ -973,17 +988,8 @@ export class EngramEngine {
   async summarizeNote(notePath: string, opts: { maxSentences?: number } = {}): Promise<NoteSummary> {
     const normalized = normalizeVaultRelativePath(notePath);
     const chunks = await this.getReadableNoteChunks(normalized);
-    if (chunks.length === 0) {
-      // Two different empties, and they need different answers: a note nobody
-      // indexed, and a note whose every section a reviewer retired. Reporting
-      // the second as "not indexed" would send the agent to reindex a note that
-      // is indexed and deliberately empty of servable content.
-      throw new ConfigError(
-        this.getNoteChunks(normalized).length > 0
-          ? `Every section of "${normalized}" has been superseded, so there is nothing to summarize.`
-          : `Note "${normalized}" is not indexed (it may be excluded or outside the vault). Only indexed notes can be summarized.`,
-      );
-    }
+    const refusal = this.unservableNote(normalized, chunks.length, "summarized");
+    if (refusal) throw new ConfigError(refusal);
     const maxSentences = Math.max(
       1,
       Math.min(SUMMARY_MAX_SENTENCES, Math.trunc(opts.maxSentences ?? SUMMARY_DEFAULT_SENTENCES)),
