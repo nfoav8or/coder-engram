@@ -221,5 +221,23 @@ describe("chunkMarkdown", () => {
       // The defaults sit well under the cap, so ordinary output is unchanged.
       expect(chunkMarkdown(text)).toEqual(chunkMarkdown(text, { maxChars: 2000, overlapChars: 150 }));
     });
+
+    it("keeps a note findable when its heading is longer than the window", () => {
+      // The live version of the defect above: with the DEFAULT options, a
+      // heading line longer than `maxChars` left `pieceLimit` at its floor of
+      // 1, so the body was sliced one character per chunk. 420 characters of
+      // body became 360 chunks of ~2.6 KB, and no chunk held a whole word — the
+      // note could not be found by searching for anything written in it. A
+      // pasted line that happens to start with `#` is enough to reach this.
+      const body = "widget ".repeat(60);
+      const shipped = chunkMarkdown(`# ${"A".repeat(5000)}\n${body}`);
+      expect(shipped.length).toBeLessThan(5);
+      expect(shipped.some((c) => c.text.includes("widget"))).toBe(true);
+      // An ordinary heading is untouched — the floor only binds when the
+      // heading has already taken more than half the window.
+      const ordinary = chunkMarkdown(`# Short\n${body}`);
+      expect(ordinary).toHaveLength(1);
+      expect(ordinary[0].text).toContain(body.trim());
+    });
   });
 });

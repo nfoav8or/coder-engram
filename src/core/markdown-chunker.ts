@@ -283,7 +283,19 @@ function windowSection(section: RawSection, maxChars: number, overlapChars: numb
   // come from those lines (for the common single-line blob that span is exact),
   // and expanding paragraphs and blocks in lockstep keeps the 1:1 alignment
   // that per-window line precision depends on.
-  const pieceLimit = Math.max(1, maxChars - (headerLine ? headerLine.length + 2 : 0) - Math.max(0, overlapChars));
+  // The body never gets less than half the window, however long the heading is.
+  // The old floor was 1: a heading longer than `maxChars` (a pasted line that
+  // happens to start with `#` is enough) left nothing for the body, and
+  // `splitLongParagraph` then sliced it one CHARACTER at a time — 420
+  // characters of text became 360 chunks of ~2.6 KB each, and because no chunk
+  // held a whole word, the note's own content could not be found by searching
+  // for anything in it. A window that runs over its budget is a cost; a note
+  // silently absent from its own index is a lie.
+  const headerCost = headerLine ? headerLine.length + 2 : 0;
+  const pieceLimit = Math.max(
+    Math.ceil(maxChars / 2),
+    maxChars - headerCost - Math.max(0, overlapChars),
+  );
   const paragraphs: string[] = [];
   const blocks: Array<{ startIdx: number; endIdx: number }> = [];
   for (let k = 0; k < rawParagraphs.length; k++) {
