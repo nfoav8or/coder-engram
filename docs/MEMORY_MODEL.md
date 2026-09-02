@@ -221,7 +221,7 @@ scan, so a section is retired on exactly the boundaries it was chunked on. A `#`
 comment inside a code block is not a heading, and a closing fence must match the
 marker that opened it.
 
-Three rules keep a retirement from taking more than it named:
+Five rules keep a retirement from taking more than it named, or less:
 
 - **Applied content has its code fences balanced** before it is written. Content
   lands in the file verbatim, and an odd number of fence markers desynchronizes
@@ -238,6 +238,22 @@ Three rules keep a retirement from taking more than it named:
   than one section — possible in a file written before the anchor existed, or
   hand-authored — the apply reports `ambiguous` and retires neither. Removing a
   memory nobody named is the one harm this mechanism must never cause.
+- **Headings inside applied content are nested below the block's own.** A
+  section ends at the next heading of the same or a shallower level, so a plain
+  `## ` line in the content ended the block early: retiring that memory removed
+  the text above the line and left everything below it being served, while the
+  apply reported `recorded` and the reviewer was told the memory was retired.
+  The content's headings are demoted rather than neutralized, so the author's
+  structure survives as structure, nested under the block it was describing.
+  Same shape as the fence rule above, one door further along.
+- **A reference is keyed by its canonical path.** The in-root check normalizes
+  both sides before comparing, so a reference carrying a dot segment
+  (`…/Global/./profile.md`) validated — but the retirement was then recorded
+  under the string as typed, while every consumer builds its key from a real
+  note path. The record existed, reported `recorded`, and matched nothing: the
+  memory kept being served indefinitely. The parser now returns the canonical
+  path, which repairs the reading side of ledgers already on disk, since both
+  sides go through it.
 
 Delete a record from the ledger to bring that memory back. Unlike the rejection
 ledger, this one is **not capped**: dropping the oldest record would silently

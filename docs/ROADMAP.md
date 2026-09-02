@@ -191,6 +191,7 @@ described in full in [CHANGELOG.md](../CHANGELOG.md); the short version:
 
 | Version | Fix |
 | --- | --- |
+| 0.14.1 | Six fixes from the post-0.14.0 review loop, three of them silent. A heading line longer than the chunk window drove the per-piece budget to its floor and the body was sliced one character per chunk, so the note could not be found by searching for anything written in it. An ordinary `## ` line inside applied memory ended a retired section early, and a non-canonical `supersedes` path was keyed as typed while every consumer keyed the real note path — both made superseding report success and keep serving the retired memory. `tokenBudget` could be overrun nearly sixfold by one result, because nothing bounded the heading every result label embeds. Plus a truncation notice added on top of a cap rather than against it, a truncation that could split a surrogate pair, and `get_note_context` calling a fully-retired note "not indexed". The scale benchmark's corpus gained fenced code — it had none, so it could not see the symbol index it was being used to judge. **No `INDEX_VERSION` bump** (deliberate; see the release notes). |
 | 0.9.1 | RTF extraction stopped walking a document one character at a time (19 MB: 1.2 s and 212 MB of heap → 91 ms and 23 MB, byte-identical output). |
 | 0.9.2 | An excluded folder typed in a different case silently indexed the notes it named. |
 | 0.9.3 | `list_projects` was the only tool with no rate limit. |
@@ -238,7 +239,29 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing unreleased — 0.14.0 has just been cut.
+- Nothing unreleased — 0.14.1 has just been cut.
+
+### What 0.14.1 carried
+
+- **A correctness release from the post-0.14.0 review loop**, described in full
+  in [CHANGELOG.md](../CHANGELOG.md). Four defects, three of them silent: a note
+  whose heading line was longer than the chunk window had its body sliced one
+  character per chunk, so the note could not be found by searching for anything
+  written in it; an ordinary `## ` line inside applied memory content ended a
+  retired section early, so superseding reported success and kept serving the
+  memory it had retired; a `supersedes` reference that was not already canonical
+  recorded a retirement that could never match; and `tokenBudget` could be
+  exceeded nearly sixfold by one result, because nothing bounded the heading
+  every result label embeds. Plus the two gaps that let these stay invisible —
+  the benchmark corpus contained no fenced code, so it could not see the symbol
+  index it was being used to judge, and three documents said seven tools return
+  `structuredContent` when the code and its own test said eight.
+- **No `INDEX_VERSION` bump.** Chunking is re-run only for a note whose mtime
+  moved, so a vault that already holds a pathological heading keeps its shredded
+  chunks until that note is edited. Forcing every user to re-index and re-embed
+  one release after 0.14.0 already did, for a pathology this rare, was judged the
+  worse trade — recorded here because it is a deliberate limit on the fix, not an
+  oversight.
 
 ### Agent-capability track (opened in 0.13.0, completed in 0.14.0)
 

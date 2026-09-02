@@ -7,6 +7,126 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-09-01
+
+A correctness release from the post-0.14.0 review loop: four defects, three of
+them silent, plus the documentation and benchmark gaps that let them stay
+invisible. **No `INDEX_VERSION` bump** — see the note under the chunker fix for
+what that means for a vault that already hit it.
+
+### Fixed
+
+- **A note whose heading line was longer than the chunk window lost its own
+  text.** The window budget subtracts the heading — which is repeated into every
+  window — from `maxChars`, and floored the remainder at 1 character. A heading
+  longer than the window (about 1,850 characters with the shipped settings) drove
+  that floor, and the body was then sliced ONE CHARACTER AT A TIME: 420
+  characters of text became 360 chunks of ~2.6 KB each, no chunk held a whole
+  word, and the note could not be found by searching for anything written in it.
+  Nothing bounds a Markdown heading — a pasted line that happens to start with
+  `#` is one — so this needed no unusual note, only an unlucky one. The body now
+  keeps at least half the window whatever the heading costs; a window that runs
+  over its budget is a cost, a note silently absent from its own index is a lie.
+
+  **No index rebuild is forced for this.** Chunking is only re-run for a note
+  whose mtime moved, so a vault that already has a note in this state keeps its
+  shredded chunks until that note is edited. Forcing every user to re-index (and
+  re-embed, at cost) one release after 0.14.0 already did, for a pathology this
+  rare, was the worse trade — but it does mean the repair is "touch the note",
+  not "upgrade".
+
+- **A superseded memory could keep being served while reporting that it was
+  retired.** Applied memory content lands in the file verbatim, and a retired
+  section ends at the next heading of the same or a shallower level — so an
+  ordinary `## ` line inside the content ended the block early. Retiring that
+  memory removed the text above the line and left everything below it in place,
+  while `applyPendingMemory` reported `recorded` and the reviewer was told the
+  memory had been retired. Headings inside applied content are now nested one
+  level below the block's own, which keeps them headings — the author's
+  structure survives, where neutralizing them would have mangled it. This is the
+  same shape as 0.14.0's unbalanced-fence fix, one door further along.
+
+- **A `supersedes` reference that was not already canonical recorded a
+  retirement that could never match.** The reference is validated with a check
+  that normalizes both sides before comparing, so `…/Global/./profile.md` passed
+  — but the key was then built from the string as typed, while every place that
+  key is later consulted builds it from a real note path. The retirement was
+  recorded, reported as `recorded`, and silently matched nothing: search and both
+  context reads kept returning the memory the reviewer had retired. The parsed
+  reference now carries the canonical path, which fixes the reading side of
+  existing ledgers too, since both sides go through the same parser.
+
+- **`tokenBudget` could be exceeded several times over by a single result.**
+  Every result label and structured record embeds the chunk's heading path, and
+  a heading has no length bound; the page-assembly helper deliberately keeps the
+  first result whatever its size, on the understanding that its caller applies a
+  hard ceiling afterwards. The two search tools were the ones that never did. A
+  5,000-character heading answered a 256-token request (896 characters) with
+  5,271 — in the prose and in the structured payload. Heading labels are now
+  bounded where they are built, which fixes `find_symbol` and
+  `find_related_notes` at the same time, and both search tools apply the ceiling
+  their helper's contract asks for.
+
+- **A truncation notice was added on top of the cap instead of counted against
+  it**, so any clipped answer overran its own `maxChars` by the length of the
+  "…(truncated at N chars; …)" line. A cap is a promise about the size of the
+  answer, and it was broken in exactly the case where the caller was nearest to
+  it.
+
+- **A truncated answer could end in half a character.** Every cap lands on an
+  arbitrary offset and an astral character — an emoji, some CJK extensions —
+  occupies two UTF-16 units, so a cut between them left a lone surrogate.
+  That is not valid text: encoding the JSON response to UTF-8 replaces it with
+  U+FFFD, so the caller received a corrupted final character rather than a short
+  one. All five truncation sites now back off a unit rather than split a pair.
+
+- **`get_note_context` reported a note whose every section had been retired as
+  "not indexed"**, sending an agent to reindex a note that is indexed and
+  deliberately empty of servable content. The tool had its own copy of a refusal
+  the engine already knew how to make properly; there is now one answer to "why
+  can this note not be served", and it belongs to the engine, which is the only
+  layer that knows both what is indexed and what was retired.
+
+- **`estimatedTokens` was emitted but never declared.** Both search tools put it
+  in `structuredContent` while their `outputSchema` said nothing about it — a
+  field a client building its call from the published schema cannot rely on,
+  which is the same defect as an enforced-but-undeclared argument.
+
+### Changed
+
+- The scale benchmark's corpus now contains fenced code (about one section in
+  six declares something, giving 10.5% symbol-bearing chunks). It previously
+  contained none at all, so `extractSymbols` returned an empty array for every
+  one of its 14,407 chunks and the benchmark could not see the symbol index it
+  was being used to judge — the fourth instance of this repo's "a probe that
+  cannot detect the thing it is measuring proves nothing" lesson. The run now
+  prints the symbol-bearing proportion, so a corpus that stops exercising the
+  feature says so. **Its numbers are a new baseline** and are not comparable to
+  those recorded for 0.13.0 and 0.14.0, which were measured on the old corpus.
+
+- Documentation said seven tools return `structuredContent`; eight do —
+  `find_symbol` was added after that prose was written and never joined the
+  list, which the code's own pinning test had been asserting correctly all along.
+
+- Housekeeping with no behaviour change: the dead `EngramEngine.getMemoryStore`
+  accessor is gone, the two whole-file context tools share the renderer they had
+  been duplicating, `ToolHandler` stops being exported (nothing outside its file
+  used it), and chunks that declare no symbols share one empty set instead of
+  allocating one each.
+
+### Performance
+
+- **Nothing measurable, reported as such.** 0.14.0 recorded a ~9% lexical query
+  regression and attributed it to the symbol index. Two candidate fixes were
+  written and benchmarked against the shipped code, three runs each, alternating:
+  the difference between them was smaller than the spread within either group, on
+  a corpus with symbols and on one without. Both were reverted rather than
+  shipped as improvements that cannot be shown. What the investigation did
+  establish is the benchmark gap above — the regression was measured on a corpus
+  where the feature never fired, so every millisecond of it was overhead paid by
+  vaults that contain no code at all.
+
+
 ## [0.14.0] — 2026-08-31
 
 > **This release rebuilds your index once, on first load.** `INDEX_VERSION` moved
@@ -118,11 +238,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tools with a structured payload report `estimatedTokens` in it, so an agent can
   calibrate rather than guess.
 
-- **Structured results — citations as fields, not a parsed label.** The seven
+- **Structured results — citations as fields, not a parsed label.** The eight
   tools whose answers are lists now return MCP `structuredContent` beside their
   prose: `search_vault_memory`, `search_batch`, `list_pending_memory`,
-  `list_rejected_memory`, `get_recent_changes`, `resolve_project`, and
-  `list_projects`. A caller that wants to cite a passage reads `path`,
+  `list_rejected_memory`, `get_recent_changes`, `resolve_project`,
+  `list_projects`, and `find_symbol`. A caller that wants to cite a passage reads `path`,
   `startLine`, `endLine` as fields instead of parsing them back out of a
   `path › heading (L4–9, 2026-07-03)` string that was written for a human.
 
@@ -142,7 +262,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same way, and `total` still says how much was left out. Listing entries
   now also name what they claim to replace in the prose, not only in the fields.
 
-  `outputSchema` is declared for exactly those seven and no others, and a test
+  `outputSchema` is declared for exactly those eight and no others, and a test
   pins that both ways: a schema without a payload is a promise the server does
   not keep, and a client that validates would be right to reject the call.
 
@@ -1678,7 +1798,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.14.0...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.14.1...HEAD
+[0.14.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.14.1
 [0.14.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.14.0
 [0.13.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.13.0
 [0.12.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.12.1
