@@ -7,6 +7,225 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-09-04
+
+A privacy release. Four separate ways an exclusion covered less than it read as
+— notes the user had marked to keep away from the agent were indexed and served
+— plus the extraction and error-reporting defects found alongside them.
+
+> **This release rebuilds your index once, on first load.** `INDEX_VERSION` moves
+> from 7 to 8, and the reason is the fix itself: path and folder rules are
+> re-applied to every path on every scan, but tag eligibility needs the file's
+> content, and a note whose mtime has not moved is never re-read. Without the
+> bump the widened tag exclusion would only ever apply to notes edited after the
+> upgrade — which is to say, not to the notes that are already indexed and
+> should not be. The cost is one local re-chunk and **no re-embed**: vectors are
+> keyed by content hash and survive a chunk-index rebuild. Nothing in
+> `Claude Code/Memory/` is touched.
+
+### Fixed
+
+- **A file that an interrupted write left parked is restored at the next
+  load.** Every durable write renames the live file to `X.engram-bak-<stamp>`
+  before renaming the new content into place, so a process killed between
+  those two renames left NO file at `X`: the content was intact but under a
+  name nothing reads, and nothing on startup ever looked for it — the note
+  simply vanished from Obsidian's eyes until a human renamed it back. The plugin
+  now sweeps its own root (`Claude Code/`, the only place it ever writes) before
+  loading the index, and repairs by rule rather than by guess: a backup whose
+  target is missing is restored (the old content — the write was never reported
+  as done); a backup whose target exists is removed, which is what the write's
+  own cleanup does on its success path; a temp file is removed. Backups go
+  before temps, so a crash that left both never has the temp deleted while the
+  target is still missing. Every step is logged and none can throw. Proven
+  against Obsidian's real `adapter.list()` by the e2e run, which plants a
+  parked file before launch and checks it is back afterwards.
+
+- **A discarded proposal came back as ordinary memory.** Discarding copies the
+  proposal's content into `Memory/Inbox/rejected-memory.md`, which is indexed
+  like any other note — so the claim the reviewer had turned down was returned
+  by `search_vault_memory` as an unlabelled hit, and its structured record said
+  `pendingReview: false`, actively asserting it was reviewed memory. That
+  inverts the ledger's whole purpose: it exists so an agent stops re-proposing
+  what was refused, not so a refusal becomes searchable knowledge. `find_symbol`
+  already excluded these files for exactly this reason ("the ledgers hold copies
+  of proposal content, so the whole folder goes") — search was never brought in
+  line. Both ledgers are now excluded from search results; they stay readable
+  through `list_rejected_memory`, which labels them and carries the reviewer's
+  reason. The **pending** file is deliberately still searchable and still
+  labelled `[PENDING REVIEW]`, because an agent seeing its own proposals is the
+  feature.
+
+- **An append could overwrite the file it was appending to.** Obsidian's
+  `append` needs the file to exist, so the adapter writes a missing one
+  instead — a check-then-act. Two concurrent appends to a file that did not
+  exist yet both saw `exists() === false` and both took the write path, so the
+  second silently replaced the first. An append that overwrites is the one
+  thing an append must never do, and memory files and the review inbox are
+  append-only by design. Reachable with no lock of its own from `directWrite`'s
+  append-only branch and from ending a session note. Appends are now serialized
+  process-wide, and `directWrite`'s read-modify-write branch takes the same lock
+  the rest of the memory writer already used — two concurrent direct writes each
+  read the same "current" content and the later one discarded the earlier entry,
+  with both callers told it had succeeded.
+
+- **The DNS-rebinding guard now checks the Host header against the bound
+  address in every mode.** Any loopback spelling (`localhost`, `127.0.0.1`,
+  `::1`) was accepted whatever the server was bound to, so a server bound to a
+  LAN address under `allowNonLocalhost` passed `Host: localhost` — the one
+  check whose purpose is "must name the address we are bound to" passed a
+  header naming something else. Bounded impact, because a non-loopback bind
+  always requires a token and that check runs next; but it removed a defence
+  layer in exactly the mode where it matters, and it contradicted what
+  SECURITY.md said happens. A loopback bind still accepts every loopback
+  spelling, since it is reached by all of them.
+
+- **A project name is now made safe by the function that says it does.**
+  `sanitizeProjectName` turns an agent-supplied name into a folder under the
+  projects root, and its contract is "a safe single-segment folder name" — but
+  it left the work to the layer below. It now NFC-normalizes (macOS hands back
+  NFD for what was typed as NFC, and the two spellings made two visually
+  identical project folders), strips control and format characters (a NUL was
+  caught one layer down; a right-to-left override or a zero-width joiner reached
+  the folder name, where it spoofs the file explorer), refuses Windows device
+  names (`CON`, `NUL`, `COM1`…, which no folder can carry), and bounds the name
+  to 255 UTF-8 bytes — the MCP boundary's 200 UTF-16 units allowed 800 bytes of
+  astral text, which surfaced as a raw OS error rather than a validation one.
+  Case is deliberately kept: lookup already folds it, and folding it here would
+  rename every existing project folder on upgrade for no gain.
+
+- **A memory file that cannot be read now says so, where the agent can see it.**
+  A missing file and an unreadable one — permissions, a disk error, corruption —
+  both collapsed to nothing, so `get_project_context` rendered a read error
+  exactly like "nothing recorded yet", with the only explanation in a log line
+  the agent never sees. The part is returned with a visible marker naming the
+  file and the (path-redacted) reason, so a reader learns that real content is
+  being hidden, and which file to look at.
+
+- **The embedding provider factory could throw from the one function documented
+  as never throwing.** Optional chaining guards `null` and `undefined` but not
+  the wrong type, so a non-string endpoint, model or key made
+  `config.endpoint?.trim()` raise a `TypeError` instead of degrading to lexical.
+  Not reachable through the plugin today — `migrateSettings` coerces those
+  fields first — but the point of a never-throws boundary is that a caller does
+  not have to know that.
+
+- **Four ways an exclusion silently covered less than it said.** Each looked
+  correct in the settings and quietly matched fewer notes than it named, which
+  is this project's oldest and most-repeated bug shape.
+
+  - A path pattern written with a **leading `/`** matched nothing at all.
+    `/Private/*` — the most natural spelling of "this top-level folder" —
+    compiled that slash as a literal, and a vault-relative path never begins
+    with one. The same pattern without the slash worked, so the failure looked
+    like a typo in the note rather than in the filter.
+  - **`**` required at least one directory on each side.** `Private/**/*.md`
+    therefore covered everything under `Private` *except* the notes sitting
+    directly in it, and `**/secret.md` missed a `secret.md` at the vault root.
+    Every other globstar implementation matches zero directories too, so the
+    pattern read as covering exactly what it did not.
+  - **A `tags:` flow sequence that wrapped onto a second line lost every tag
+    after the first.** `tags: [private,` / `  secret]` recorded `private` and
+    dropped `secret`, so a note excluded by `secret` was indexed and served.
+    YAML allows the wrap and hand-editing produces it readily.
+  - **Excluding a tag did not exclude its children.** `#private/secret` stayed
+    indexed while `private` was on the exclusion list. This one is a deliberate
+    widening rather than a straightforward defect: for a privacy filter the safe
+    reading of an ambiguous configuration is the broader one, and it is what
+    Obsidian's own tag search does. **If you exclude a tag that has children,
+    notes carrying those children leave the index on the next refresh.**
+
+- **An error message could disclose the vault's absolute path.** The redaction
+  recognized a bare path only after start-of-string, whitespace, `(`, `[` or
+  `<` — an allowlist that existed to keep it off the `//` in `https://`, but
+  which excluded every other separator a real host error uses. `error:/home/u/…`,
+  `path=/home/u/…`, `a,/home/u/…`, a mismatched-quote `'/home/u/…"` and a
+  `file://` URI all reached the MCP client with the account name and the vault's
+  real folder name in them. URLs are now matched explicitly and kept — except
+  `file://`, which names a local path — which lets the bare form accept any
+  position, while still refusing to begin immediately after a path character so
+  a vault-relative `Notes/private.md` is never mistaken for an absolute one.
+
+- **Word's own punctuation was extracted as invisible control characters.** In
+  RTF, `\'xx` carries a BYTE, and treating it as a code point is right below
+  0x80 and at or above 0xA0 — but 0x80-0x9F is exactly where CP1252 keeps the
+  characters Word's autocorrect produces by default. Curly quotes, en and em
+  dash, ellipsis and bullet all decoded to C1 control characters. Worse than a
+  wrong glyph: `it\'92s` became `it<U+0092>s`, and since the tokenizer splits on
+  anything that is not a letter or a number, the word was indexed as `it` and
+  `s` — the note could not be found by searching for a word plainly written in
+  it.
+
+- **A malformed `\bin` count silently truncated an RTF document.** `parseInt` of
+  a twenty-digit run is 1e20; adding it to the scan position exceeded any finite
+  offset and ended the scan there, dropping every remaining word. A declared
+  length longer than the input that remains cannot be honest, so it is no longer
+  believed.
+
+- **One unreadable slide discarded a whole presentation.** The per-slide and
+  per-sheet reads sat inside a single outer `try`, so a failure partway through
+  — most realistically the archive's shared inflate budget draining on a large
+  deck — returned nothing for the entire document. A 40-slide deck then indexed
+  as text-free, indistinguishable from an empty or corrupt one, and because that
+  `catch` degrades to null nothing was logged either. What was read is kept, and
+  the result says where extraction stopped.
+
+- **An unrecognized embeddings cache discarded every vector in silence.** Every
+  other failure branch on that load path logs; this one did not, so on the
+  single-file layout one unrecognized entry re-embedded the whole vault against
+  a possibly paid provider with nothing anywhere explaining why.
+
+### Performance
+
+- **A sharded embeddings cache loads in one concurrent pass.** The sharded
+  branch of `EmbeddingStore.load()` awaited an `exists` and a `read` per shard
+  in turn — 512 sequential round trips on the startup path of every vault large
+  enough to be sharded (over 20,000 vectors) — while `IndexManager.load` next
+  door already issued all of its reads at once. Measured with a fixed 2 ms per
+  call, since the in-memory adapter has no latency of its own: **1.1 s against
+  12 ms**. Nothing there depends on order — vectors merge by id, and a missing
+  or corrupt shard still drops only its own vectors and says so.
+
+- **Summarization stopped re-deciding what it had already decided.** MMR
+  selection recomputed each candidate's similarity to every already-selected
+  sentence on every round — n×want²/2 cosine operations where n×want do, because
+  a maximum is associative and the only new information a round brings is the
+  sentence it just selected. Same picks, same order, same tie-breaks, pinned by
+  a test that checks the output against the original rule written out longhand:
+  **84 ms to 12 ms** over 1,000 sentences, 228 ms to 38 ms over 3,000.
+
+- **Measured and declined:** an all-unchanged refresh rebuilds a per-note chunk
+  map it then discards, which reads like waste on the hot path (every vault edit,
+  behind a 2.5 s debounce). Measured at 9,000 chunks it costs **2.1 ms** — about
+  10 ms at 44,000 — so restructuring the refresh path was not worth the risk to
+  a correctness-critical routine. Recorded so the next reader does not re-derive
+  it.
+
+### Changed
+
+- **The control panel now says which retrieval mode is actually serving
+  results, and whether it can.** A user who configured an embedding provider had
+  no persistent place to see that it took effect — the only signal was a Notice
+  after the embedding pass, gone in seconds — and a store with no vectors answers
+  every query lexically whatever the mode says. The panel shows both, so "hybrid
+  (no vectors — serving lexical)" is a
+  thing you can read rather than infer. The panel's Reindex and Restart buttons
+  also stopped turning a failure into an unhandled rejection nobody saw; they
+  report it in a Notice like every other UI path.
+
+- Transparency and housekeeping with no behaviour change: the index load at
+  plugin start was the only async chain in `main.ts` without a `.catch()` (both
+  loaders degrade internally rather than rejecting, so it is unreachable today,
+  but plugin load is the worst place to learn otherwise); the settings migration
+  ladder documented v1 through v3 while the schema is at v7, so it read as if
+  nothing had changed in four versions — every bump is now listed, with the one
+  that carries a real data transform called out; and the `skipped` field on the embedding
+  pass result is gone (documented as "provider unavailable", never set to true,
+  read by nothing — that state is decided a layer up), and the stored
+  `noteMtimes` shape check now rejects an array explicitly rather than relying on
+  its keys never matching a note path.
+
+
 ## [0.14.1] — 2026-09-01
 
 A correctness release from the post-0.14.0 review loop: four defects, three of
@@ -1798,7 +2017,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.14.1...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.15.0...HEAD
+[0.15.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.15.0
 [0.14.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.14.1
 [0.14.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.14.0
 [0.13.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.13.0

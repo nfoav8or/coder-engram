@@ -277,6 +277,18 @@ agent cannot tell "you rejected this" from "nobody has looked yet" — so its on
 rational move was to keep proposing, and the same facts came back session after
 session.
 
+**The ledger is not a search result.** It lives in the vault and is indexed like
+any other note, so until this was fixed the refused claim came back through
+`search_vault_memory` as an ordinary unlabelled hit — and its structured record
+reported `pendingReview: false`, asserting it was reviewed memory. That inverts
+the point of the whole mechanism: the ledger exists so an agent stops
+re-proposing what was refused, not so a refusal becomes searchable knowledge.
+Both ledgers are excluded from search results and are read through
+`list_rejected_memory`, which labels them and carries your reason. The
+**pending** file is deliberately different: it stays searchable and stays
+labelled `[PENDING REVIEW]`, because an agent seeing its own proposals is the
+feature `list_pending_memory` was added for.
+
 Records reuse the pending-block format with a `## Rejected Memory: ` heading, a
 `Reason:` field and `Status: rejected`, so there is still exactly one producer of
 the on-disk shape and the ledger round-trips through the same parser. Content

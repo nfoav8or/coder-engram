@@ -13,7 +13,7 @@ Most Obsidian ↔ AI plugins are either a chat panel or a bridge that hands an a
 - **Hardened by default.** Server off by default, localhost-only, constant-time token auth, DNS-rebinding guards, a curated tool surface, and no generic file access or full-vault dump.
 - **Local-first, no lock-in.** Markdown is the source of truth; embeddings are opt-in (default is fully-offline lexical search); no cloud key for the default experience.
 
-> **Status:** 0.14.1. **This release does not rebuild your index** — 0.14.0's rebuild already happened, and nothing here changes what a chunk is for an ordinary note. Your memory under `Claude Code/Memory/` is untouched; `Index/` is a rebuildable cache. The local server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too — the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. Attachment indexing is likewise opt-in, and local for every format except image text — that one delegates OCR to the Text Extractor plugin, which fetches its language data on first use (see [Network use](#network-use)). See [CHANGELOG.md](CHANGELOG.md) for release history and [docs/ROADMAP.md](docs/ROADMAP.md) for what is still deferred.
+> **Status:** 0.15.0. **Upgrading rebuilds the index once** — excluding a tag now excludes its children, and tag eligibility needs a note's content, which an incremental refresh never re-reads for an unchanged note; only a rebuild delivers the fix to notes already indexed. It is a local re-chunk with no re-embed. Your memory under `Claude Code/Memory/` is untouched; `Index/` is a rebuildable cache. The local server is **disabled by default** and binds to `127.0.0.1`. Vector retrieval is **disabled by default** too — the embedding provider defaults to `none`, so search stays fully offline and lexical until you point it at a local Ollama or an OpenAI-compatible endpoint. Attachment indexing is likewise opt-in, and local for every format except image text — that one delegates OCR to the Text Extractor plugin, which fetches its language data on first use (see [Network use](#network-use)). See [CHANGELOG.md](CHANGELOG.md) for release history and [docs/ROADMAP.md](docs/ROADMAP.md) for what is still deferred.
 
 ## What Coder Engram does
 
@@ -225,15 +225,15 @@ Settings live under **Settings → Coder Engram**. Key settings and their safe d
 | Memory root | `Claude Code` | Vault-relative folder for all plugin-managed memory. Must stay inside the vault. |
 | Included folders | *(empty)* | Allowlist; empty means the whole vault. |
 | Excluded folders | *(empty)* | Folders to skip. Matched on whole path segments, ignoring case and Unicode form (so an accented name typed here matches the same name stored decomposed by macOS). |
-| Excluded tags | *(empty)* | Notes with any of these tags are never indexed. Matched ignoring case and Unicode form, in frontmatter and inline `#tags`, in any script. |
-| Excluded path patterns | *(empty)* | Glob (`*`, `**`) or substring patterns for sensitive notes. |
+| Excluded tags | *(empty)* | Notes with any of these tags are never indexed. Matched ignoring case and Unicode form, in frontmatter and inline `#tags`, in any script. **Excluding a tag also excludes its children** — `private` covers `#private/secret` — as Obsidian's own tag search does. |
+| Excluded path patterns | *(empty)* | Glob (`*` within a segment, `**` across zero or more directories) or substring patterns for sensitive notes. A leading `/` is accepted and means the vault root. |
 | Index attachments | `false` | Extract and index text from PDFs (Obsidian's bundled PDF engine), Office documents (docx/pptx/xlsx, odt/odp/ods, rtf — dependency-free extraction), plain text (txt/csv), and Canvas cards, locally. Exclusions apply; extracted text is searchable/readable over the local server like any note. |
 | Index text inside images | `false` | Reads text out of PNG/JPG/WEBP/BMP attachments by delegating to the [Text Extractor](https://github.com/scambier/obsidian-text-extractor) plugin; with that plugin absent, nothing happens. **The one attachment path that can cause network activity** — Text Extractor downloads its OCR language data on first use. Requires **Index attachments**. |
 | Auto-index on file change | `false` | Debounced (~2.5s) refresh when notes change. |
 | Default project | *(empty)* | Used by project-context and add-to-project commands. |
 | Embedding provider | `none` | Lexical BM25 always works with `none`. `ollama` and `openai-compatible` enable vector/hybrid retrieval; `mock` is a deterministic dev provider. |
 | Embedding model | *(empty)* | Model name for the selected provider (required for `ollama` and `openai-compatible`). |
-| Retrieval mode | `hybrid` | `lexical`, `hybrid`, or `vector`. Forced to lexical whenever the provider is `none` or unavailable. |
+| Retrieval mode | `hybrid` | `lexical`, `hybrid`, or `vector`. Forced to lexical whenever the provider is `none` or unavailable. The control panel shows the mode actually in effect, and says so when a configured provider has no vectors yet. |
 | Memory ageing (half-life in days) | `0` (off) | Ranks older **memory** lower, halving its weight every N days. Ordinary notes are untouched, and the weight is floored so an old memory drops down the list but never becomes unfindable. Clamped to 0–3650. |
 | Embedding endpoint | *(empty)* | Base URL for the provider. Ollama defaults to `http://127.0.0.1:11434`; OpenAI-compatible needs the full base URL including any version prefix. |
 | Embedding API key | *(empty)* | Secret bearer key for OpenAI-compatible endpoints. Stored locally, sent only in the `Authorization` header, and never logged. |
@@ -363,7 +363,25 @@ Every other attachment path — PDF, Office, RTF, plain text, Canvas — runs en
 - **0.11.4:** a review-and-hardening release with no user-visible behaviour change. Two guards were made to fail closed: the local server's DNS-rebinding check compared the `Host` hostname against the bound host without requiring either to be non-empty, and a whitespace-only configured host survived its `127.0.0.1` fallback to bind **every interface** — the exact exposure the non-localhost opt-in exists to gate. Neither was practically attackable (both need that opt-in, which also forces a token), but a guard reading two empty strings as agreement is the wrong shape. Retrieval and summarization now hold their own vector invariants instead of trusting the caller: a stored cosine norm is recomputed rather than read back on faith, where a desynced one would have inflated a score past 1 and outranked every honest match. Property fuzzing closed four contract gaps — one reachable, where `add_memory` with a blank related path wrote a malformed bullet the parser then silently dropped. Both remaining findings from Obsidian's review scan are closed at the class level: every rethrow now throws a provable `Error`, and all nine timer sites schedule through a host-aware helper. **No index rebuild — upgrading changes nothing about your data.**
 - **0.12.0:** **the minimum Obsidian version is now 1.13.0.** Obsidian will not offer this release to an older app — but nobody is stranded: `versions.json` still maps every release up to 0.11.4 to 1.7.2, so an app below 1.13 is offered 0.11.4 and keeps a fully working plugin, it just stops getting new features. On 1.13 or later you need do nothing. Raising the floor let the imperative settings tab go — about 450 lines that duplicated every settings row, and which Obsidian has ignored since 1.13 anyway. Diffing the two paths before deleting either turned up a real gap: the sentence stating that nothing is written outside the vault existed only in the imperative tab, so **1.13+ users had already stopped seeing it**; it is restored. **No index rebuild.**
 - **0.12.1:** a security fix for **Excluded path patterns**. A pattern past the safety caps (256 characters or 12 wildcards) is not compiled to a regular expression, because the wildcards a glob expands to backtrack catastrophically once enough of them combine. The fallback stripped the wildcards and matched what was left, which turned `Private/**/*.md` into the literal `Private/.md` — a string essentially no path contains — so **the exclusion matched nothing and the notes it was meant to hide were indexed and reachable over the local server**, with nothing logged. The fallback now requires the pattern's literal fragments to appear in order, which errs toward excluding *more* rather than less, and says so in the log. If you use a path pattern with many wildcards, check the notes it covers after upgrading. **No index rebuild — the first refresh drops anything that should not have been indexed.**
-- **0.14.1 (current):** a correctness release from the review loop that followed
+- **0.15.0 (current):** a privacy and data-safety release from four review
+  cycles. Four more ways an exclusion covered less than it read as — a leading
+  `/` in a path pattern matching nothing, `**` refusing to match zero
+  directories, a wrapped `tags:` list losing every tag after the first line,
+  and a tag exclusion not covering its children (now it does, as Obsidian's own
+  tag search does; **rebuilds the index once** to reach notes already indexed).
+  A discarded proposal no longer comes back through search as unlabelled memory.
+  Two ways an append could overwrite are closed, and a file that an interrupted
+  write left parked under a backup name is restored at the next load — proven on
+  real Obsidian by the e2e run. Error messages stop disclosing the vault's
+  absolute path after a separator the old check did not name; the rebinding
+  guard checks the Host header against the bound address in every mode; project
+  names are made safe at the boundary that promises it. Word's punctuation in
+  RTF stopped decoding to invisible characters that broke the words around them,
+  and one unreadable slide no longer discards a whole deck. Summarization is
+  6× faster with identical output, and a sharded embeddings cache loads in one
+  concurrent pass. The control panel shows the retrieval mode actually serving
+  results.
+- **0.14.1:** a correctness release from the review loop that followed
   0.14.0. Four defects, three of them silent. A note whose heading line was
   longer than the chunk window had its body sliced one character at a time, so
   the note could not be found by searching for anything written in it — nothing

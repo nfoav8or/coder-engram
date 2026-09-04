@@ -191,6 +191,7 @@ described in full in [CHANGELOG.md](../CHANGELOG.md); the short version:
 
 | Version | Fix |
 | --- | --- |
+| 0.15.0 | **Privacy and data safety, from four review cycles.** Four more exclusion fail-opens (leading `/` in a path pattern, `**` needing a directory on each side, a wrapped `tags:` list, a tag not covering its children — the last a deliberate widening, matching Obsidian, and the reason `INDEX_VERSION` is 8). A discarded proposal came back through search as unlabelled memory. Two append-overwrite races. An interrupted write's parked file is restored at load, proven on real Obsidian. Path redaction leaked after any separator the allowlist did not name; the Host check ignored the bound address for loopback spellings; project names are now NFC, stripped of control/format characters, bounded, and never a Windows device name. RTF CP1252, a malformed `\\bin`, one bad slide discarding a deck, a silent embeddings-cache discard, MMR 6× faster with identical output, concurrent shard load, retrieval mode on the control panel. Measured and declined: three query-path micro-optimizations and the all-unchanged refresh (2.1 ms at 9k chunks). |
 | 0.14.1 | Six fixes from the post-0.14.0 review loop, three of them silent. A heading line longer than the chunk window drove the per-piece budget to its floor and the body was sliced one character per chunk, so the note could not be found by searching for anything written in it. An ordinary `## ` line inside applied memory ended a retired section early, and a non-canonical `supersedes` path was keyed as typed while every consumer keyed the real note path — both made superseding report success and keep serving the retired memory. `tokenBudget` could be overrun nearly sixfold by one result, because nothing bounded the heading every result label embeds. Plus a truncation notice added on top of a cap rather than against it, a truncation that could split a surrogate pair, and `get_note_context` calling a fully-retired note "not indexed". The scale benchmark's corpus gained fenced code — it had none, so it could not see the symbol index it was being used to judge. **No `INDEX_VERSION` bump** (deliberate; see the release notes). |
 | 0.9.1 | RTF extraction stopped walking a document one character at a time (19 MB: 1.2 s and 212 MB of heap → 91 ms and 23 MB, byte-identical output). |
 | 0.9.2 | An excluded folder typed in a different case silently indexed the notes it named. |
@@ -239,7 +240,71 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing unreleased — 0.14.1 has just been cut.
+- Nothing unreleased — 0.15.0 has just been cut.
+
+### What 0.15.0 carried
+
+- **A privacy release**, described in full in [CHANGELOG.md](../CHANGELOG.md).
+  Four more ways an exclusion covered less than it read as — a leading `/` in a
+  path pattern matching nothing, `**` refusing to match zero directories, a
+  wrapped `tags:` flow sequence losing every tag after the first line, and a tag
+  exclusion not covering that tag's children. That last one is a deliberate
+  widening and the only user-visible semantic change: notes carrying a child of
+  an excluded tag leave the index on the next refresh.
+- **A discarded proposal came back as ordinary memory.** The rejection ledger
+  is indexed like any other note, so the claim the reviewer turned down was
+  returned by search as an unlabelled hit that even reported
+  `pendingReview: false`. `find_symbol` had already excluded the ledgers for
+  this reason; search had not. Both are excluded now, and the pending file stays
+  searchable and labelled, which is the feature.
+- **An append could overwrite.** The adapter's append writes a missing file
+  instead, and two concurrent appends to a not-yet-existing file both took that
+  path. Appends are serialized; the one memory-write path doing an unlocked
+  read-modify-write now takes the shared lock.
+- **An interrupted write is recovered at load.** The crash window between
+  the write path's two renames left a file parked under a backup name with
+  nothing at its own path, and no sweep existed. Startup now repairs it under
+  the plugin root by rule (restore a backup whose target is missing; remove one
+  whose target exists; remove temps), proven against the real host `list()` by
+  an e2e scenario that plants a parked file before launch.
+- **The DNS-rebinding guard checks Host against the bound address in every
+  mode.** A loopback-shaped Host was accepted whatever the server was bound to,
+  so a LAN bind under `allowNonLocalhost` passed `Host: localhost`. Bounded —
+  the token check runs next — but it was the one defence layer removed in the
+  one mode where it matters, and it contradicted SECURITY.md.
+- **A sharded embeddings cache loads concurrently**, as the chunk index
+  already did: 512 sequential round trips became one pass (1.1 s to 12 ms at a
+  fixed 2 ms per call). The control panel now shows the retrieval mode actually
+  serving results and whether vectors exist to serve it.
+- **Project names are made safe at the boundary that promises it** — NFC,
+  control/format characters stripped, Windows device names refused, 255-byte
+  bound — and a memory file that cannot be read is reported to the agent as
+  such rather than rendered like an empty one.
+- Recorded, not done: memory files are read whole before the output cap
+  applies (they grow by append, so a very large one is read in full on every
+  context call — bounding it needs a partial-read adapter API); and the MCP
+  helpers cap lengths in UTF-16 units, which only ever tightens a limit for
+  astral text.
+- Alongside them: the embedding-provider factory could throw from the function
+  documented as never throwing (a non-string endpoint met optional chaining); an
+  error message could still disclose the vault's absolute
+  path after any separator the old allowlist did not name; RTF decoded Word's
+  default punctuation to invisible control characters, breaking the words it sat
+  inside; a malformed `\bin` count truncated an RTF document; one unreadable
+  slide discarded a whole presentation; and an unrecognized embeddings cache
+  discarded every vector without a word.
+- **`INDEX_VERSION` 7 → 8, and the reason is the fix itself.** Path and folder
+  rules are re-applied to every path on every scan, so those three fixes reach an
+  existing index on the first refresh — verified, the same reasoning 0.12.1
+  recorded. Tag eligibility is different: it needs the file's CONTENT, and a note
+  whose mtime has not moved is never re-read. Verified too, by scanning with the
+  note's own mtime already known: `#private/secret` came back unchanged, so the
+  widened exclusion would never have reached the vaults that already have such a
+  note. A privacy fix that only applies to notes edited after the upgrade is not
+  delivered. The cost is one local re-chunk and **no re-embed** — vectors are
+  keyed by content hash and survive a chunk-index rebuild. The RTF and office
+  extraction fixes still reach a note only when its mtime moves, since extraction
+  is cached separately; touching the attachment re-extracts it.
 
 ### What 0.14.1 carried
 
