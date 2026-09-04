@@ -7,7 +7,9 @@
 
 import { App, normalizePath } from "obsidian";
 import { VaultAdapter, VaultFile, assertRelative } from "./vault-adapter";
+import { joinVaultPath } from "../utils/paths";
 import { asError, toMessage } from "../utils/errors";
+import { Logger, NULL_LOGGER } from "../utils/logger";
 
 let tempCounter = 0;
 
@@ -79,7 +81,34 @@ export class ObsidianVaultAdapter implements VaultAdapter {
     if (backup) await adapter.remove(backup).catch(() => undefined);
   }
 
+  /**
+   * Appends are serialized against each other, process-wide.
+   *
+   * The create branch below is a check-then-act: Obsidian's `append` needs the
+   * file to exist, so a missing one is written instead. Two concurrent appends
+   * to a file that did not exist YET both saw `exists() === false` and both
+   * took the write path, so the second silently replaced the first — an append
+   * that overwrote, which is the one thing an append must never do, and memory
+   * files and the review inbox are append-only by design. `directWrite`'s
+   * append-only branch and `endSession` both reach here with no lock of their
+   * own.
+   *
+   * One chain rather than one per path: appends are small, infrequent, and
+   * always the plugin's own writes, so the contention this gives up is not
+   * worth a map of chains to leak. Same shape as the engine's index chain.
+   */
+  private appendChain: Promise<unknown> = Promise.resolve();
+
   async append(path: string, content: string): Promise<void> {
+    const run = this.appendChain.then(
+      () => this.appendNow(path, content),
+      () => this.appendNow(path, content),
+    );
+    this.appendChain = run.catch(() => undefined);
+    return run;
+  }
+
+  private async appendNow(path: string, content: string): Promise<void> {
     assertRelative(path);
     const target = normalizePath(path);
     await this.ensureParentFolder(target);
@@ -89,6 +118,98 @@ export class ObsidianVaultAdapter implements VaultAdapter {
     } else {
       await adapter.write(target, content);
     }
+  }
+
+  /**
+   * Repair what an interrupted `write` left behind, under `root` only.
+   *
+   * `write` parks the live file at `X.engram-bak-<stamp>` before renaming the
+   * new content into place. A process killed between those two renames leaves
+   * NO file at `X`: the user's content is intact but under a name nothing
+   * reads, and until this existed nothing on startup ever looked for it — the
+   * note simply vanished from Obsidian's eyes until a human renamed it back.
+   *
+   * Three cases, decided per leftover and never by guessing:
+   *   - a backup whose target is MISSING is restored (rename back). This is the
+   *     crash window itself, and restoring the OLD content is the honest
+   *     outcome — the write was never reported as having succeeded.
+   *   - a backup whose target EXISTS is removed: the write completed and only
+   *     the best-effort cleanup at its end was lost. This is exactly what that
+   *     cleanup does on the success path.
+   *   - a temp file is removed. It is either an incomplete write (crash before
+   *     the swap — target untouched) or the completed new content of a write
+   *     whose backup was just restored; either way it is not the file of
+   *     record.
+   * Backups are handled before temps, so a crash that left both never has the
+   * temp deleted while the target is still missing.
+   *
+   * Scoped to the plugin's own root because that is the only place `write`
+   * ever lands, and every step is wrapped: a repair that fails is logged and
+   * skipped, never thrown — this runs at plugin load, where a throw would
+   * cost the user the plugin. `list()` entries are accepted as either full
+   * paths or bare names, since the host API documents neither.
+   */
+  async recoverInterruptedWrites(
+    root: string,
+    logger: Logger = NULL_LOGGER,
+  ): Promise<{ restored: string[]; removed: string[] }> {
+    assertRelative(root);
+    const adapter = this.app.vault.adapter;
+    const restored: string[] = [];
+    const removed: string[] = [];
+    const leftovers: Array<{ path: string; target: string; kind: "tmp" | "bak" }> = [];
+    // A fresh vault has no root yet: nothing to repair, and not a warning —
+    // listing a missing folder throws, and that would have logged "could not
+    // list" on every first run.
+    if (!(await adapter.exists(normalizePath(root)))) return { restored, removed };
+
+    const walk = async (folder: string): Promise<void> => {
+      let listing: { files: string[]; folders: string[] };
+      try {
+        listing = await adapter.list(folder);
+      } catch (err) {
+        logger.warn("Recovery could not list a folder", { folder, error: toMessage(err) });
+        return;
+      }
+      // The host documents neither shape. An entry that already carries a
+      // separator is a full path (everything under the root has one); a bare
+      // name is joined through the same choke-point every other vault path
+      // passes, never by concatenation.
+      const inFolder = (entry: string) => (entry.includes("/") ? entry : joinVaultPath(folder, entry));
+      for (const f of listing.files) {
+        const p = inFolder(f);
+        const m = /^(.+)\.engram-(tmp|bak)-\d+-\d+$/.exec(p);
+        if (m) leftovers.push({ path: p, target: m[1], kind: m[2] as "tmp" | "bak" });
+      }
+      for (const sub of listing.folders) await walk(inFolder(sub));
+    };
+    await walk(normalizePath(root));
+
+    const attempt = async (what: string, path: string, op: () => Promise<void>, into: string[]) => {
+      try {
+        await op();
+        into.push(path);
+      } catch (err) {
+        logger.warn(`Recovery could not ${what}`, { path, error: toMessage(err) });
+      }
+    };
+    // Newest first, so if a target has more than one backup the most recent
+    // is the one restored and the older ones are the ones removed.
+    const baks = leftovers.filter((l) => l.kind === "bak").sort((a, b) => b.path.localeCompare(a.path));
+    for (const bak of baks) {
+      if (await adapter.exists(bak.target)) {
+        await attempt("remove a stale backup", bak.path, () => adapter.remove(bak.path), removed);
+      } else {
+        await attempt("restore a backup", bak.path, () => adapter.rename(bak.path, bak.target), restored);
+      }
+    }
+    for (const tmp of leftovers.filter((l) => l.kind === "tmp")) {
+      await attempt("remove a temp file", tmp.path, () => adapter.remove(tmp.path), removed);
+    }
+    if (restored.length > 0 || removed.length > 0) {
+      logger.warn("Recovered from an interrupted write", { restored, removed });
+    }
+    return { restored, removed };
   }
 
   async ensureFolder(path: string): Promise<void> {

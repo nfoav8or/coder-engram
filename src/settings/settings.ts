@@ -266,6 +266,19 @@ export function migrateSettings(raw: unknown): EngramSettings {
   // v2 -> v3: added embeddingEndpoint / embeddingApiKey / embeddingBatchSize /
   //   retrievalMode for M3 vector + hybrid retrieval. All default safely (empty
   //   config => provider degrades to lexical), so absent fields need no transform.
+  // v3 -> v4: added indexAttachments for opt-in PDF text. Defaults off.
+  // v4 -> v5: context savings became opt-in rather than always-on — a single
+  //   `contextSavings` boolean, defaulting to false.
+  // v5 -> v6: that boolean became one toggle per reduction. This is the only
+  //   bump with a real DATA transform, and it is the reason `legacyContextSavings`
+  //   exists: a stored `true`/`false` is spread across the new per-key object
+  //   rather than dropped, so a user's existing choice survives the reshape.
+  // v6 -> v7: added memoryDecayHalfLifeDays. Defaults to 0, which is off.
+  //
+  // Every bump but v5 -> v6 is "a new field with a safe default", which needs no
+  // transform because the merge above applies the default whenever the field is
+  // absent. Listed anyway: a ladder that stops four versions back reads as if
+  // nothing has changed since, and the next person has to git-log it to find out.
   merged.schemaVersion = SETTINGS_SCHEMA_VERSION;
   return merged;
 }

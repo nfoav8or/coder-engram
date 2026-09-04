@@ -444,14 +444,22 @@ export class MemoryWriter {
       throw new PathSecurityError(`Direct write target escapes the memory root: "${subpath}"`);
     }
     const block = formatMemoryEntry(entry);
-    if (this.options.appendOnly) {
-      await this.adapter.append(target, `\n${block}`);
-    } else if (await this.adapter.exists(target)) {
-      const current = await this.adapter.read(target);
-      await this.adapter.write(target, `${current}\n${block}`);
-    } else {
-      await this.adapter.write(target, block);
-    }
+    // Serialized like every other memory write in this class. The non-append
+    // branch is a read-modify-write, so two concurrent direct writes to one
+    // file each read the same "current" content and the later write discarded
+    // the earlier entry — silently, with both callers told it succeeded. The
+    // append branch is serialized inside the adapter as well; this covers the
+    // read-then-write the adapter cannot see.
+    await this.inboxLock.run(async () => {
+      if (this.options.appendOnly) {
+        await this.adapter.append(target, `\n${block}`);
+      } else if (await this.adapter.exists(target)) {
+        const current = await this.adapter.read(target);
+        await this.adapter.write(target, `${current}\n${block}`);
+      } else {
+        await this.adapter.write(target, block);
+      }
+    });
     this.logger.info("Direct memory write", { target, type: entry.type });
     return target;
   }

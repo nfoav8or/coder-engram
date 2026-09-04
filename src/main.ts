@@ -46,6 +46,8 @@ export default class EngramPlugin
   settings: EngramSettings = { ...DEFAULT_SETTINGS };
   private logger!: Logger;
   private engine!: EngramEngine;
+  /** Held for write recovery at load; the engine never sees the host type. */
+  private adapter!: ObsidianVaultAdapter;
   private server!: LocalServer;
   private debouncedRefresh!: Debounced<[]>;
   private debouncedConfigRefresh!: Debounced<[]>;
@@ -59,6 +61,7 @@ export default class EngramPlugin
     this.settings = migrateSettings(await this.loadData());
     this.logger = createLogger(() => this.settings.debugLogging, "engram");
     const adapter = new ObsidianVaultAdapter(this.app);
+    this.adapter = adapter;
     this.engine = new EngramEngine(adapter, this.settings, this.logger, undefined, {
       http: new ObsidianHttpClient(),
       extractors: [
@@ -98,9 +101,22 @@ export default class EngramPlugin
 
     // Load an existing index in the background; don't block plugin load.
     this.app.workspace.onLayoutReady(() => {
-      void this.engine.loadIndex().then((loaded) => {
-        if (loaded) this.refreshControlPanel();
-      });
+      // Recovery runs BEFORE the index loads: a shard or memory file parked
+      // under a backup name by an interrupted write has to be back under its
+      // own name before anything reads it, or the load sees it as missing.
+      void this.adapter
+        .recoverInterruptedWrites(this.engine.getPaths().root, this.logger.child("recovery"))
+        .catch((err) => this.logger.warn("Write recovery failed", { error: toMessage(err) }))
+        .then(() => this.engine.loadIndex())
+        .then((loaded) => {
+          if (loaded) this.refreshControlPanel();
+        })
+        // The only async chain at load without one. Both loaders degrade
+        // internally rather than rejecting, so this is unreachable today —
+        // but an unhandled rejection here would surface at plugin load, which
+        // is the worst place to learn about it, and every sibling chain in
+        // this file already catches.
+        .catch((err) => this.logger.warn("Index load failed", { error: toMessage(err) }));
       // Start the local server only if the user has explicitly enabled it.
       void this.syncServer();
     });
@@ -332,12 +348,7 @@ export default class EngramPlugin
       .catch((err) => new Notice(`Could not load project context: ${toMessage(err)}`));
   }
 
-  getStats(): {
-    noteCount: number;
-    chunkCount: number;
-    builtAt: number | null;
-    skippedAttachments: number;
-  } {
+  getStats(): ReturnType<EngramEngine["getIndexStats"]> {
     return this.engine.getIndexStats();
   }
 

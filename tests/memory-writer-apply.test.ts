@@ -129,3 +129,32 @@ describe("MemoryWriter.discardPending", () => {
     expect(await adapter.exists(destination)).toBe(false);
   });
 });
+
+describe("MemoryWriter.directWrite serialization", () => {
+  it("does not lose an entry when two direct writes race the same file", async () => {
+    // The non-append branch is a read-modify-write, and it was the one memory
+    // write in this class that did not take the shared lock. Two concurrent
+    // direct writes to one file each read the same "current" content, so the
+    // later write discarded the earlier entry — silently, with both callers
+    // told it had succeeded.
+    const { adapter, writer } = makeWriter({ appendOnly: false, allowDirectWrites: true });
+    await Promise.all([
+      writer.directWrite("Global/profile.md", entry({ content: "First fact." })),
+      writer.directWrite("Global/profile.md", entry({ content: "Second fact." })),
+    ]);
+    const body = await adapter.read("Claude Code/Global/profile.md");
+    expect(body).toContain("First fact.");
+    expect(body).toContain("Second fact.");
+  });
+
+  it("keeps both entries on the append-only branch too", async () => {
+    const { adapter, writer } = makeWriter({ appendOnly: true, allowDirectWrites: true });
+    await Promise.all([
+      writer.directWrite("Global/profile.md", entry({ content: "Alpha fact." })),
+      writer.directWrite("Global/profile.md", entry({ content: "Beta fact." })),
+    ]);
+    const body = await adapter.read("Claude Code/Global/profile.md");
+    expect(body).toContain("Alpha fact.");
+    expect(body).toContain("Beta fact.");
+  });
+});

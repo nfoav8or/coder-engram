@@ -61,6 +61,15 @@ const udd = path.join(tmp, "udd");
 const pluginDir = path.join(vault, ".obsidian", "plugins", "coder-engram");
 fs.mkdirSync(pluginDir, { recursive: true });
 fs.mkdirSync(path.join(vault, "Notes"), { recursive: true });
+
+// A write interrupted between its two renames leaves the live file parked
+// under a backup name and NOTHING at its own path. Planted before launch so
+// the plugin's startup recovery has to find it through Obsidian's real
+// `adapter.list()` — the one API the unit harness can only fake.
+const parkedDir = path.join(vault, "Claude Code", "Memory", "Global");
+fs.mkdirSync(parkedDir, { recursive: true });
+const PARKED_CONTENT = "# Profile\n\nkea recovered this after a crash\n";
+fs.writeFileSync(path.join(parkedDir, "profile.md.engram-bak-1700000000000-1"), PARKED_CONTENT);
 fs.mkdirSync(udd, { recursive: true });
 for (const f of ["main.js", "manifest.json", "styles.css"]) {
   fs.copyFileSync(path.join(REPO, f), path.join(pluginDir, f));
@@ -640,6 +649,16 @@ try {
   };
   walk(vault);
   check("writes leave no temp or backup files behind", debris.length === 0, debris.join(", "));
+
+  // The backup planted before launch must be back under its own name with its
+  // content intact, and must not have been counted as debris above.
+  const recoveredPath = path.join(parkedDir, "profile.md");
+  const recovered = fs.existsSync(recoveredPath) ? fs.readFileSync(recoveredPath, "utf8") : null;
+  check(
+    "startup recovery restores a file an interrupted write left parked",
+    recovered === PARKED_CONTENT,
+    recovered === null ? "profile.md missing" : `content ${recovered === PARKED_CONTENT ? "intact" : "differs"}`,
+  );
 
   await page.screenshot({ path: path.join(tmp, "search.png") });
 } catch (e) {
