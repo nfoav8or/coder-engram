@@ -4,7 +4,8 @@
  * there is no import cycle with main.ts.
  */
 
-import { ItemView, WorkspaceLeaf } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
+import { toMessage } from "../utils/errors";
 
 export const CONTROL_PANEL_VIEW_TYPE = "engram-control-panel";
 
@@ -20,6 +21,8 @@ export interface ControlPanelActions {
     chunkCount: number;
     builtAt: number | null;
     skippedAttachments: number;
+    retrievalMode: "lexical" | "vector" | "hybrid";
+    vectorsReady: boolean;
   };
   getMemoryRoot(): string;
   getServerStatus(): { enabled: boolean; running: boolean; address: string | null };
@@ -75,6 +78,12 @@ export class ControlPanelView extends ItemView {
         `${stats.skippedAttachments} (text budget reached)`,
       );
     }
+    // The mode actually serving results, and whether it can. A user who
+    // configured a provider had no persistent place to see that it took effect:
+    // the only signal was a Notice after the embedding pass, which is gone in
+    // seconds, and a store with no vectors answers lexically whatever the mode
+    // says.
+    this.stat(root, "Retrieval", this.describeRetrieval(stats));
     const server = this.actions.getServerStatus();
     this.stat(root, "Local server", this.describeServer(server));
 
@@ -100,6 +109,13 @@ export class ControlPanelView extends ItemView {
     }
   }
 
+  private describeRetrieval(s: { retrievalMode: string; vectorsReady: boolean }): string {
+    if (s.retrievalMode === "lexical") return "lexical (offline)";
+    return s.vectorsReady
+      ? s.retrievalMode
+      : `${s.retrievalMode} (no vectors — serving lexical)`;
+  }
+
   private describeServer(s: { enabled: boolean; running: boolean; address: string | null }): string {
     if (!s.enabled) return "disabled";
     if (s.running && s.address) return `running · ${s.address}`;
@@ -115,7 +131,12 @@ export class ControlPanelView extends ItemView {
   private button(parent: HTMLElement, label: string, onClick: () => void | Promise<void>): void {
     const btn = parent.createEl("button", { text: label });
     btn.addEventListener("click", () => {
-      void onClick();
+      // Every other UI path reports a failure in a Notice; this one turned a
+      // failed Reindex or Restart into an unhandled rejection the user never
+      // saw, with the panel left showing the pre-click numbers.
+      Promise.resolve()
+        .then(onClick)
+        .catch((err) => new Notice(`${label} failed: ${toMessage(err)}`));
     });
   }
 
