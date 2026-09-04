@@ -157,6 +157,23 @@ async function extractDocx(title: string, data: Uint8Array): Promise<string | nu
   return assemble(title, paras);
 }
 
+/**
+ * Annotate a partial extraction, the way the PDF extractor annotates a page cap.
+ *
+ * The note must never COUNT as text: a document that yielded nothing stays
+ * null, so a text-free file is not turned into a "document" by the explanation
+ * of why it is empty.
+ */
+function withStopNote(
+  md: string | null,
+  read: number,
+  total: number,
+  part: string,
+): string | null {
+  if (md === null || read >= total) return md;
+  return `${md}\n\n(extraction stopped at ${part} ${read} of ${total}: size budget reached)`;
+}
+
 async function extractPptx(title: string, data: Uint8Array): Promise<string | null> {
   const budget = newInflateBudget();
   const slides = readZipDirectory(data)
@@ -164,15 +181,27 @@ async function extractPptx(title: string, data: Uint8Array): Promise<string | nu
     .sort((a, b) => Number(/\d+/.exec(a.name)![0]) - Number(/\d+/.exec(b.name)![0]))
     .slice(0, MAX_PARTS);
   const sections: string[] = [];
+  let read = slides.length;
   for (let i = 0; i < slides.length; i++) {
-    const xml = utf8.decode(await readZipEntry(data, slides[i], budget));
+    let xml: string;
+    try {
+      xml = utf8.decode(await readZipEntry(data, slides[i], budget));
+    } catch {
+      // The archive's SHARED inflate budget ran out partway through. Keep what
+      // the earlier slides gave us: letting this throw reach `extract`'s catch
+      // returned null for the whole document, so a large deck indexed as
+      // text-free and was indistinguishable from an empty or corrupt one — and
+      // since that catch swallows to null, nothing was logged either.
+      read = i;
+      break;
+    }
     const text = xmlBlocks(xml, "a:p")
       .map((p) => textRuns(p.inner, "a:t").join("").trim())
       .filter(Boolean)
       .join("\n");
     if (text) sections.push(`## Slide ${i + 1}\n\n${text}`);
   }
-  return assemble(title, sections);
+  return withStopNote(assemble(title, sections), read, slides.length, "slide");
 }
 
 async function extractXlsx(title: string, data: Uint8Array): Promise<string | null> {
@@ -198,15 +227,24 @@ async function extractXlsx(title: string, data: Uint8Array): Promise<string | nu
     .sort((a, b) => Number(/\d+/.exec(a.name)![0]) - Number(/\d+/.exec(b.name)![0]))
     .slice(0, MAX_PARTS);
   const inline: string[] = [];
-  for (const sheet of sheets) {
-    const xml = utf8.decode(await readZipEntry(data, sheet, budget));
+  let read = sheets.length;
+  for (let i = 0; i < sheets.length; i++) {
+    let xml: string;
+    try {
+      xml = utf8.decode(await readZipEntry(data, sheets[i], budget));
+    } catch {
+      // Same shared-budget stop as the slide loop above: the sheets already
+      // read are worth more than a null for the whole workbook.
+      read = i;
+      break;
+    }
     for (const is of xmlBlocks(xml, "is")) {
       const text = textRuns(is.inner, "t").join("").trim();
       if (text) inline.push(text);
     }
   }
   if (inline.length) sections.push(inline.join("\n"));
-  return assemble(title, sections);
+  return withStopNote(assemble(title, sections), read, sheets.length, "sheet");
 }
 
 async function extractOpenDocument(

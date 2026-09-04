@@ -146,3 +146,33 @@ describe("engine integration", () => {
     expect(rtfHits[0]?.chunk.notePath).toBe("Docs/memo.rtf");
   });
 });
+
+describe("RTF byte escapes", () => {
+  it("decodes the CP1252 range Word actually writes", () => {
+    // `\\'xx` carries a BYTE. Treating it as a code point is right below 0x80
+    // and at or above 0xA0, but 0x80-0x9F is where CP1252 keeps the characters
+    // Word's autocorrect produces by default — so they decoded to INVISIBLE C1
+    // control characters. Worse than a wrong glyph: `it\\'92s` became
+    // `it<U+0092>s`, and the tokenizer splits on anything that is not a letter
+    // or a number, so the word was indexed as `it` and `s` and the note could
+    // not be found by searching for a word plainly written in it.
+    const rtf = (body: string) => rtfToText(`{\\rtf1\\ansi\\ansicpg1252 ${body}}`);
+    expect(rtf("He said \\'93hello\\'94")).toBe("He said \u201Chello\u201D");
+    expect(rtf("it\\'92s fine")).toBe("it\u2019s fine");
+    expect(rtf("a \\'97 b")).toBe("a \u2014 b");
+    expect(rtf("wait\\'85 ok")).toBe("wait\u2026 ok");
+    // Below 0x80 and at/above 0xA0 the byte IS the code point, unchanged.
+    expect(rtf("caf\\'e9")).toBe("caf\u00E9");
+    expect(rtf("\\'41\\'42")).toBe("AB");
+  });
+
+  it("does not let a huge \\bin count swallow the rest of the document", () => {
+    // `parseInt` of twenty digits is 1e20; `j += num` then exceeded any finite
+    // position and the scan ended there, silently dropping everything after it.
+    const out = rtfToText("{\\rtf1\\ansi before \\bin99999999999999999999 after}");
+    expect(out).toContain("before");
+    expect(out).toContain("after");
+    // A genuine \bin still skips exactly its declared bytes.
+    expect(rtfToText("{\\rtf1\\ansi a \\bin3 XYZb}")).toContain("a");
+  });
+});

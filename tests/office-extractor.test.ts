@@ -340,4 +340,40 @@ describe("OfficeExtractor", () => {
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].chunk.notePath).toBe("Docs/Contract.docx");
   });
+
+  it("keeps the slides it read when a later one cannot be read", async () => {
+    // The per-slide reads sat inside the single outer try/catch, so a throw
+    // anywhere in the loop — most realistically the archive's SHARED inflate
+    // budget draining partway through a large deck — returned null for the
+    // WHOLE document. A 40-slide deck then indexed as text-free and was
+    // indistinguishable from an empty or corrupt one, and because that catch
+    // swallows to null, nothing was logged either.
+    //
+    // Any mid-loop failure exercises the same path; corrupting slide 2's local
+    // header is the cheap one (draining a 256 MB budget for real is not).
+    const zip = makeZip({
+      "ppt/slides/slide1.xml": "<a:p><a:t>takahe recovery plan</a:t></a:p>",
+      "ppt/slides/slide2.xml": "<a:p><a:t>second slide</a:t></a:p>",
+    });
+    const slide2 = readZipDirectory(zip).find((e) => e.name.endsWith("slide2.xml"))!;
+    new DataView(zip.buffer, zip.byteOffset, zip.byteLength)
+      .setUint32(slide2.localHeaderOffset, 0, true);
+
+    const text = await new OfficeExtractor().extract("Deck.pptx", buf(zip));
+    expect(text).not.toBeNull();
+    expect(text).toContain("takahe recovery plan");
+    // And it says so, rather than presenting a partial deck as a whole one.
+    expect(text).toMatch(/extraction stopped at slide 1 of 2/);
+  });
+
+  it("still returns null when nothing at all could be read", async () => {
+    // The stop note must never COUNT as text: a document that yielded nothing
+    // stays null, or a text-free file becomes a "document" made entirely of the
+    // explanation for why it is empty.
+    const zip = makeZip({ "ppt/slides/slide1.xml": "<a:p><a:t>only slide</a:t></a:p>" });
+    const slide1 = readZipDirectory(zip).find((e) => e.name.endsWith("slide1.xml"))!;
+    new DataView(zip.buffer, zip.byteOffset, zip.byteLength)
+      .setUint32(slide1.localHeaderOffset, 0, true);
+    expect(await new OfficeExtractor().extract("Deck.pptx", buf(zip))).toBeNull();
+  });
 });

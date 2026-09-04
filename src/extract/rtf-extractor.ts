@@ -30,6 +30,31 @@ const SKIP_DESTINATIONS = new Set([
   "xmlnstbl",
 ]);
 
+/**
+ * Windows-1252's 0x80-0x9F range, which is where it differs from Unicode.
+ *
+ * `\\'xx` carries a raw BYTE, and treating that byte as a code point is only
+ * right below 0x80 and at or above 0xA0. In between sit the characters Word's
+ * autocorrect produces by default — curly quotes, en and em dash, ellipsis,
+ * bullet — so an ordinary Word-authored RTF decoded them to INVISIBLE C1
+ * control characters. That is worse than a wrong glyph: `it\\'92s` became
+ * `it<U+0092>s`, and since the tokenizer splits on anything that is not a
+ * letter or a number, the word was indexed as `it` and `s`. The note could not
+ * be found by searching for a word that is plainly written in it.
+ *
+ * Only this range is mapped, and only as CP1252 — the codepage `\\ansi` means by
+ * default and the one Word writes for Western text. RTF can declare others via
+ * `\\ansicpg`, and those are still decoded byte-as-code-point: unchanged from
+ * today, and not made worse, since what this replaces was never findable.
+ * Undefined CP1252 slots keep their original value.
+ */
+const CP1252_HIGH = "\u20ac\u0081\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u008d\u017d\u008f\u0090\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\u009d\u017e\u0178";
+
+function decodeAnsiByte(byte: number): string {
+  if (byte < 0x80 || byte > 0x9f) return String.fromCharCode(byte);
+  return CP1252_HIGH[byte - 0x80];
+}
+
 /** Extract the plain text of an RTF document. Exported for tests. */
 export function rtfToText(rtf: string): string {
   const out: string[] = [];
@@ -74,7 +99,7 @@ export function rtfToText(rtf: string): string {
           const hex = rtf.slice(i + 2, i + 4);
           if (pendingUc > 0) pendingUc--;
           else if (!top().skip && /^[0-9a-fA-F]{2}$/.test(hex)) {
-            out.push(String.fromCharCode(parseInt(hex, 16)));
+            out.push(decodeAnsiByte(parseInt(hex, 16)));
           }
           i += 4;
         } else {
@@ -101,8 +126,14 @@ export function rtfToText(rtf: string): string {
         numStr = "-";
         j++;
       }
+      // A control word's parameter is a signed 32-bit value, so a longer digit
+      // run is malformed. Bounding what is KEPT (while still consuming the run)
+      // stops a digit flood from building a huge string, and stops `\binN` from
+      // computing an offset past any finite position — `parseInt` of twenty
+      // digits is 1e20, `j += num` then exceeded the input length, and the scan
+      // ended there, silently dropping the rest of the document.
       while (j < n && /[0-9]/.test(rtf[j])) {
-        numStr += rtf[j];
+        if (numStr.length < 11) numStr += rtf[j];
         j++;
       }
       if (rtf[j] === " ") j++; // the delimiter space is part of the control word
@@ -124,7 +155,13 @@ export function rtfToText(rtf: string): string {
         // so an absurd value only serves to swallow the whole body as fallback.
         top().uc = Math.min(Math.max(0, num), 64);
       } else if (word === "bin" && num !== null && num > 0) {
-        j += num; // raw binary bytes follow the delimiter — jump them
+        // Raw binary bytes follow the delimiter — jump them, but only a count
+        // the document could actually contain. A declared length longer than
+        // the input that remains cannot be honest, and honouring it jumped
+        // past the end, ending the scan and silently dropping every remaining
+        // word of the document. Disbelieving it costs at most some binary
+        // rendered as text; believing it costs the rest of the file.
+        if (j + num <= n) j += num;
       } else if (word === "par" || word === "line" || word === "row") {
         if (!top().skip) out.push("\n");
       } else if (word === "tab" || word === "cell") {
