@@ -173,16 +173,45 @@ export interface ProjectPaths {
   sessions: string;
 }
 
-/** Turn an arbitrary project name into a safe single-segment folder name. */
+/** Device names Windows reserves regardless of extension; a folder cannot carry one. */
+const WINDOWS_RESERVED = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i;
+
+/**
+ * Turn an arbitrary project name into a safe single-segment folder name.
+ *
+ * The name arrives from an agent over the local server and becomes a folder
+ * under the projects root, so this is a boundary. It is NFC-normalized (macOS
+ * hands back NFD for what was typed as NFC, and the two spellings are different
+ * strings that made two visually identical project folders), stripped of
+ * control and format characters (NUL was only caught one layer down; a
+ * right-to-left override or a zero-width joiner survived into the folder name,
+ * where it spoofs the file explorer), refused if it is a Windows device name,
+ * and bounded to what a filesystem will actually accept — the MCP boundary
+ * caps at 200 UTF-16 units, which is 800 bytes of astral text against a
+ * 255-byte component limit, and an over-long name surfaced as a raw OS error
+ * rather than a validation one.
+ *
+ * Case is deliberately KEPT. Lookup (`resolveProject`) already folds it, so
+ * `work` finds `Work`; folding it here too would rename every existing
+ * project folder on upgrade for no gain in matching.
+ */
 export function sanitizeProjectName(name: string): string {
   const cleaned = name
+    .normalize("NFC")
+    .replace(/[\p{Cc}\p{Cf}]+/gu, "")
     .trim()
     .replace(/[\\/]+/g, "-") // no path separators
     .replace(/[<>:"|?*]+/g, "") // characters illegal on common filesystems
     .replace(/\.+$/g, "") // no trailing dots
     .replace(/\s+/g, " ")
     .trim();
-  if (cleaned.length === 0 || cleaned === "." || cleaned === "..") {
+  if (
+    cleaned.length === 0 ||
+    cleaned === "." ||
+    cleaned === ".." ||
+    WINDOWS_RESERVED.test(cleaned) ||
+    new TextEncoder().encode(cleaned).length > 255
+  ) {
     throw new PathSecurityError(`Invalid project name: "${name}"`);
   }
   return cleaned;

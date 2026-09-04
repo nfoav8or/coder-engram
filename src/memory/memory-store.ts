@@ -10,7 +10,7 @@ import { VaultAdapter } from "../core/vault-adapter";
 import { MemoryPaths, resolveProjectPaths } from "./memory-types";
 import { ProjectMemory } from "./project-memory";
 import { Logger, NULL_LOGGER } from "../utils/logger";
-import { toMessage } from "../utils/errors";
+import { toClientMessage, toMessage } from "../utils/errors";
 
 export interface SessionNote {
   path: string;
@@ -71,15 +71,15 @@ export class MemoryStore {
       return await this.adapter.read(path);
     } catch (err) {
       // The file EXISTS but could not be read — a permission problem, a disk
-      // error, a corrupt file. Degrading to null keeps context assembly
-      // working, but returning it silently made that indistinguishable from
-      // "this memory file was never created", so the context rendered empty
-      // with nothing anywhere to say why.
-      this.logger.warn("Could not read memory file; treating it as empty", {
-        path,
-        error: toMessage(err),
-      });
-      return null;
+      // error, a corrupt file. Returning null here made that indistinguishable
+      // from "this memory file was never created": the context rendered empty,
+      // and the one place that said why was a log line the agent never sees.
+      // The part is returned with a visible marker instead, so the reader
+      // learns that real content is being hidden by a read error, and which
+      // file to look at. The reason is redacted the way a client-facing error
+      // is, since a host error carries the vault's absolute location.
+      this.logger.warn("Could not read memory file", { path, error: toMessage(err) });
+      return `_(Coder Engram could not read this file: ${toClientMessage(err)})_`;
     }
   }
 

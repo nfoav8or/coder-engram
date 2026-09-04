@@ -123,3 +123,70 @@ describe("MemoryStore", () => {
     expect(sessions[0].path).toContain("2026-07-02");
   });
 });
+
+describe("sanitizeProjectName meets its own contract", () => {
+  it("normalizes to NFC so one visible name is one folder", () => {
+    // macOS hands back NFD for what was typed as NFC; the two are different
+    // strings, and they made two visually identical project folders.
+    const nfc = "caf\u00E9";
+    const nfd = "cafe\u0301";
+    expect(nfc).not.toBe(nfd);
+    expect(sanitizeProjectName(nfd)).toBe(nfc);
+  });
+
+  it("strips control and format characters, not just the ones a path check catches", () => {
+    // NUL was only caught one layer down; a right-to-left override or a
+    // zero-width joiner survived into the folder name, where it spoofs the
+    // file explorer.
+    expect(sanitizeProjectName("a\u0000b")).toBe("ab");
+    expect(sanitizeProjectName("a\u202Eb")).toBe("ab");
+    expect(sanitizeProjectName("a\u200Db")).toBe("ab");
+  });
+
+  it("refuses a Windows device name, which no folder can carry", () => {
+    for (const name of ["CON", "con", "NUL", "COM1", "LPT9", "AUX.txt"]) {
+      expect(() => sanitizeProjectName(name), name).toThrow(PathSecurityError);
+    }
+    // A name that merely CONTAINS one is fine.
+    expect(sanitizeProjectName("Console")).toBe("Console");
+    expect(sanitizeProjectName("Nulled")).toBe("Nulled");
+  });
+
+  it("bounds the name to what a filesystem accepts, in bytes", () => {
+    // The MCP boundary caps at 200 UTF-16 units — 800 bytes of astral text
+    // against a 255-byte component limit, which surfaced as a raw OS error.
+    expect(() => sanitizeProjectName("\u{1F600}".repeat(70))).toThrow(PathSecurityError);
+    expect(sanitizeProjectName("a".repeat(255))).toHaveLength(255);
+    expect(() => sanitizeProjectName("a".repeat(256))).toThrow(PathSecurityError);
+  });
+
+  it("keeps case, because lookup already folds it and existing folders keep their names", () => {
+    expect(sanitizeProjectName("Work")).toBe("Work");
+  });
+});
+
+describe("MemoryStore reports a memory file it cannot read", () => {
+  it("returns a visible marker instead of silently omitting the file", async () => {
+    // A missing file and an unreadable one both collapsed to null, so a read
+    // error rendered exactly like "nothing recorded yet" — with the only
+    // explanation in a log line the agent never sees.
+    const paths = resolveMemoryPaths("Claude Code");
+    const adapter = new InMemoryVaultAdapter("v", {
+      [paths.globalFiles.profile]: "# Profile\n\nreal content",
+    });
+    const realRead = adapter.read.bind(adapter);
+    adapter.read = async (p: string) => {
+      if (p === paths.globalFiles.profile) {
+        throw new Error("EACCES: permission denied, open '/home/u/Vault/x.md'");
+      }
+      return realRead(p);
+    };
+    const store = new MemoryStore(adapter, paths);
+    const parts = await store.getGlobalContext();
+    const profile = parts.find((p) => p.path === paths.globalFiles.profile);
+    expect(profile).toBeDefined();
+    expect(profile!.content).toMatch(/could not read this file/);
+    // And the host's absolute path is redacted from what the agent sees.
+    expect(profile!.content).not.toContain("/home/u");
+  });
+});
