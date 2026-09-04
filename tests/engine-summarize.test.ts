@@ -3,6 +3,8 @@ import { EngramEngine } from "../src/engine";
 import { InMemoryVaultAdapter } from "../src/core/vault-adapter";
 import { DEFAULT_SETTINGS, EngramSettings } from "../src/settings/settings";
 import { NULL_LOGGER } from "../src/utils/logger";
+import { selectSentences } from "../src/summarize/extractive";
+import { cosineSimilarity } from "../src/embeddings/embedding-provider";
 import { ConfigError } from "../src/utils/errors";
 import { FakeHttpClient } from "../src/core/http-client";
 
@@ -148,5 +150,53 @@ describe("EngramEngine.summarizeNote", () => {
     await engine.reindex();
     const summary = await engine.summarizeNote("Notes/a.md", { maxSentences: 20 });
     expect(new Set(summary.sentences).size).toBe(summary.sentences.length);
+  });
+});
+
+describe("MMR selection carries its similarities between rounds", () => {
+  it("picks exactly what recomputing every pair would have picked", () => {
+    // The selection loop recomputed each candidate's similarity to every
+    // already-selected sentence on every round — n x want^2/2 cosines where
+    // n x want do, because a maximum is associative. This pins the OUTPUT so
+    // the cheaper form can never quietly become a different summarizer:
+    // reference below is the original nested-loop rule, written out.
+    let seed = 7;
+    const rng = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const n = 60;
+    const dim = 16;
+    const units = Array.from({ length: n }, (_, i) => `s${i}`);
+    const scores = units.map(() => rng());
+    const vectors = units.map(() => Array.from({ length: dim }, () => rng() * 2 - 1));
+
+    const reference = (want: number): number[] => {
+      const lambda = 0.7;
+      const selected: number[] = [];
+      const remaining = new Set(units.map((_, i) => i));
+      while (selected.length < want && remaining.size > 0) {
+        let best = -1;
+        let bestVal = -Infinity;
+        for (const i of remaining) {
+          let maxSim = 0;
+          for (const j of selected) {
+            const sim = cosineSimilarity(vectors[i], vectors[j]);
+            if (sim > maxSim) maxSim = sim;
+          }
+          const val = lambda * scores[i] - (1 - lambda) * maxSim;
+          if (val > bestVal || (val === bestVal && (best < 0 || i < best))) {
+            bestVal = val;
+            best = i;
+          }
+        }
+        if (best < 0) break;
+        selected.push(best);
+        remaining.delete(best);
+      }
+      return selected.sort((a, b) => a - b);
+    };
+
+    for (const want of [1, 3, 8, 20, n]) {
+      expect(selectSentences(units, scores, want, { vectors }), `want=${want}`)
+        .toEqual(reference(want));
+    }
   });
 });

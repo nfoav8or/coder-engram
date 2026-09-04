@@ -1,4 +1,18 @@
 /**
+ * A trimmed string, or "" for anything that is not one.
+ *
+ * Optional chaining guards `null` and `undefined` but not the wrong TYPE, so
+ * `config.endpoint?.trim()` threw a TypeError on a number or an object —
+ * from the one function in this file documented as never throwing. It is not
+ * reachable through the plugin today, because `migrateSettings` coerces these
+ * fields first, but the point of a never-throws boundary is that a caller does
+ * not have to know that.
+ */
+function asTrimmed(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
  * createEmbeddingProvider — build the configured EmbeddingProvider, or null.
  *
  * Returning null is the graceful-degrade signal: the engine falls back to
@@ -39,7 +53,7 @@ export function createEmbeddingProvider(
       return new MockEmbeddingProvider();
 
     case "ollama": {
-      const model = config.model?.trim();
+      const model = asTrimmed(config.model);
       if (!model) {
         logger.warn("Ollama provider needs a model name; using lexical retrieval");
         return null;
@@ -50,16 +64,16 @@ export function createEmbeddingProvider(
       }
       return new OllamaEmbeddingProvider({
         http: deps.http,
-        endpoint: config.endpoint?.trim() || DEFAULT_OLLAMA_ENDPOINT,
+        endpoint: asTrimmed(config.endpoint) || DEFAULT_OLLAMA_ENDPOINT,
         model,
         logger,
       });
     }
 
     case "openai-compatible": {
-      const model = config.model?.trim();
-      const endpoint = config.endpoint?.trim();
-      const apiKey = config.apiKey?.trim();
+      const model = asTrimmed(config.model);
+      const endpoint = asTrimmed(config.endpoint);
+      const apiKey = asTrimmed(config.apiKey);
       if (!model || !endpoint || !apiKey) {
         logger.warn(
           "OpenAI-compatible provider needs endpoint, model, and API key; using lexical retrieval",

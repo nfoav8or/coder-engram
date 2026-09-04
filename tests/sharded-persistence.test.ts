@@ -325,3 +325,46 @@ describe("size-adaptive sharded embeddings persistence", () => {
     expect(store.entriesMap().size).toBe(0);
   });
 });
+
+describe("sharded embeddings load in one concurrent pass", () => {
+  it("issues its shard reads together rather than one at a time", async () => {
+    // The sharded branch of `load()` awaited an `exists` and a `read` per
+    // shard in turn — 512 sequential round trips on the startup path of every
+    // vault large enough to be sharded — while `IndexManager.load` next door
+    // issued all of its reads at once. With a fixed 2 ms per call that was
+    // 1.1 s against 12 ms. Pinned by counting reads in flight: sequential
+    // reads never overlap, so the peak is 1; a concurrent pass peaks near the
+    // shard count.
+    const adapter = new InMemoryVaultAdapter("v");
+    const store = new EmbeddingStore(adapter, PATHS.embeddingsFile, NULL_LOGGER, {
+      singleFileMaxVectors: 10,
+    });
+    await store.load();
+    await store.embedIndex(
+      Array.from({ length: 15 }, (_, i) => ({ id: `Notes/n${i}.md::0`, text: `chunk ${i}` })),
+      new MockEmbeddingProvider(),
+    );
+
+    let inFlight = 0;
+    let peak = 0;
+    const realRead = adapter.read.bind(adapter);
+    adapter.read = async (path: string) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      // Yield, as real I/O does, so overlapping reads can actually overlap.
+      await new Promise((r) => setTimeout(r, 0));
+      try {
+        return await realRead(path);
+      } finally {
+        inFlight--;
+      }
+    };
+
+    const reloaded = new EmbeddingStore(adapter, PATHS.embeddingsFile, NULL_LOGGER, {
+      singleFileMaxVectors: 10,
+    });
+    await reloaded.load();
+    expect(reloaded.entriesMap().size).toBe(15);
+    expect(peak).toBeGreaterThan(1);
+  });
+});

@@ -155,8 +155,6 @@ interface EmbedIndexResult {
   embedded: number;
   reused: number;
   removed: number;
-  /** True when the provider was unavailable and nothing changed. */
-  skipped: boolean;
 }
 
 interface EmbedChunk {
@@ -259,29 +257,40 @@ export class EmbeddingStore {
         // rebuild here costs real provider work, so damage stays local.
         const vectors: Record<string, StoredVector> = {};
         let droppedShards = 0;
-        for (let i = 0; i < SHARD_COUNT; i++) {
-          const file = this.shardFile(i);
-          // eslint-disable-next-line no-await-in-loop -- shards are read sequentially through the adapter
-          if (!(await this.adapter.exists(file))) {
-            // Every shard exists once the layout is adopted; a missing one is
-            // damage. Harmless here (its vectors simply re-embed) but logged
-            // so the re-embed pass that follows is explained.
-            droppedShards++;
-            this.logger.warn("Embedding shard missing; its vectors will re-embed", { shard: i });
-            continue;
-          }
-          try {
-            // eslint-disable-next-line no-await-in-loop -- shards are read sequentially through the adapter, same as the exists() check above
-            const shard = JSON.parse(await this.adapter.read(file)) as unknown;
-            if (!isVectorMap(shard)) throw new Error("malformed shard");
-            Object.assign(vectors, shard);
-          } catch (err) {
-            droppedShards++;
-            this.logger.warn("Dropped corrupt embedding shard; its vectors will re-embed", {
-              shard: i,
-              error: toMessage(err),
-            });
-          }
+        // Read concurrently, as `IndexManager.load` already reads its shards.
+        // This ran one shard at a time — an `exists` and a `read` awaited in
+        // turn, 512 sequential round trips — on the startup path of every
+        // vault large enough to be sharded, while the sibling loader next door
+        // issued all of its reads at once. Measured with a fixed 2 ms per call:
+        // 1.1 s against 12 ms. Nothing here depends on order: vectors merge by
+        // id, and each shard's failure stays its own — a missing or corrupt one
+        // still drops only its own vectors and says so.
+        const loaded = await Promise.all(
+          Array.from({ length: SHARD_COUNT }, async (_, i): Promise<Record<string, StoredVector> | null> => {
+            const file = this.shardFile(i);
+            if (!(await this.adapter.exists(file))) {
+              // Every shard exists once the layout is adopted; a missing one is
+              // damage. Harmless here (its vectors simply re-embed) but logged
+              // so the re-embed pass that follows is explained.
+              this.logger.warn("Embedding shard missing; its vectors will re-embed", { shard: i });
+              return null;
+            }
+            try {
+              const shard = JSON.parse(await this.adapter.read(file)) as unknown;
+              if (!isVectorMap(shard)) throw new Error("malformed shard");
+              return shard;
+            } catch (err) {
+              this.logger.warn("Dropped corrupt embedding shard; its vectors will re-embed", {
+                shard: i,
+                error: toMessage(err),
+              });
+              return null;
+            }
+          }),
+        );
+        for (const shard of loaded) {
+          if (shard === null) droppedShards++;
+          else Object.assign(vectors, shard);
         }
         if (droppedShards > 0) {
           this.logger.warn("Embedding shards dropped at load", { droppedShards, of: SHARD_COUNT });
@@ -333,6 +342,13 @@ export class EmbeddingStore {
         });
         return;
       }
+      // Every other failure branch here says something; this one — a file that
+      // parses as JSON but matches none of the three known shapes — used to
+      // discard every vector in silence. On the single-file layout that is the
+      // WHOLE cache for one unrecognized entry, and the pass that follows
+      // re-embeds the entire vault against a possibly paid provider with
+      // nothing anywhere explaining why.
+      this.logger.warn("Embeddings cache has an unrecognized shape; all vectors will re-embed");
       this.state = null;
     } catch (err) {
       this.logger.warn("Failed to load embeddings; will recompute", {
@@ -408,7 +424,17 @@ export class EmbeddingStore {
     return !!this.state && Object.keys(this.state.vectors).length > 0;
   }
 
-  /** Forget all vectors in memory and on disk (used when disabling a provider). */
+  /**
+   * Forget all vectors in memory and on disk.
+   *
+   * Nothing in production calls this, and that is deliberate rather than a
+   * dropped wire-up: turning the embedding provider off LEAVES the vectors in
+   * place. They are never served while it is off — the cache is keyed on
+   * provider identity, so a mismatch degrades to lexical rather than scoring
+   * against them — and keeping them means turning a paid provider back on
+   * re-embeds nothing. Purging on a settings toggle would spend real money to
+   * undo a toggle. The vectors go when the index is rebuilt.
+   */
   async clear(): Promise<void> {
     this.state = null;
     this.decoded = null;
@@ -569,7 +595,7 @@ export class EmbeddingStore {
       await this.persist();
     }
     (opts.logger ?? this.logger).info("Embedded index", { embedded, reused, removed, dim });
-    return { embedded, reused, removed, skipped: false };
+    return { embedded, reused, removed };
   }
 
   /** Persists are chained: a checkpoint can land while a previous persist is

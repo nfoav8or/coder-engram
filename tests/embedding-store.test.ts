@@ -46,7 +46,12 @@ describe("EmbeddingStore.embedIndex", () => {
     await store.load();
     const chunks = makeChunks(3);
     const result = await store.embedIndex(chunks, new MockEmbeddingProvider());
-    expect(result).toMatchObject({ embedded: 3, reused: 0, removed: 0, skipped: false });
+    // `skipped` is gone from the result. It was documented as "the provider was
+    // unavailable and nothing changed", but nothing ever set it to true and no
+    // production code read it — that state is decided a layer up, in the
+    // engine's own pass result, which never calls this method when the provider
+    // is unavailable. The old expectation asserted a constant.
+    expect(result).toMatchObject({ embedded: 3, reused: 0, removed: 0 });
     expect(store.entriesMap().size).toBe(3);
     expect(await adapter.exists(FILE)).toBe(true);
   });
