@@ -34,9 +34,19 @@ describe("hostnameFromHostHeader", () => {
 });
 
 describe("isHostHeaderAllowed", () => {
-  it("allows loopback Host headers regardless of bound host", () => {
+  it("allows any loopback spelling in Host when the bound host is loopback", () => {
     expect(isHostHeaderAllowed("127.0.0.1:3999", "127.0.0.1")).toBe(true);
     expect(isHostHeaderAllowed("localhost:3999", "127.0.0.1")).toBe(true);
+    expect(isHostHeaderAllowed("[::1]:3999", "localhost")).toBe(true);
+  });
+  it("does NOT let a loopback Host reach a non-loopback bind", () => {
+    // The old expectation here read "regardless of bound host", and it was only
+    // ever exercised with a loopback bind — the pairing that diverges from the
+    // documented model (a non-loopback bind under allowNonLocalhost, with a
+    // loopback-shaped Host) had no test, so the guard silently passed it.
+    expect(isHostHeaderAllowed("localhost:3999", "192.168.1.5")).toBe(false);
+    expect(isHostHeaderAllowed("127.0.0.1:3999", "192.168.1.5")).toBe(false);
+    expect(isHostHeaderAllowed("[::1]:3999", "192.168.1.5")).toBe(false);
   });
   it("allows a Host that matches the bound (non-loopback) host", () => {
     expect(isHostHeaderAllowed("192.168.1.5:3999", "192.168.1.5")).toBe(true);

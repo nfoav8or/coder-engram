@@ -40,8 +40,16 @@ export function isHostHeaderAllowed(hostHeader: string | undefined, boundHost: s
   const name = hostnameFromHostHeader(hostHeader);
   if (name === null) return false;
   const lower = name.toLowerCase();
-  if (isLoopbackHost(lower)) return true;
   const bound = stripBrackets(boundHost.trim().toLowerCase());
+  // A loopback bind is reached as `localhost`, `127.0.0.1` or `::1`
+  // interchangeably, so any loopback spelling matches it. That carve-out used
+  // to apply whatever the bound host was — so a server bound to 192.168.1.5
+  // under `allowNonLocalhost` accepted `Host: localhost`, and the one check
+  // whose purpose is "must name the address we are bound to" passed a header
+  // that named something else. Bounded impact (a non-loopback bind always
+  // requires a token, checked next), but it removed a defence layer in exactly
+  // the mode where it matters, and contradicted what SECURITY.md says happens.
+  if (isLoopbackHost(lower)) return isLoopbackHost(bound);
   // Neither side may be empty. `Host: :1234` yields an empty hostname (the
   // header is all port), and a whitespace-only configured host trims to an
   // empty bound host — so without this the two compared equal and the
