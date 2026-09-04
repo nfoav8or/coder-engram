@@ -307,10 +307,42 @@ describe("redactAbsolutePaths", () => {
     expect(redactAbsolutePaths("Ollama embed failed (HTTP 500)")).toBe(
       "Ollama embed failed (HTTP 500)",
     );
-    // A URL's "//" follows a colon, which is not an accepted leading character.
+    // A URL is matched as a URL, ahead of the bare-path form, and kept.
     expect(redactAbsolutePaths("endpoint http://127.0.0.1:11434/api/embed refused")).toBe(
       "endpoint http://127.0.0.1:11434/api/embed refused",
     );
     expect(redactAbsolutePaths("Use / to separate segments")).toBe("Use / to separate segments");
+  });
+
+  it("redacts a path after any separator, not just the four once allowed", () => {
+    // The bare form used to be recognized only after start-of-string,
+    // whitespace, "(", "[" or "<". That allowlist existed to keep the scan off
+    // the "//" in "https://", but it also excluded every other separator a real
+    // host error uses — so each of these carried the vault's absolute location,
+    // and with it the account name and the vault's real folder name, to any MCP
+    // client that provoked the error.
+    expect(redactAbsolutePaths("error:/home/u/Vault/x.md")).toBe("error:<path>");
+    expect(redactAbsolutePaths("path=/home/u/Vault/x.md")).toBe("path=<path>");
+    expect(redactAbsolutePaths("files: a,/home/u/Vault/x.md")).toBe("files: a,<path>");
+    // Quotes that do not match are not a quoted path; the bare form must still
+    // catch it rather than each form assuming the other did.
+    expect(redactAbsolutePaths("open '/home/u/Vault/x.md\"")).toBe("open '<path>\"");
+    // A file:// URI names a local path as surely as a bare one does. Every
+    // other scheme is a URL and is kept.
+    expect(redactAbsolutePaths("failed: file:///home/u/Vault/x.md")).toBe("failed: <path>");
+  });
+
+  it("still refuses to read a vault-relative path as an absolute one", () => {
+    // The one thing the old leading allowlist really bought: the "/" inside
+    // "Notes/private.md" must not be read as the start of an absolute path.
+    // Widening the accepted separators without stating this exclusion redacted
+    // every vault-relative path in every error, which is the namespace the
+    // caller is entitled to and needs in order to act.
+    expect(redactAbsolutePaths('Note "Notes/private.md" is not indexed')).toBe(
+      'Note "Notes/private.md" is not indexed',
+    );
+    expect(redactAbsolutePaths("read Projects/Work/notes.md failed")).toBe(
+      "read Projects/Work/notes.md failed",
+    );
   });
 });

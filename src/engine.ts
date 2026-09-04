@@ -688,7 +688,23 @@ export class EngramEngine {
    */
   async search(query: RetrievalQuery): Promise<RetrievalResult[]> {
     const resolved = await this.withQueryVector(query);
-    const results = this.retriever.retrieve(resolved, this.index.getChunks());
+    const ranked = this.retriever.retrieve(resolved, this.index.getChunks());
+    // The rejection and supersession LEDGERS are never search results.
+    //
+    // Discarding a proposal copies its content into `rejected-memory.md`, which
+    // is indexed like any other note — so the claim the reviewer turned down
+    // came back as an ordinary, unlabelled hit, and its structured record even
+    // said `pendingReview: false`, asserting it was reviewed memory. That
+    // inverts the whole point of the ledger: it exists so an agent stops
+    // re-proposing what was refused, not so the refusal becomes searchable
+    // knowledge. `find_symbol` already excluded these files for exactly this
+    // reason ("the ledgers hold copies of proposal content"); search was simply
+    // never brought in line. They stay readable through `list_rejected_memory`,
+    // which labels them and carries the reviewer's reason.
+    //
+    // The PENDING file is deliberately still searchable — an agent seeing its
+    // own proposals is a feature — and carries its `[PENDING REVIEW]` label.
+    const results = ranked.filter((r) => !this.isLedgerPath(r.chunk.notePath));
     // Retired memory is dropped AFTER ranking, not before: filtering the corpus
     // would change the BM25 corpus statistics every other result is scored
     // against, so retiring one memory would silently re-rank unrelated notes.
@@ -855,6 +871,8 @@ export class EngramEngine {
     chunkCount: number;
     builtAt: number | null;
     skippedAttachments: number;
+    retrievalMode: RetrievalMode;
+    vectorsReady: boolean;
   } {
     const idx = this.index.getIndex();
     return {
@@ -862,6 +880,12 @@ export class EngramEngine {
       chunkCount: idx?.metadata.chunkCount ?? 0,
       builtAt: idx?.metadata.builtAt ?? null,
       skippedAttachments: this.skippedAttachments,
+      // Both, because they can disagree: the mode is "hybrid" the moment a
+      // provider is configured, while a vault whose embedding pass has not run
+      // (or failed) still answers every query lexically. Reporting only the
+      // mode is how 0.11.2's "says hybrid, serves lexical" looked correct.
+      retrievalMode: this.effectiveMode(),
+      vectorsReady: this.embeddingStore.hasVectors(),
     };
   }
 
@@ -895,6 +919,26 @@ export class EngramEngine {
     return (await this.dropRetired(matches))
       .sort((a, b) => b.mtime - a.mtime)
       .slice(0, limit);
+  }
+
+  /**
+   * True for the two inbox LEDGERS — the rejection and supersession records —
+   * and false for the pending file, which is meant to be searchable.
+   *
+   * Compared canonically, because the caller's path comes from a chunk and
+   * these come from the resolved layout. An unparseable path is not a ledger,
+   * which leaves it visible: the same fail-visible choice `isInboxPath` makes.
+   */
+  private isLedgerPath(notePath: string): boolean {
+    try {
+      const p = normalizeVaultRelativePath(notePath);
+      return (
+        p === normalizeVaultRelativePath(this.paths.rejectedMemoryFile) ||
+        p === normalizeVaultRelativePath(this.paths.supersededMemoryFile)
+      );
+    } catch {
+      return false;
+    }
   }
 
   /** True when a vault path lies in the plugin-managed review folder. Total:

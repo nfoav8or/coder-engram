@@ -53,16 +53,40 @@ export function asError(err: unknown): Error {
 }
 
 /**
- * An absolute filesystem path, in the two shapes host errors produce.
+ * Absolute filesystem paths, and the URLs that must be told apart from them.
  *
- * Node quotes the path in its `errno` messages (`open '/home/u/vault/x.md'`),
- * which matters because a vault folder may contain spaces — a whitespace-
- * delimited match would stop at the first one and leak the rest. The bare form
- * covers messages that don't quote. Neither matches a URL: a `//` there is
- * preceded by `:`, which is not an accepted leading character.
+ * One pass with three ordered alternatives, because the alternatives have to
+ * see each other. The previous version scanned for a bare path only after one
+ * of a fixed set of leading characters (start, whitespace, `(`, `[`, `<`),
+ * which is what kept it off the `//` in `https://` — but that allowlist also
+ * excluded every other separator a host error actually uses, so `error:/home/u`,
+ * `path=/home/u`, `a,/home/u` and a mismatched-quote `'/home/u"` all survived
+ * with the vault's real location in them. Matching URLs EXPLICITLY, ahead of
+ * the bare form, lets the bare form accept any position at all.
+ *
+ *   1. A quoted path — Node quotes in `errno` messages (`open '/home/u/x.md'`),
+ *      and a vault folder may contain spaces, so a whitespace-delimited match
+ *      would stop at the first one and leak the rest.
+ *   2. A `scheme://` URL, which the replacer keeps — with the exception of
+ *      `file://`, which names a local path as surely as a bare one does.
+ *   3. A bare path, reached only where 1 and 2 did not match — so a URL's `//`
+ *      is already consumed and can no longer be mistaken for one. It still
+ *      refuses to start immediately after a path character, which is what keeps
+ *      the `/` of a VAULT-RELATIVE `Notes/private.md` from being read as the
+ *      start of an absolute one. That single rule is all the old leading
+ *      allowlist was really buying; stating it as what it excludes rather than
+ *      what it permits is what lets every real separator through.
  */
-const QUOTED_ABSOLUTE_PATH = /(['"`])((?:[A-Za-z]:[\\/]|\\\\|\/)[^'"`\n]*)\1/g;
-const BARE_ABSOLUTE_PATH = /(^|[\s([<])((?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`)\]>\n]+)/g;
+const REDACTABLE = new RegExp(
+  [
+    /(['"`])((?:[A-Za-z]:[\\/]|\\\\|\/)[^'"`\n]*)\1/, // 1: quoted
+    /([A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s'"`)\]>\n]*)/, // 2: URL
+    /(?<![A-Za-z0-9._\-/\\])((?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`)\]>\n]+)/, // 3: bare
+  ]
+    .map((r) => r.source)
+    .join("|"),
+  "g",
+);
 
 /**
  * Strip absolute filesystem paths out of a message.
@@ -72,9 +96,16 @@ const BARE_ABSOLUTE_PATH = /(^|[\s([<])((?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`)\]>\n]
  * which note failed, in the only namespace it is entitled to know about.
  */
 export function redactAbsolutePaths(message: string): string {
-  return message
-    .replace(QUOTED_ABSOLUTE_PATH, "$1<path>$1")
-    .replace(BARE_ABSOLUTE_PATH, "$1<path>");
+  return message.replace(
+    REDACTABLE,
+    (match, quote: string | undefined, _quoted: string | undefined, url: string | undefined) => {
+      if (quote !== undefined) return `${quote}<path>${quote}`;
+      // A URL is not a filesystem path and is assumed safe to report — except
+      // `file://`, whose whole point is to name one.
+      if (url !== undefined) return url.startsWith("file://") ? "<path>" : match;
+      return "<path>";
+    },
+  );
 }
 
 /**

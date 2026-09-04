@@ -517,6 +517,54 @@ describe("superseded memory", () => {
   });
 });
 
+describe("index stats report the mode that is actually serving", () => {
+  it("says lexical with no provider, and never claims vectors it does not have", async () => {
+    // The control panel shows this. The mode alone was how 0.11.2's "says
+    // hybrid, serves lexical" looked correct, so the stats carry both.
+    const { engine } = makeEngine({ "Notes/a.md": "# A\n\nbody" });
+    await engine.reindex();
+    const stats = engine.getIndexStats();
+    expect(stats.retrievalMode).toBe("lexical");
+    expect(stats.vectorsReady).toBe(false);
+  });
+});
+
+describe("the review ledgers are not search results", () => {
+  it("does not serve a discarded proposal back as ordinary memory", async () => {
+    // Discarding copies the proposal's content into `rejected-memory.md`, which
+    // is indexed like any other note — so the claim the reviewer turned down
+    // came back as an unlabelled hit, and its structured record said
+    // `pendingReview: false`, asserting it was reviewed memory. That inverts
+    // the ledger's purpose: it exists so an agent stops re-proposing what was
+    // refused, not so the refusal becomes searchable knowledge. `find_symbol`
+    // already excluded these files for this reason; search did not.
+    const { engine } = makeEngine({});
+    await engine.addMemory({ type: "decision", content: "We will migrate to kokako storage." });
+    const [pending] = (await engine.getPendingMemory()).entries;
+    await engine.discardPendingMemory(pending, { reason: "Wrong — kokako was rejected." });
+    await engine.reindex();
+
+    const hits = await engine.search({ query: "kokako storage" });
+    expect(hits.map((h) => h.chunk.notePath)).not.toContain(
+      engine.getPaths().rejectedMemoryFile,
+    );
+    // Still readable through the tool that labels it and carries the reason.
+    const { entries } = await engine.getRejectedMemory();
+    expect(entries.map((e) => e.content).join("\n")).toContain("kokako storage");
+  });
+
+  it("keeps a PENDING proposal searchable, which is the feature", async () => {
+    // The pending file is deliberately indexed and labelled `[PENDING REVIEW]`
+    // so an agent can see its own proposals. Excluding the whole inbox folder
+    // to fix the ledgers would have taken this with it.
+    const { engine } = makeEngine({});
+    await engine.addMemory({ type: "decision", content: "We will adopt takahe indexing." });
+    await engine.reindex();
+    const hits = await engine.search({ query: "takahe indexing" });
+    expect(hits.map((h) => h.chunk.notePath)).toContain(engine.getPaths().pendingMemoryFile);
+  });
+});
+
 describe("superseded memory is not served through the note-reading doors", () => {
   const DECISIONS = "Claude Code/Memory/Projects/Engram/decisions.md";
 
