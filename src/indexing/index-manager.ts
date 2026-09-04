@@ -71,13 +71,23 @@ import { setTimer } from "../utils/timeout";
 // next time a note is read, so the bump is what evicts notes that are indexed
 // now and should not be. Re-chunks only; cached vectors are still reused.
 /**
- * Bumped to 7 for `IndexedChunk.symbols`: the field is derived at chunk time,
- * so an index written before it exists cannot be repaired by a refresh — only
- * notes whose mtime moved would gain symbols, leaving the corpus scoring two
- * different ways. A version change discards the cache and rebuilds it, which is
- * the honest cost of adding a derived field.
+ * Bumped to 8 so a widened TAG exclusion reaches notes already in the index.
+ *
+ * Excluding a tag now excludes its children, and tag eligibility is the one
+ * filter that needs the file's CONTENT: path and folder rules are re-applied to
+ * every path on every scan, but a note whose mtime has not moved is never
+ * re-read, so its tags are never re-examined. Verified rather than assumed — a
+ * scan run with the note's own mtime already known returns it unchanged, so
+ * `#private/secret` would have stayed indexed and served indefinitely under an
+ * exclusion the user had already configured. Only a version change re-reads it.
+ *
+ * The cost is one local re-chunk, not a re-embed: vectors are keyed by content
+ * hash and provider identity, so they survive a chunk-index rebuild by design.
+ *
+ * (7 was `IndexedChunk.symbols` — a field derived at chunk time, which an
+ * incremental refresh likewise could not backfill.)
  */
-export const INDEX_VERSION = 7;
+export const INDEX_VERSION = 8;
 
 export interface IndexedChunk {
   id: string;
@@ -611,8 +621,14 @@ export class IndexManager {
       // Both fields are optional and come off disk, so a file written by an
       // older version — or corrupted by a sync conflict — must degrade to the
       // slow-but-correct path rather than be trusted for its type.
+      // `typeof [] === "object"`, so an array here produced numeric-index keys
+      // ("0", "1", …) that match no real note path — harmless, but it is a
+      // stored file this plugin reads back and therefore untrusted input, and
+      // the shape check should say what it means.
       const storedMtimes =
-        metadata.noteMtimes && typeof metadata.noteMtimes === "object"
+        metadata.noteMtimes &&
+        typeof metadata.noteMtimes === "object" &&
+        !Array.isArray(metadata.noteMtimes)
           ? Object.entries(metadata.noteMtimes).filter(([, v]) => typeof v === "number")
           : null;
       this.noteMtimes = storedMtimes ? new Map(storedMtimes) : null;

@@ -246,3 +246,54 @@ describe("VaultScanner skip-unchanged fast path", () => {
     expect(second.map((n) => n.path)).not.toContain("Work/b.md");
   });
 });
+
+describe("exclusions that read as covering more than they matched", () => {
+  async function kept(files: Record<string, string>, overrides: object) {
+    const scanner = new VaultScanner(new InMemoryVaultAdapter("v", files));
+    return (await scanner.scan(config(overrides))).map((n) => n.path);
+  }
+
+  it("honours a path pattern written with a leading slash", async () => {
+    // A vault-relative path never begins with a separator, so a leading one can
+    // only mean "anchored at the vault root" — what the pattern already means.
+    // Compilation anchors with `^`, so the slash became a literal no path could
+    // match: `/Private/*` excluded NOTHING while `Private/*` worked, and the
+    // note it named was indexed and served.
+    expect(await kept({ "Private/secret.md": "x" }, { excludedPathPatterns: ["/Private/*"] }))
+      .toEqual([]);
+    expect(await kept({ "Private/secret.md": "x" }, { excludedPathPatterns: ["/Private"] }))
+      .toEqual([]);
+  });
+
+  it("lets ** match zero directories, as every other globstar does", async () => {
+    // `**` compiled to a bare `.*` between two literal slashes, so it required
+    // at least one directory to be present. `Private/**/*.md` then covered
+    // everything under Private EXCEPT what sat directly in it, and
+    // `**/secret.md` missed a secret.md at the vault root.
+    expect(await kept({ "secret.md": "x" }, { excludedPathPatterns: ["**/secret.md"] }))
+      .toEqual([]);
+    expect(await kept({ "a/b/secret.md": "x" }, { excludedPathPatterns: ["**/secret.md"] }))
+      .toEqual([]);
+    expect(await kept({ "Private/x.md": "y" }, { excludedPathPatterns: ["Private/**/*.md"] }))
+      .toEqual([]);
+    expect(await kept({ "Private/sub/x.md": "y" }, { excludedPathPatterns: ["Private/**/*.md"] }))
+      .toEqual([]);
+    // Still anchored: a pattern must not start matching in the middle of a path.
+    expect(await kept({ "Notes/keep.md": "y" }, { excludedPathPatterns: ["Private/**/*.md"] }))
+      .toEqual(["Notes/keep.md"]);
+  });
+
+  it("excludes a tag's children, the way Obsidian's own tag search does", async () => {
+    // A user excluding `private` has every reason to read it as covering the
+    // branch. It did not, so `#private/secret` was indexed and served while
+    // looking excluded. For a privacy filter the broader reading of an
+    // ambiguous configuration is the safe one.
+    expect(await kept({ "Notes/child.md": "#private/secret\n\nbody" }, { excludedTags: ["private"] }))
+      .toEqual([]);
+    expect(await kept({ "Notes/exact.md": "#private\n\nbody" }, { excludedTags: ["private"] }))
+      .toEqual([]);
+    // A tag that merely SHARES a prefix is a different tag, not a child.
+    expect(await kept({ "Notes/other.md": "#privateer\n\nbody" }, { excludedTags: ["private"] }))
+      .toEqual(["Notes/other.md"]);
+  });
+});

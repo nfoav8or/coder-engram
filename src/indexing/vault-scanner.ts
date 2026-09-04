@@ -76,10 +76,24 @@ function globToRegExp(pattern: string): RegExp {
   const escaped = pattern
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
     .replace(/\*\*/g, DOUBLE_STAR) // ** matches across slashes
-    .replace(/\*/g, "[^/]*") // * matches within a segment
+    .replace(/\*/g, "[^/]*"); // * matches within a segment
+  // `**` spans ZERO or more directories, as it does in every other globstar
+  // implementation the user has met. Compiling it to a bare `.*` between two
+  // literal slashes required at least one directory to be there, so
+  // `Private/**/*.md` did not match `Private/x.md` and `**/secret.md` did not
+  // match a `secret.md` at the vault root. The exclusion read as covering
+  // everything under a folder and covered everything except what sat directly
+  // in it — the fail-open direction, and invisible.
+  const body = escaped
+    .split(`/${DOUBLE_STAR}/`)
+    .join("/(?:.*/)?")
+    .split(`${DOUBLE_STAR}/`)
+    .join("(?:.*/)?")
+    .split(`/${DOUBLE_STAR}`)
+    .join("(?:/.*)?")
     .split(DOUBLE_STAR)
     .join(".*");
-  return new RegExp(`^${escaped}$`, "i");
+  return new RegExp(`^${body}$`, "i");
 }
 
 const MAX_PATTERN_LENGTH = 256;
@@ -115,7 +129,13 @@ function compilePathPattern(
   pattern: string,
   onDegrade?: (pattern: string) => void,
 ): (foldedPath: string) => boolean {
-  const p = foldForCompare(pattern.trim());
+  // A vault-relative path never begins with a separator, so a leading one can
+  // only be the user spelling "anchored at the vault root" — which is what a
+  // pattern already means. Compilation anchors with `^`, so the slash became a
+  // literal no path could match and `/Private/*` excluded NOTHING, while the
+  // same pattern without it worked. Stripped here, before either the glob or
+  // the fragment fallback sees it, so both spellings agree.
+  const p = foldForCompare(pattern.trim()).replace(/^\/+/, "");
   if (p === "") return () => false;
   if (p.includes("*")) {
     // Guard against pathological patterns (many wildcards → catastrophic
@@ -188,10 +208,25 @@ export class VaultScanner {
     };
   }
 
+  /**
+   * Excluding a tag excludes its CHILDREN too: `private` covers
+   * `private/secret`.
+   *
+   * Obsidian's own tag search works this way, so a user excluding `private`
+   * has every reason to read it as covering the whole branch — and it did not,
+   * so a note tagged `#private/secret` was indexed and served while looking
+   * excluded. For a privacy filter the safe reading of an ambiguous
+   * configuration is the broader one: over-excluding hides a note the user can
+   * still open themselves, under-excluding hands it to an agent.
+   */
   private hasExcludedTag(metadata: NoteMetadata, excludedTags: string[]): boolean {
     if (excludedTags.length === 0) return false;
-    const noteTags = new Set(metadata.tags.map((t) => foldForCompare(t).replace(/^#/, "")));
-    return excludedTags.some((t) => noteTags.has(foldForCompare(t).replace(/^#/, "")));
+    const noteTags = metadata.tags.map((t) => foldForCompare(t).replace(/^#/, ""));
+    return excludedTags.some((raw) => {
+      const t = foldForCompare(raw).replace(/^#/, "");
+      if (t === "") return false;
+      return noteTags.some((nt) => nt === t || nt.startsWith(`${t}/`));
+    });
   }
 
   /** Content-level eligibility (tag exclusions) — used by the engine's

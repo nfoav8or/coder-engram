@@ -105,8 +105,31 @@ function parseFrontmatter(lines: string[]): Frontmatter {
   /** Whether a real `key: value` line has been seen yet (see the break below). */
   let sawKey = false;
   let currentListKey: "tags" | "aliases" | null = null;
+  const pushList = (key: "tags" | "aliases", raw: string): void => {
+    const items = parseInlineList(raw);
+    result[key].push(...(key === "tags" ? items.map((t) => t.replace(/^#/, "")) : items));
+  };
+  /**
+   * A `[` that has not closed yet, and the text gathered so far.
+   *
+   * YAML lets a flow sequence wrap across lines, and hand-editing or a
+   * front-matter editor produces that shape readily. The value on the `tags:`
+   * line was treated as the whole list regardless, so `tags: [private,` /
+   * `  secret]` recorded `private` and dropped `secret` — and a user who had
+   * excluded `secret` had the note indexed and served while it looked
+   * excluded. Everything after the first line was lost, which is the fail-open
+   * direction.
+   */
+  let pendingFlow: { key: "tags" | "aliases"; text: string } | null = null;
   for (let i = 1; i < parseTo; i++) {
     const line = lines[i];
+    if (pendingFlow) {
+      pendingFlow.text += ` ${line.trim()}`;
+      if (!line.includes("]")) continue;
+      pushList(pendingFlow.key, pendingFlow.text);
+      pendingFlow = null;
+      continue;
+    }
     // A block-list item: "  - value"
     const listItem = line.match(/^\s*-\s+(.*)$/);
     if (listItem && currentListKey) {
@@ -173,19 +196,18 @@ function parseFrontmatter(lines: string[]): Frontmatter {
     sawKey = true;
     const key = kv[1].toLowerCase();
     const value = kv[2].trim();
-    if (key === "tags" || key === "tag") {
-      if (value) {
-        result.tags.push(...parseInlineList(value).map((t) => t.replace(/^#/, "")));
-        currentListKey = null;
+    if (key === "tags" || key === "tag" || key === "aliases" || key === "alias") {
+      const listKey = key.startsWith("tag") ? "tags" : "aliases";
+      if (!value) {
+        currentListKey = listKey;
       } else {
-        currentListKey = "tags";
-      }
-    } else if (key === "aliases" || key === "alias") {
-      if (value) {
-        result.aliases.push(...parseInlineList(value));
+        // An opened-but-unclosed `[` continues on the lines that follow.
+        if (value.startsWith("[") && !value.includes("]")) {
+          pendingFlow = { key: listKey, text: value };
+        } else {
+          pushList(listKey, value);
+        }
         currentListKey = null;
-      } else {
-        currentListKey = "aliases";
       }
     } else if (key === "title") {
       result.title = value.replace(/^["']|["']$/g, "");
@@ -194,6 +216,9 @@ function parseFrontmatter(lines: string[]): Frontmatter {
       currentListKey = null;
     }
   }
+  // A sequence that never closed still holds real tags; dropping them because
+  // the document is malformed is the one direction that leaks.
+  if (pendingFlow) pushList(pendingFlow.key, pendingFlow.text);
   return result;
 }
 

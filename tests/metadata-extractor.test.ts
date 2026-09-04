@@ -364,4 +364,26 @@ describe("link extraction (linear walkers)", () => {
     expect(extractMetadata("body #private more").tags).toEqual(["private"]);
     expect(extractMetadata("body #work/private more").tags).toEqual(["work/private"]);
   });
+
+  it("follows a flow sequence that wraps onto the next line", () => {
+    // YAML lets `[a, b]` wrap, and hand-editing produces it readily. The value
+    // on the `tags:` line was taken as the whole list, so everything after the
+    // first line was dropped — a user who had excluded `secret` had the note
+    // indexed and served while it looked excluded.
+    expect(extractMetadata("---\ntags: [private,\n  secret]\n---\n\nbody\n").tags)
+      .toEqual(["private", "secret"]);
+    expect(extractMetadata("---\ntags: [a,\n  b,\n  c]\n---\n\nbody\n").tags)
+      .toEqual(["a", "b", "c"]);
+    expect(extractMetadata("---\naliases: [One,\n  Two]\n---\n\nbody\n").aliases)
+      .toEqual(["One", "Two"]);
+    // A sequence that never closes still holds real tags; losing them because
+    // the document is malformed is the one direction that leaks.
+    expect(extractMetadata("---\ntags: [private,\n  secret\n---\n\nbody\n").tags)
+      .toContain("private");
+    // The ordinary shapes are untouched.
+    expect(extractMetadata("---\ntags: [private, secret]\n---\n").tags)
+      .toEqual(["private", "secret"]);
+    expect(extractMetadata("---\ntags:\n  - private\n  - secret\n---\n").tags)
+      .toEqual(["private", "secret"]);
+  });
 });
