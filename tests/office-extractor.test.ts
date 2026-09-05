@@ -135,6 +135,26 @@ describe("zip reader", () => {
     const lying = { ...dir[0], uncompressedSize: 10 };
     await expect(readZipEntry(storedZip, lying, { remaining: 500 })).rejects.toThrow(/too large/);
   });
+
+  it("rejects a central-directory entry whose declared name/extra/comment length runs past the archive", () => {
+    const zip = makeZip({ "word/document.xml": "<w:document/>" }, { store: true });
+    // Locate the (single) central-directory entry via the EOCD's offset field,
+    // the same way readZipDirectory does, and forge its declared name length so
+    // the entry claims to overrun the end of the buffer.
+    const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+    const eocd = zip.length - 22; // makeZip appends the EOCD as the final 22 bytes, no comment
+    const cdOffset = view.getUint32(eocd + 16, true);
+    view.setUint16(cdOffset + 28, 60000, true); // nameLen
+    expect(() => readZipDirectory(zip)).toThrow(/corrupt zip/);
+  });
+
+  it("throws instead of returning empty when a local header's declared name/extra length runs past the archive", async () => {
+    const zip = makeZip({ "word/document.xml": "<w:document/>" }, { store: true });
+    const entry = readZipDirectory(zip)[0];
+    const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+    view.setUint16(entry.localHeaderOffset + 26, 50000, true); // nameLen
+    await expect(readZipEntry(zip, entry)).rejects.toThrow(/corrupt zip/);
+  });
 });
 
 describe("OfficeExtractor", () => {

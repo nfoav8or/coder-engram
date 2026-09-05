@@ -65,7 +65,7 @@ export interface ChunkOptions {
 const DEFAULTS = { maxChars: 2000, overlapChars: 150 };
 
 const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
-const FENCE = /^(\s*)(```|~~~)/;
+const FENCE = /^(\s*)(`{3,}|~{3,})/;
 
 /** An ATX heading line: its level (`#` count) and its title, trimmed. */
 export interface MarkdownHeading {
@@ -77,7 +77,9 @@ export interface MarkdownHeading {
  * Walk Markdown lines, reporting which of them are real headings.
  *
  * Fence-aware, and the closing marker must MATCH the one that opened the fence
- * — a ``` inside a ~~~ block is content, not a terminator. This is the one
+ * and be at least as long (CommonMark's rule) — a ``` inside a ~~~ block is
+ * content, not a terminator, and so is a 3-backtick line inside a 4-backtick
+ * block. This is the one
  * definition of "is this line a heading" in the codebase, exported because
  * getting it subtly wrong elsewhere has consequences beyond chunking: a second
  * scanner that toggled on any fence-looking line desynchronized on an unmatched

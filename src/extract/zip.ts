@@ -80,6 +80,9 @@ export function readZipDirectory(data: Uint8Array): ZipEntry[] {
     const nameLen = view.getUint16(offset + 28, true);
     const extraLen = view.getUint16(offset + 30, true);
     const commentLen = view.getUint16(offset + 32, true);
+    if (offset + 46 + nameLen + extraLen + commentLen > data.length) {
+      throw new Error("corrupt zip: central-directory entry runs past the archive");
+    }
     const localHeaderOffset = view.getUint32(offset + 42, true);
     const name = nameDecoder.decode(data.subarray(offset + 46, offset + 46 + nameLen));
     entries.push({ name, method, compressedSize, uncompressedSize, localHeaderOffset });
@@ -103,6 +106,9 @@ export async function readZipEntry(
   const nameLen = view.getUint16(at + 26, true);
   const extraLen = view.getUint16(at + 28, true);
   const start = at + 30 + nameLen + extraLen;
+  if (start + entry.compressedSize > data.length) {
+    throw new Error(`corrupt zip: local entry runs past the archive for ${entry.name}`);
+  }
   const raw = data.subarray(start, start + entry.compressedSize);
   const cap = budget ? Math.min(MAX_INFLATED_BYTES, budget.remaining) : MAX_INFLATED_BYTES;
   if (entry.uncompressedSize > cap) {

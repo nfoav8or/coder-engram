@@ -33,6 +33,25 @@ describe("chunkMarkdown", () => {
     expect(chunks[0].text).toContain("# not a heading");
   });
 
+  it("does not let a shorter same-char fence inside a longer one close it early", () => {
+    // CommonMark: a closing fence must be the same character and at least as
+    // long as the opening one. An opening fence of 4+ backticks/tildes used to
+    // remember only 3 chars, so a 3-char fence of the same type nested inside
+    // closed the block early and a `#` line inside became a real heading.
+    const md = [
+      "# Real",
+      "````",
+      "```",
+      "# not a heading",
+      "````",
+      "after",
+    ].join("\n");
+    const chunks = chunkMarkdown(md);
+    expect(chunks.map((c) => c.heading)).toEqual(["Real"]);
+    expect(chunks[0].text).toContain("```");
+    expect(chunks[0].text).toContain("# not a heading");
+  });
+
   it("splits a long section into multiple windowed chunks", () => {
     const para = "word ".repeat(80).trim(); // ~400 chars
     const md = ["# Big", para, "", para, "", para, "", para].join("\n");
