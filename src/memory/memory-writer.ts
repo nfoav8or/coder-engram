@@ -554,7 +554,7 @@ export class MemoryWriter {
    */
   private async recordSupersession(entry: PendingEntry): Promise<SupersessionOutcome> {
     if (!entry.supersedes) return "none";
-    const ref = parseSupersedesRef(entry.supersedes, this.paths.memory);
+    const ref = parseSupersedesRef(entry.supersedes, this.paths);
     // Validated at propose time too; re-checked here because the inbox is a
     // file a user can edit by hand between the two.
     if (!ref) return "invalid";
@@ -631,7 +631,7 @@ export class MemoryWriter {
   private supersessionKeysOf(entries: PendingBlockFields[]): Set<string> {
     const keys = new Set<string>();
     for (const e of entries) {
-      const ref = e.supersedes ? parseSupersedesRef(e.supersedes, this.paths.memory) : null;
+      const ref = e.supersedes ? parseSupersedesRef(e.supersedes, this.paths) : null;
       if (ref) keys.add(supersessionKey(ref.path, ref.heading));
     }
     return keys;

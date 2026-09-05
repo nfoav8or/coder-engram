@@ -7,7 +7,7 @@ import {
 } from "../src/memory/supersession";
 import { formatAppliedBlock } from "../src/memory/pending-inbox";
 
-const MEMORY_ROOT = "Claude Code/Memory";
+const MEMORY_ROOT = { memory: "Claude Code/Memory", inbox: "Claude Code/Memory/Inbox" };
 
 describe("parseSupersedesRef", () => {
   it("accepts a path-and-heading reference inside the memory root", () => {
@@ -31,6 +31,15 @@ describe("parseSupersedesRef", () => {
     expect(
       parseSupersedesRef("Claude Code/Memory/../../escape.md#X", MEMORY_ROOT),
     ).toBeNull();
+  });
+
+  it("refuses a target in the inbox: a proposal may not retire an unreviewed proposal or a ledger", () => {
+    expect(
+      parseSupersedesRef("Claude Code/Memory/Inbox/pending-memory.md#Pending Memory: 2026-01-01 00:00", MEMORY_ROOT),
+    ).toBeNull();
+    expect(parseSupersedesRef("Claude Code/Memory/Inbox/rejected-memory.md#Rejected Memory: x", MEMORY_ROOT)).toBeNull();
+    expect(parseSupersedesRef("Claude Code/Memory/Inbox/superseded-memory.md#Superseded Memory: x", MEMORY_ROOT)).toBeNull();
+    expect(parseSupersedesRef("Claude Code/Memory/Global/./../Inbox/pending-memory.md#X", MEMORY_ROOT)).toBeNull();
   });
 
   it("refuses a bare path with no heading", () => {
@@ -259,8 +268,7 @@ describe("a stray fence cannot widen what is stripped", () => {
     // segment validated — but the key was built from the raw string while every
     // consumer builds it from a real note path, so the retirement never matched
     // anything and the memory kept being served as if nothing had happened.
-    const root = "Claude Code/Memory";
-    const ref = parseSupersedesRef("Claude Code/Memory/Global/./profile.md#Some Heading", root);
+    const ref = parseSupersedesRef("Claude Code/Memory/Global/./profile.md#Some Heading", MEMORY_ROOT);
     expect(ref?.path).toBe("Claude Code/Memory/Global/profile.md");
     expect(supersessionKey(ref!.path, ref!.heading)).toBe(
       supersessionKey("Claude Code/Memory/Global/profile.md", "Some Heading"),

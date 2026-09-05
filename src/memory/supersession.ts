@@ -43,10 +43,12 @@ export function supersessionKey(path: string, heading: string): string {
  *
  * Two rules, both load-bearing:
  *
- *   - **Inside the memory root only.** Superseding hides a section from search
- *     and from context assembly, so a reference that could name an arbitrary
- *     vault note would let an agent's proposal quietly retire the user's own
- *     writing. Memory is the only thing this mechanism may retire.
+ *   - **Inside the memory root only, and never the inbox.** Superseding hides a
+ *     section from search and from context assembly, so a reference that could
+ *     name an arbitrary vault note would let an agent's proposal quietly retire
+ *     the user's own writing. Memory is the only thing this mechanism may
+ *     retire — and the inbox's pending proposals and ledgers are not memory yet,
+ *     so a proposal may not retire another proposal that nobody has reviewed.
  *   - **A heading is required.** A bare path would retire a whole file in one
  *     click, and a reviewer approving "this replaces that decision" is not
  *     approving the loss of everything else in the file.
@@ -54,7 +56,10 @@ export function supersessionKey(path: string, heading: string): string {
  * Returns `null` for anything that fails either rule; callers surface that as a
  * validation error rather than silently proposing an inert reference.
  */
-export function parseSupersedesRef(raw: string, memoryRoot: string): SupersedesRef | null {
+export function parseSupersedesRef(
+  raw: string,
+  roots: { memory: string; inbox: string },
+): SupersedesRef | null {
   const trimmed = raw.trim();
   const hash = trimmed.indexOf("#");
   if (hash <= 0) return null;
@@ -70,7 +75,7 @@ export function parseSupersedesRef(raw: string, memoryRoot: string): SupersedesR
     .replace(/^#+\s*/, "");
   if (!path || !heading) return null;
   try {
-    if (!isInsideRoot(memoryRoot, path)) return null;
+    if (!isInsideRoot(roots.memory, path) || isInsideRoot(roots.inbox, path)) return null;
     // The CANONICAL path, not the one that was typed. `isInsideRoot` normalizes
     // before comparing, so `Memory/Global/./profile.md` passes validation — but
     // the key is built from this string, while every place the key is later

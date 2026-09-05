@@ -1233,7 +1233,7 @@ export class EngramEngine {
     // Validated here, at the domain boundary, rather than at each caller: a
     // reference that cannot be acted on must never reach the inbox, where a
     // reviewer would approve a replacement that silently retires nothing.
-    if (input.supersedes && !parseSupersedesRef(input.supersedes, this.paths.memory)) {
+    if (input.supersedes && !parseSupersedesRef(input.supersedes, this.paths)) {
       throw new ValidationError(
         `"supersedes" must be "<path>#<heading>" naming a section of a memory file under ` +
           `${this.paths.memory}. A path outside memory, or a path with no heading, is refused.`,
