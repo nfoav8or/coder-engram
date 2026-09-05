@@ -235,7 +235,7 @@ function isExternalUrl(target: string): boolean {
  * semantics (same targets, same skips) in a single linear pass.
  */
 
-/** Wikilink targets: `[[target]]`, `[[target|alias]]`, `[[target#heading]]`. */
+/** Wikilink targets: `[[target]]`, `[[target|alias]]`, `[[target#heading]]`, `[[target^block]]`. */
 function extractWikilinkTargets(prose: string): string[] {
   const out: string[] = [];
   let i = 0;
@@ -251,8 +251,9 @@ function extractWikilinkTargets(prose: string): string[] {
       close = prose.indexOf("]]", innerStart);
       if (close < 0) return out;
     }
-    // One pass over the candidate: the target ends at the first `#`/`|`, and
-    // a lone `]` anywhere before `close` invalidates the whole candidate.
+    // One pass over the candidate: the target ends at the first `#`/`|`/`^`
+    // (heading, alias, or block reference), and a lone `]` anywhere before
+    // `close` invalidates the whole candidate.
     let cut = close;
     let bad = -1;
     for (let k = innerStart; k < close; k++) {
@@ -261,7 +262,7 @@ function extractWikilinkTargets(prose: string): string[] {
         bad = k;
         break;
       }
-      if (cut === close && (c === 0x23 /* # */ || c === 0x7c /* | */)) {
+      if (cut === close && (c === 0x23 /* # */ || c === 0x7c /* | */ || c === 0x5e /* ^ */)) {
         cut = k;
         // An empty target kills the candidate no matter what follows — bail
         // now, or a `[[#`-flood re-scans to a distant `]]` per candidate.

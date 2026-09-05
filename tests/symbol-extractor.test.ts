@@ -62,4 +62,19 @@ describe("extractSymbols", () => {
     const doc = "~~~\n```\nfunction stillInside() {}\n~~~";
     expect(extractSymbols(doc)).toContain("stillInside");
   });
+
+  it("does not mistake a using-directive for a namespace declaration", () => {
+    // `using namespace std;` brings a namespace into scope, it does not
+    // declare one — extracting "std" pollutes the index with a symbol the
+    // chunk never defines.
+    expect(extractSymbols(fenced("using namespace std;", "cpp"))).not.toContain("std");
+    expect(extractSymbols(fenced("namespace Foo {", "cpp"))).toContain("Foo");
+  });
+
+  it("stays linear on an adversarial 50KB line", () => {
+    const hostile = fenced("using namespace ".repeat(3000) + "std;", "cpp");
+    const start = Date.now();
+    extractSymbols(hostile);
+    expect(Date.now() - start).toBeLessThan(10);
+  });
 });

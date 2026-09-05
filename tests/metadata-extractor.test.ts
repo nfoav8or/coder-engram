@@ -386,4 +386,18 @@ describe("link extraction (linear walkers)", () => {
     expect(extractMetadata("---\ntags:\n  - private\n  - secret\n---\n").tags)
       .toEqual(["private", "secret"]);
   });
+
+  it("cuts a wikilink target at a block reference, not just heading/alias", () => {
+    // `^` marks an Obsidian block reference (`[[Note^abc123]]`), and a
+    // heading-scoped block ref reads `[[Note#^abc]]`. Either way the link
+    // target is the note, not the block id tacked onto it — a target left
+    // uncut never resolves to the note in the link graph.
+    expect(extractMetadata("[[Note^abc123]]").links).toEqual(["Note"]);
+    expect(extractMetadata("[[Note#Heading]]").links).toEqual(["Note"]);
+    expect(extractMetadata("[[Note|alias]]").links).toEqual(["Note"]);
+    expect(extractMetadata("[[Note#^abc]]").links).toEqual(["Note"]);
+    // A `^` inside alias text is just alias content — the `|` already cut
+    // the target before this character is ever reached.
+    expect(extractMetadata("[[Note|see ^here]]").links).toEqual(["Note"]);
+  });
 });

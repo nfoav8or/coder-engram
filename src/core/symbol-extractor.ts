@@ -37,7 +37,8 @@ export const MAX_SYMBOLS_PER_CHUNK = 32;
  */
 const DECLARATIONS: RegExp[] = [
   // function/class/interface/type/enum/struct/trait/impl/namespace/module NAME
-  /\b(?:function|class|interface|type|enum|struct|trait|impl|namespace|module|record)\s+([A-Za-z_$][\w$]*)/g,
+  // — but not `using namespace std;`, a reference, not a declaration.
+  /(?<!using\s)\b(?:function|class|interface|type|enum|struct|trait|impl|namespace|module|record)\s+([A-Za-z_$][\w$]*)/g,
   // Python def, Rust fn, Go func, shell/Perl sub, Pascal procedure
   /\b(?:def|fn|func|sub|procedure)\s+([A-Za-z_$][\w$]*)/g,
   // Go methods: func (r *Repo) Save(

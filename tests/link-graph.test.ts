@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { linkKey, relatedNotes } from "../src/indexing/link-graph";
 import { IndexedChunk } from "../src/indexing/index-manager";
+import { extractMetadata } from "../src/core/metadata-extractor";
 
 function chunk(notePath: string, links: string[], id = notePath): IndexedChunk {
   return {
@@ -79,5 +80,14 @@ describe("relatedNotes", () => {
       chunk("Notes/src.md", ["foo"]),
     ];
     expect(relatedNotes("Notes/src.md", collide).linksTo).toEqual(["X/foo.md", "Y/foo.md"]);
+  });
+
+  it("resolves a block-reference wikilink to the note, not the block id", () => {
+    // `[[Foo^abc123]]` is an Obsidian block reference. The extracted link
+    // target must be "Foo", or its key ("foo^abc123") never matches the
+    // indexed note's key ("foo") and the link silently drops.
+    const links = extractMetadata("See [[Foo^abc123]] for details.").links;
+    const withBlockRef = [chunk("Notes/src.md", links), chunk("Notes/foo.md", [])];
+    expect(relatedNotes("Notes/src.md", withBlockRef).linksTo).toEqual(["Notes/foo.md"]);
   });
 });
