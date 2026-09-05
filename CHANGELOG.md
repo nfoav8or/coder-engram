@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-09-04
+
+A correctness release from the review cycle that followed 0.15.0: one boundary
+the memory model promised but did not hold, two server-side consistency gaps,
+five extraction and link defects, and a lexical scoring rewrite with
+byte-identical output. **No index rebuild** — upgrading changes nothing about
+your data; the two fixes that alter what a note yields (fence length, UTF-16
+text attachments) apply to a note the next time it changes.
+
+### Fixed
+
+- **A memory proposal can no longer retire another proposal.** `supersedes` was
+  validated against the memory root, and the review inbox lives under that root —
+  so a reference to `Memory/Inbox/pending-memory.md#Pending Memory: …` (or to a
+  ledger) passed, and applying the entry hid an unreviewed proposal from search
+  and note reads while it still sat in the queue. The inbox is now refused at
+  `add_memory` and again at apply, matching the exclusion the overlap report
+  already made. Nothing is memory until a reviewer applies it.
+- **`reindex_vault` is rate-limited before it is refused.** The
+  indexing-disabled check ran first, so with indexing off the tool's 15 s
+  cooldown was never consulted and refusals were free to send at any rate. The
+  limiter now runs first, as it does for every other tool.
+- **A rejected request body reports a client-safe message.** The 413 path used
+  the unredacted message form; no current body error carries a path, but it is
+  the one server response that bypassed `toClientMessage`.
+- **Block-reference wikilinks resolve.** `[[Note^blockid]]` kept `^blockid` in
+  its target, so the link never matched the note and was silently dropped from
+  `find_related_notes` in both directions. The target is now cut at `^` as it is
+  at `#` and `|`. Applies to notes as they are next re-read (their mtime moving);
+  no index rebuild is forced for it.
+- **`using namespace std;` no longer declares a symbol `std`.** The
+  namespace/module declaration pattern now skips a `using` directive.
+- **A longer code fence is closed only by a fence at least as long.** The
+  chunker remembered three characters of any opening fence, so a 3-backtick
+  line inside a 4-backtick block (the usual way to show Markdown that itself
+  contains a fence) closed the block early, and a `#` line inside it became a
+  heading — a false chunk boundary for the chunker and a false declaration
+  source for the symbol extractor, which share the scanner. CommonMark's rule
+  is now the rule. Applies to a note the next time its mtime moves; no index
+  rebuild is forced for it, on the same reasoning as 0.14.1's heading fix.
+- **UTF-16 text attachments decode.** `.txt`/`.csv` files saved as UTF-16 (a
+  common Windows Notepad default) were decoded as UTF-8 and indexed as mojibake
+  with a NUL between every character. The decoder is now chosen by byte-order
+  mark (UTF-16 LE, UTF-16 BE, else UTF-8). The extraction cache is keyed on
+  mtime, so an already-cached file re-extracts when it next changes; the cache
+  version is not bumped, which would re-extract every attachment for a case this
+  narrow.
+- **A zip whose directory or entry runs past the archive is refused.** Two
+  length fields were trusted without a bounds check: an oversized
+  central-directory name length silently slurped the archive's trailer into the
+  entry name, and an oversized local-header name length made an entry read as
+  empty with no error. Both now throw, as the module promises for malformed
+  input, so a corrupt Office document is reported rather than indexed as
+  nothing.
+
+### Performance
+
+- **Lexical scoring walks each query term's posting list instead of testing
+  every term against every candidate.** Same (chunk, term) contributions in the
+  same order, so scores and ordering are byte-identical (pinned by a golden
+  test); 26% faster end to end at 40,000 chunks and 40% at 5,000, measured with
+  alternating trials.
+
 ## [0.15.0] — 2026-09-04
 
 A privacy release. Four separate ways an exclusion covered less than it read as
@@ -2017,7 +2080,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.15.0...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.15.1...HEAD
+[0.15.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.15.1
 [0.15.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.15.0
 [0.14.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.14.1
 [0.14.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.14.0

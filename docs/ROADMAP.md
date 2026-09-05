@@ -191,6 +191,7 @@ described in full in [CHANGELOG.md](../CHANGELOG.md); the short version:
 
 | Version | Fix |
 | --- | --- |
+| 0.15.1 | **Correctness, from the cycle after 0.15.0.** `supersedes` could name a pending proposal or a ledger (the inbox is under the memory root) and hide an unreviewed proposal on apply — refused now. `reindex_vault` rate-limited before its refusal; 413 message client-safe. Block-reference wikilinks resolve; CommonMark fence-length rule (a 3-backtick line no longer closes a 4-backtick block); UTF-16 text attachments decode by BOM; zip directory/entry bounds checks; `using namespace` is not a declaration. Term-major lexical scoring, byte-identical scores pinned by a golden test, 26–40% faster in A/B. No index rebuild. |
 | 0.15.0 | **Privacy and data safety, from four review cycles.** Four more exclusion fail-opens (leading `/` in a path pattern, `**` needing a directory on each side, a wrapped `tags:` list, a tag not covering its children — the last a deliberate widening, matching Obsidian, and the reason `INDEX_VERSION` is 8). A discarded proposal came back through search as unlabelled memory. Two append-overwrite races. An interrupted write's parked file is restored at load, proven on real Obsidian. Path redaction leaked after any separator the allowlist did not name; the Host check ignored the bound address for loopback spellings; project names are now NFC, stripped of control/format characters, bounded, and never a Windows device name. RTF CP1252, a malformed `\\bin`, one bad slide discarding a deck, a silent embeddings-cache discard, MMR 6× faster with identical output, concurrent shard load, retrieval mode on the control panel. Measured and declined: three query-path micro-optimizations and the all-unchanged refresh (2.1 ms at 9k chunks). |
 | 0.14.1 | Six fixes from the post-0.14.0 review loop, three of them silent. A heading line longer than the chunk window drove the per-piece budget to its floor and the body was sliced one character per chunk, so the note could not be found by searching for anything written in it. An ordinary `## ` line inside applied memory ended a retired section early, and a non-canonical `supersedes` path was keyed as typed while every consumer keyed the real note path — both made superseding report success and keep serving the retired memory. `tokenBudget` could be overrun nearly sixfold by one result, because nothing bounded the heading every result label embeds. Plus a truncation notice added on top of a cap rather than against it, a truncation that could split a surrogate pair, and `get_note_context` calling a fully-retired note "not indexed". The scale benchmark's corpus gained fenced code — it had none, so it could not see the symbol index it was being used to judge. **No `INDEX_VERSION` bump** (deliberate; see the release notes). |
 | 0.9.1 | RTF extraction stopped walking a document one character at a time (19 MB: 1.2 s and 212 MB of heap → 91 ms and 23 MB, byte-identical output). |
@@ -240,7 +241,19 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing unreleased — 0.15.0 has just been cut.
+- Nothing unreleased — 0.15.1 has just been cut.
+
+### What 0.15.1 carried
+
+- **A correctness release**, described in full in [CHANGELOG.md](../CHANGELOG.md).
+  The one boundary fix: a proposal's `supersedes` reference is refused when it
+  names anything under the review inbox, since a pending proposal or a ledger is
+  not memory and a proposal must not be able to hide another that nobody has
+  reviewed. Two server consistency gaps (`reindex_vault` limiter order, the 413
+  message form), five extraction and link defects, and a lexical scoring rewrite
+  measured at 26–40% with output pinned identical. The scale benchmark was
+  re-run and recorded; its spread exceeded the change, which is why the A/B
+  harness is the cited number.
 
 ### What 0.15.0 carried
 

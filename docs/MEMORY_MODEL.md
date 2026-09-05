@@ -192,8 +192,13 @@ Two rules bound what may be named, checked at `add_memory` (so an unusable
 reference never reaches the inbox) and re-checked at apply (because the inbox is
 a file a person can edit in between):
 
-- **Inside the memory root.** Retiring is a hide, so a reference able to name any
-  vault note would let a proposal quietly suppress the user's own writing.
+- **Inside the memory root, and not in the inbox.** Retiring is a hide, so a
+  reference able to name any vault note would let a proposal quietly suppress the
+  user's own writing. The inbox sits under the memory root but holds nothing that
+  *is* memory yet — pending proposals and the two ledgers — and a proposal that
+  could name a pending entry would hide an unreviewed proposal from search the
+  moment a reviewer applied the one that named it. The overlap report already
+  excluded the inbox for the same reason; the reference check now does too.
 - **A heading is required.** A bare path would retire a whole file in one click.
 
 Applying the entry appends a record to `Memory/Inbox/superseded-memory.md`.
