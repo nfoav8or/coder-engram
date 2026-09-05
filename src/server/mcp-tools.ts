@@ -949,10 +949,10 @@ const reindexTool: Tool = {
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   async handler(_args, ctx) {
+    ctx.rateLimiter.enforce("reindex_vault", REINDEX_COOLDOWN_MS);
     if (!ctx.settings.indexingEnabled) {
       throw new ValidationError("Indexing is disabled in settings.");
     }
-    ctx.rateLimiter.enforce("reindex_vault", REINDEX_COOLDOWN_MS);
     const { noteCount, chunkCount } = await ctx.engine.reindex();
     return `Reindexed: ${noteCount} note(s), ${chunkCount} chunk(s).`;
   },

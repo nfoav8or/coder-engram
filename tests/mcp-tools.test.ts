@@ -309,6 +309,13 @@ describe("reindex_vault rate limiting", () => {
     const registry = new ToolRegistry();
     await expect(registry.callText("reindex_vault", {}, ctx)).rejects.toThrow(/disabled/i);
   });
+
+  it("rate-limits even while indexing is disabled, so refusals are not free to flood", async () => {
+    const { ctx } = makeContext({}, { indexingEnabled: false });
+    const registry = new ToolRegistry();
+    await expect(registry.callText("reindex_vault", {}, ctx)).rejects.toThrow(/disabled/i);
+    await expect(registry.callText("reindex_vault", {}, ctx)).rejects.toThrow(/Rate limited/);
+  });
 });
 
 describe("RateLimiter.enforceWindow", () => {

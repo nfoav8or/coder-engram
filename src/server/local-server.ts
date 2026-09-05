@@ -19,7 +19,7 @@ import * as http from "node:http";
 import { EngramEngine } from "../engine";
 import { EngramSettings } from "../settings/settings";
 import { Logger } from "../utils/logger";
-import { toMessage, ConfigError } from "../utils/errors";
+import { toMessage, toClientMessage, ConfigError } from "../utils/errors";
 import { assertValidPort } from "../utils/validation";
 import { checkAuth } from "./auth";
 import { clearTimer, setTimer } from "../utils/timeout";
@@ -346,7 +346,7 @@ export class LocalServer {
     try {
       body = await readBody(req, MAX_BODY_BYTES);
     } catch (err) {
-      endJson(res, 413, { error: toMessage(err) });
+      endJson(res, 413, { error: toClientMessage(err) });
       return;
     }
 
