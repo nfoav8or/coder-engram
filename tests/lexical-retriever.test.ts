@@ -177,3 +177,65 @@ describe("LexicalRetriever", () => {
     expect(results.length).toBe(4);
   });
 });
+
+describe("LexicalRetriever scoring pin", () => {
+  // Golden ids and exact scores recorded from the chunk-major scoring loop
+  // before it was rewritten term-major (walk each query term's posting list,
+  // accumulate per chunk). The rewrite promises byte-identical scores and
+  // ordering — including symbol, filename/alias and heading credit and the
+  // index-order tie-break — so this pins them exactly, not approximately.
+  const c = (id: string, text: string, extra: Partial<IndexedChunk> = {}): IndexedChunk =>
+    chunk({ id, notePath: `Notes/${id}.md`, text, ...extra });
+  const pinCorpus: IndexedChunk[] = [
+    c("a", "The vault indexing pipeline chunks markdown notes for retrieval."),
+    c("b", "Embedding providers include Ollama and OpenAI compatible backends.", { aliases: ["embeddings"] }),
+    c("c", "We decided to use a local JSON index for indexing performance.", {
+      heading: "Indexing decision",
+      headingPath: ["Indexing decision"],
+    }),
+    c("d", "function resolveInVault(root, rel) { return join(root, rel) }", { symbols: ["resolveInVault"] }),
+    c("e", "resolveInVault rejects absolute paths and traversal; indexing never escapes the vault."),
+    c("f", "Retrieval fuses lexical and vector scores with reciprocal rank fusion.", {
+      heading: "Retrieval",
+      headingPath: ["Retrieval"],
+    }),
+    c("g", "Ollama runs embeddings locally; nothing leaves the machine."),
+    c("h", "Notes notes notes notes notes about notes.", { notePath: "Notes/a.md" }),
+    c("i", "Vault backup and restore.", { notePath: "Notes/Vault Backup.md" }),
+    c("j", "Pipeline stages: scan, chunk, embed, index, retrieve.", { tags: ["pipeline"] }),
+  ];
+  const golden: Record<string, Array<[string, number]>> = {
+    "indexing vault": [
+      ["a", 2.304872958341975],
+      ["e", 2.0441079473416264],
+      ["i", 1.547181610000251],
+      ["c", 1.2458368107440394],
+    ],
+    resolveInVault: [
+      ["d", 4.364860279791393],
+      ["e", 1.3223623181096078],
+    ],
+    "ollama embeddings": [
+      ["g", 3.49619367964031],
+      ["b", 3.4834850535012523],
+    ],
+    "notes retrieval pipeline": [
+      ["a", 4.473164666433138],
+      ["h", 2.9694826367147296],
+      ["f", 1.611898877634406],
+      ["j", 1.491054888811046],
+    ],
+    "vault backup": [
+      ["i", 4.239142441456095],
+      ["a", 1.1524364791709876],
+      ["e", 1.0220539736708132],
+    ],
+  };
+
+  for (const [query, expected] of Object.entries(golden)) {
+    it(`reproduces the recorded ranking and exact scores for "${query}"`, () => {
+      const got = search(query, pinCorpus, { limit: 20 }).map((r) => [r.chunk.id, r.score]);
+      expect(got).toEqual(expected);
+    });
+  }
+});

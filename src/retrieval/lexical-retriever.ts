@@ -256,40 +256,43 @@ export class LexicalRetriever implements Retriever {
       return Math.log(1 + (stats.N - n + 0.5) / (n + 0.5));
     });
 
-    // Candidates come from the posting lists, not a full-corpus scan: only a
-    // chunk holding at least one query term (body or field) can score > 0.
-    // Sorted ascending so tie-breaking matches the old index-order iteration.
-    const candidateIdx = new Set<number>();
-    for (const term of uniqueQueryTerms) {
+    // Term-major: walk each query term's posting list and accumulate into a
+    // per-chunk score, so only the (chunk, term) pairs that can contribute are
+    // ever visited. The chunk-major form — union the postings, then test every
+    // query term against every candidate — spent most of its time on lookups
+    // for terms a chunk did not hold (~28% of end-to-end query time at 40k
+    // chunks). Terms are still visited in uniqueQueryTerms order for any given
+    // chunk, so each score is the same float sum as before, and the ascending
+    // index scan below keeps the old index-order tie-breaking. Every posting
+    // hit contributes > 0 (idf is always positive), so `score > 0` is exactly
+    // "appeared in some posting list".
+    const scores = new Float64Array(stats.N);
+    for (let t = 0; t < uniqueQueryTerms.length; t++) {
+      const term = uniqueQueryTerms[t];
       const list = stats.postings.get(term);
-      if (list) for (const i of list) candidateIdx.add(i);
-    }
-    const candidateOrder = Array.from(candidateIdx).sort((a, b) => a - b);
-
-    const scored: Array<{ chunk: IndexedChunk; score: number; i: number }> = [];
-    for (const i of candidateOrder) {
-      const tf = stats.tf[i];
-      let score = 0;
-      for (let t = 0; t < uniqueQueryTerms.length; t++) {
-        const term = uniqueQueryTerms[t];
+      if (!list) continue;
+      for (const i of list) {
         // Credited whether or not the body also holds the term, unlike the
         // filename/alias credit below. A declaration line IS body text, so the
         // chunk that defines `resolveInVault` essentially always mentions it —
         // gating this on absence meant the boost could never fire on the very
         // chunks it exists to promote.
-        if (stats.symbolTerms[i].has(term)) score += idf[t] * SYMBOL_MATCH_WEIGHT;
-        const f = tf.get(term);
+        if (stats.symbolTerms[i].has(term)) scores[i] += idf[t] * SYMBOL_MATCH_WEIGHT;
+        const f = stats.tf[i].get(term);
         if (!f) {
-          if (stats.fieldTerms[i].has(term)) score += idf[t] * FIELD_MATCH_WEIGHT;
+          if (stats.fieldTerms[i].has(term)) scores[i] += idf[t] * FIELD_MATCH_WEIGHT;
           continue;
         }
         const denom = f + K1 * (1 - B + (B * stats.docLengths[i]) / stats.avgdl);
         let termScore = (idf[t] * (f * (K1 + 1))) / denom;
         if (stats.headingTerms[i].has(term)) termScore *= HEADING_BOOST;
-        score += termScore;
+        scores[i] += termScore;
       }
+    }
 
-      if (score > 0) scored.push({ chunk: candidates[i], score, i });
+    const scored: Array<{ chunk: IndexedChunk; score: number; i: number }> = [];
+    for (let i = 0; i < stats.N; i++) {
+      if (scores[i] > 0) scored.push({ chunk: candidates[i], score: scores[i], i });
     }
 
     // Rank, diversify so a single long note can't flood the page, then build
