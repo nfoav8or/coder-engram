@@ -539,8 +539,21 @@ export class EngramEngine {
   }
 
   /** Load a persisted index if present; returns true if one was loaded. */
-  async loadIndex(): Promise<boolean> {
-    const loaded = (await this.index.load()) !== null;
+  loadIndex(): Promise<boolean> {
+    // Serialized with reindex/refresh: `IndexManager.load` mutates the same
+    // fields `build`/`refresh` do across several awaits, and at startup the
+    // load runs on one chain while the local server starts on another — a
+    // connected client could call reindex_vault mid-parse and the two passes
+    // would interleave on one manager, with the rebuild persisting the torn
+    // result. Bound to the manager of the moment, like every other pass, so
+    // a root change during the load leaves the new manager for its own load.
+    return this.serializeIndexPass(() => this.doLoadIndex());
+  }
+
+  private async doLoadIndex(): Promise<boolean> {
+    const index = this.index;
+    const loaded = (await index.load()) !== null;
+    if (this.index !== index) return false;
     // Load the vector cache REGARDLESS of whether the chunk index loaded.
     // Vectors are keyed by chunk id and content hash and gated on provider
     // identity, so they survive a chunk-index rebuild by design — that is the
@@ -975,6 +988,7 @@ export class EngramEngine {
    * retirement does not change.
    */
   async getReadableNoteChunks(notePath: string): Promise<IndexedChunk[]> {
+    if (this.isLedgerPath(notePath)) return [];
     return this.dropRetired(this.getNoteChunks(notePath));
   }
 
@@ -1002,6 +1016,16 @@ export class EngramEngine {
    * retiring a memory's text does not remove the note from the link graph.
    */
   unservableNote(notePath: string, servable: number, verb: string): string | null {
+    // A ledger is indexed (so an agent can be told a proposal was refused, with
+    // the reason, through the tool that labels it) but never served as a note:
+    // search and find_symbol already drop it, and the path-taking readers must
+    // not be a fourth door to every rejected proposal's text.
+    if (this.isLedgerPath(notePath)) {
+      return (
+        `"${notePath}" is a review ledger, not a note; it is never ${verb}. ` +
+        `Use list_rejected_memory for what a reviewer turned down.`
+      );
+    }
     if (servable > 0) return null;
     return this.getNoteChunks(notePath).length > 0
       ? `Every section of "${notePath}" has been superseded, so nothing can be ${verb}.`
@@ -1158,13 +1182,20 @@ export class EngramEngine {
     // and "nothing changed in this window" can never disagree. Reading the
     // count from `getIndexStats()` instead would be a second source of truth
     // for one question, and the two are maintained by different code paths.
+    // The ledgers are dropped here as they are from search: a rejection or a
+    // supersession moves their mtime, and reporting that as "a note changed"
+    // points an agent at a file it will then be refused. `indexed` counts the
+    // same set the results draw from, so the two still cannot disagree.
     const mtimes = this.index.getNoteMtimes();
     const changed: Array<{ path: string; mtime: number }> = [];
+    let indexed = 0;
     for (const [path, mtime] of mtimes) {
+      if (this.isLedgerPath(path)) continue;
+      indexed++;
       if (mtime >= sinceMs) changed.push({ path, mtime });
     }
     changed.sort((a, b) => b.mtime - a.mtime || a.path.localeCompare(b.path));
-    return { indexed: mtimes.size, changed: changed.slice(0, limit) };
+    return { indexed, changed: changed.slice(0, limit) };
   }
 
   /**

@@ -553,6 +553,38 @@ describe("the review ledgers are not search results", () => {
     expect(entries.map((e) => e.content).join("\n")).toContain("kokako storage");
   });
 
+  it("refuses the path-taking readers on a ledger, so the readers are not a fourth door", async () => {
+    // search and find_symbol dropped the ledgers; get_note_context,
+    // summarize_note and find_related_notes take a caller path and read the
+    // index directly, so a client that knew the fixed ledger path read every
+    // rejected proposal verbatim.
+    const { engine } = makeEngine({});
+    await engine.addMemory({ type: "decision", content: "We will migrate to kokako storage." });
+    const [pending] = (await engine.getPendingMemory()).entries;
+    await engine.discardPendingMemory(pending, { reason: "Wrong — kokako was rejected." });
+    await engine.reindex();
+    const ledger = engine.getPaths().rejectedMemoryFile;
+    expect(engine.getNoteChunks(ledger).length).toBeGreaterThan(0); // it IS indexed
+
+    expect(await engine.getReadableNoteChunks(ledger)).toEqual([]);
+    expect(engine.unservableNote(ledger, 0, "read")).toMatch(/review ledger/);
+    await expect(engine.summarizeNote(ledger)).rejects.toThrow(/review ledger/);
+    expect(() => engine.getRelatedNotes(ledger)).toThrow(/review ledger/);
+  });
+
+  it("does not report a ledger as a changed note", async () => {
+    const { engine } = makeEngine({ "Notes/a.md": "# A\n\nplain note" });
+    await engine.addMemory({ type: "decision", content: "We will migrate to kokako storage." });
+    const [pending] = (await engine.getPendingMemory()).entries;
+    await engine.discardPendingMemory(pending, { reason: "no" });
+    await engine.reindex();
+    const { indexed, changed } = engine.getChangedNotes(0, 100);
+    const paths = changed.map((c) => c.path);
+    expect(paths).not.toContain(engine.getPaths().rejectedMemoryFile);
+    expect(paths).toContain("Notes/a.md");
+    expect(indexed).toBe(paths.length);
+  });
+
   it("keeps a PENDING proposal searchable, which is the feature", async () => {
     // The pending file is deliberately indexed and labelled `[PENDING REVIEW]`
     // so an agent can see its own proposals. Excluding the whole inbox folder
@@ -951,5 +983,32 @@ describe("code symbols", () => {
     expect((await engine.applyPendingMemory(pending)).superseded).toBe("recorded");
 
     expect(await engine.findSymbol("oldApi", 5)).toEqual([]);
+  });
+});
+
+describe("loadIndex is one of the serialized index passes", () => {
+  it("a reindex issued mid-load runs after the load rather than interleaving on the same manager", async () => {
+    // `IndexManager.load` mutates the fields `build` mutates, across several
+    // awaits. At startup the load runs on one chain while the local server
+    // starts on another, so a connected client could call reindex_vault while
+    // the load was mid-parse; the rebuild then persisted whatever the two
+    // passes left on the shared manager.
+    const adapter = new InMemoryVaultAdapter("v", { "Notes/a.md": "# A\n\nalpha" });
+    let t = 1000;
+    const first = new EngramEngine(adapter, { ...DEFAULT_SETTINGS }, NULL_LOGGER, () => t++);
+    await first.reindex();
+    const origRead = adapter.read.bind(adapter);
+    adapter.read = async (p: string) => {
+      if (p.includes("/Index/")) await new Promise((r) => setTimeout(r, 15));
+      return origRead(p);
+    };
+    const engine = new EngramEngine(adapter, { ...DEFAULT_SETTINGS }, NULL_LOGGER, () => t++);
+    const order: string[] = [];
+    await Promise.all([
+      engine.loadIndex().then(() => order.push("load")),
+      engine.reindex().then(() => order.push("reindex")),
+    ]);
+    expect(order).toEqual(["load", "reindex"]);
+    expect(engine.getIndexStats().chunkCount).toBeGreaterThan(0);
   });
 });
