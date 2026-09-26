@@ -3,7 +3,7 @@ import { linkKey, relatedNotes } from "../src/indexing/link-graph";
 import { IndexedChunk } from "../src/indexing/index-manager";
 import { extractMetadata } from "../src/core/metadata-extractor";
 
-function chunk(notePath: string, links: string[], id = notePath): IndexedChunk {
+function chunk(notePath: string, links: string[], id = notePath, aliases: string[] = []): IndexedChunk {
   return {
     id,
     notePath,
@@ -13,7 +13,7 @@ function chunk(notePath: string, links: string[], id = notePath): IndexedChunk {
     startLine: 0,
     endLine: 0,
     tags: [],
-    aliases: [],
+    aliases,
     links,
     symbols: [],
     mtime: 1000,
@@ -80,6 +80,27 @@ describe("relatedNotes", () => {
       chunk("Notes/src.md", ["foo"]),
     ];
     expect(relatedNotes("Notes/src.md", collide).linksTo).toEqual(["X/foo.md", "Y/foo.md"]);
+  });
+
+  it("resolves a link to a note's frontmatter alias, as Obsidian does", () => {
+    const chunks = [
+      chunk("Folder1/NoteA.md", [], "a", ["Foo", "The A Note"]),
+      chunk("Folder2/NoteB.md", ["Foo"], "b"),
+      chunk("Folder3/NoteC.md", ["the a note"], "c"),
+    ];
+    expect(relatedNotes("Folder2/NoteB.md", chunks).linksTo).toEqual(["Folder1/NoteA.md"]);
+    expect(relatedNotes("Folder1/NoteA.md", chunks).linkedFrom).toEqual([
+      "Folder2/NoteB.md",
+      "Folder3/NoteC.md",
+    ]);
+  });
+
+  it("resolves a link whose Unicode form differs from the filename's (NFD on disk, NFC in the link)", () => {
+    const nfd = "Caf\u0065\u0301";
+    const nfc = "Caf\u00e9";
+    expect(linkKey(`${nfd}.md`)).toBe(linkKey(nfc));
+    const chunks = [chunk(`Notes/${nfd}.md`, [], "cafe"), chunk("Notes/b.md", [nfc], "b")];
+    expect(relatedNotes("Notes/b.md", chunks).linksTo).toEqual([`Notes/${nfd}.md`]);
   });
 
   it("resolves a block-reference wikilink to the note, not the block id", () => {

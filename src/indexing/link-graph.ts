@@ -15,14 +15,18 @@
  */
 
 import { IndexedChunk } from "./index-manager";
+import { foldForCompare } from "../utils/text";
 
-/** Basename of a path/target, without a `.md` extension, lowercased. This is the
- * key an Obsidian-style link resolves by. Anchors (`#…`) and aliases (`|…`) are
- * stripped first so `[[Note#Heading]]` and `note.md#h` both key on "note". */
+/** Basename of a path/target, without a `.md` extension, folded for comparison
+ * (NFC + lowercase, like every other name comparison here — macOS hands back
+ * decomposed filenames, and a link typed elsewhere is composed, so folding case
+ * alone left `Café` unable to find itself). This is the key an Obsidian-style
+ * link resolves by. Anchors (`#…`) and aliases (`|…`) are stripped first so
+ * `[[Note#Heading]]` and `note.md#h` both key on "note". */
 export function linkKey(target: string): string {
   const noAnchor = target.split(/[#|]/)[0];
   const base = noAnchor.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "";
-  return base.replace(/\.md$/i, "").trim().toLowerCase();
+  return foldForCompare(base.replace(/\.md$/i, "").trim());
 }
 
 export interface RelatedNotes {
@@ -39,6 +43,8 @@ interface LinkGraph {
   outKeysByNote: Map<string, Set<string>>;
   /** basename key -> notes with an outbound link resolving to that key. */
   linkersByKey: Map<string, Set<string>>;
+  /** notePath -> every key it answers to: its basename and each alias. */
+  keysByNote: Map<string, Set<string>>;
 }
 
 /** Graph per chunks-array identity. `IndexManager.refresh` keeps the previous
@@ -56,12 +62,27 @@ function buildGraph(chunks: IndexedChunk[]): LinkGraph {
   // straight from the chunks would re-key each one per chunk.
   const outByNote = new Map<string, Set<string>>();
   const byKey = new Map<string, Set<string>>();
+  const keysByNote = new Map<string, Set<string>>();
 
+  const register = (key: string, notePath: string) => {
+    let keySet = byKey.get(key);
+    if (!keySet) byKey.set(key, (keySet = new Set()));
+    keySet.add(notePath);
+    let keys = keysByNote.get(notePath);
+    if (!keys) keysByNote.set(notePath, (keys = new Set()));
+    keys.add(key);
+  };
   for (const c of chunks) {
-    const noteKey = linkKey(c.notePath);
-    let keySet = byKey.get(noteKey);
-    if (!keySet) byKey.set(noteKey, (keySet = new Set()));
-    keySet.add(c.notePath);
+    register(linkKey(c.notePath), c.notePath);
+    // A frontmatter alias resolves a link exactly as the basename does in
+    // Obsidian; without this, a note referenced mostly by its alias reported
+    // no backlinks. Note-level metadata copied onto every chunk, so the set
+    // absorbs the repeats. An alias equal to another note's basename is the
+    // same honest over-approximation a basename collision already is.
+    for (const alias of c.aliases) {
+      const key = linkKey(alias);
+      if (key) register(key, c.notePath);
+    }
 
     let outs = outByNote.get(c.notePath);
     if (!outs) outByNote.set(c.notePath, (outs = new Set()));
@@ -82,7 +103,7 @@ function buildGraph(chunks: IndexedChunk[]): LinkGraph {
     outKeysByNote.set(note, keys);
   }
 
-  return { byKey, outKeysByNote, linkersByKey };
+  return { byKey, outKeysByNote, linkersByKey, keysByNote };
 }
 
 /**
@@ -103,9 +124,12 @@ export function relatedNotes(notePath: string, chunks: IndexedChunk[]): RelatedN
     for (const p of graph.byKey.get(k) ?? []) if (p !== notePath) linksTo.add(p);
   }
 
+  // Backlinks arrive under any key the note answers to, alias or basename.
   const linkedFrom = new Set<string>();
-  for (const note of graph.linkersByKey.get(linkKey(notePath)) ?? []) {
-    if (note !== notePath) linkedFrom.add(note);
+  for (const key of graph.keysByNote.get(notePath) ?? [linkKey(notePath)]) {
+    for (const note of graph.linkersByKey.get(key) ?? []) {
+      if (note !== notePath) linkedFrom.add(note);
+    }
   }
 
   return {
