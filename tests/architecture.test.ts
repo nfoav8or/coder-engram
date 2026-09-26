@@ -60,8 +60,25 @@ const files = sourceFiles("src").map((path) => ({ path, text: readFileSync(path,
  */
 function valueImports(text: string): string[] {
   const out: string[] = [];
-  const pattern = /(?:\bfrom\s*|\brequire\s*\(\s*|\bimport\s*\(\s*)["']([^"']+)["']/g;
-  for (const m of text.matchAll(pattern)) out.push(m[1]);
+  // Any quote style, including a template literal: `require(\`obsidian\`)` is
+  // the same dependency as `require("obsidian")`, and only the two straight
+  // quotes used to be read.
+  const pattern = /(?:\bfrom\s*|\brequire\s*\(\s*|\bimport\s*\(\s*)(["'`])([^"'`]+)\1/g;
+  for (const m of text.matchAll(pattern)) out.push(m[2]);
+  return out;
+}
+
+/**
+ * `require(x)` / `import(x)` whose specifier is not a string literal. The
+ * guard above can only read a literal, so an indirect specifier is a hole in
+ * it by construction — `const m = "obsidian"; require(m)` passed both rules.
+ * Nothing in the tree has a reason to load a module by a computed name, so
+ * the shape itself is refused everywhere rather than allowlisted.
+ */
+function dynamicSpecifiers(text: string): string[] {
+  const out: string[] = [];
+  const pattern = /\b(?:require|import)\s*\(\s*(?!["'`])([^)]*)\)/g;
+  for (const m of text.matchAll(pattern)) out.push(m[1].trim());
   return out;
 }
 
@@ -113,6 +130,15 @@ describe("layering", () => {
     expect(importers.filter((p) => !NODE_ALLOWED.includes(p))).toEqual([]);
   });
 
+  it("loads every module by a literal specifier, so the two rules above can read it", () => {
+    // Comments and strings can mention `import(` legitimately; the code in
+    // this tree does not, so a stripped-of-comments scan is enough.
+    const offenders = files
+      .filter((f) => dynamicSpecifiers(f.text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "")).length > 0)
+      .map((f) => f.path.replace(/\\/g, "/"));
+    expect(offenders).toEqual([]);
+  });
+
   it("guards the guard: the import matcher sees every form that creates a dependency", () => {
     // If `valueImports` silently stopped matching, both rules above would pass
     // vacuously — the same failure mode "finds the sources at all" protects
@@ -124,6 +150,11 @@ describe("layering", () => {
     expect(valueImports('import { readFile } from "node:fs";').some(isNodeModule)).toBe(true);
     expect(valueImports('import { readFile } from "fs";').some(isNodeModule)).toBe(true);
     expect(valueImports("const fs = await import('node:fs');").some(isNodeModule)).toBe(true);
+    expect(valueImports("const o = require(`obsidian`);")).toContain("obsidian");
+    expect(valueImports("const fs = await import(`node:fs`);").some(isNodeModule)).toBe(true);
+    expect(dynamicSpecifiers('const m = "obsidian"; const o = require(m);')).toEqual(["m"]);
+    expect(dynamicSpecifiers("await import(name + suffix)")).toEqual(["name + suffix"]);
+    expect(dynamicSpecifiers('require("obsidian")')).toEqual([]);
     // And does not fire on ordinary relative imports.
     expect(valueImports('import { x } from "../utils/paths";').some(isNodeModule)).toBe(false);
   });
@@ -168,14 +199,37 @@ describe("layering", () => {
     ).toBe(version);
   });
 
+  const PATH_ASSEMBLY = [
+    /`\$\{[a-zA-Z.]*(root|folder|dir)[a-zA-Z.]*\}\//i,
+    // A name appended after the slash is assembly; `startsWith(folder + "/")`
+    // is a boundary comparison and stays allowed.
+    /\b[a-zA-Z.]*(root|folder|dir)[a-zA-Z.]*\s*\+\s*["'`]\/["'`]\s*\+/i,
+    /\[[^\]\n]*\b[a-zA-Z.]*(root|folder|dir)[a-zA-Z.]*\b[^\]\n]*\]\s*\.join\(\s*["'`]\/["'`]\s*\)/i,
+  ];
+
   it("routes every vault path through the resolveInVault choke-point", () => {
     // A path built by concatenation skips normalization and the `..` rejection
     // that every other path gets. `paths.ts` is where that logic lives, so it
     // is the one file allowed to assemble a path from raw pieces.
+    // Three spellings of the same assembly: a template literal, a `+ "/" +`
+    // chain, and an array `.join("/")` — the first was the only one checked.
     const offenders = files
       .filter((f) => !f.path.replace(/\\/g, "/").endsWith("src/utils/paths.ts"))
-      .filter((f) => /`\$\{[a-zA-Z.]*(root|folder|dir)[a-zA-Z.]*\}\//i.test(f.text))
+      .filter((f) => PATH_ASSEMBLY.some((re) => re.test(f.text)))
       .map((f) => f.path);
     expect(offenders).toEqual([]);
+  });
+
+  it("guards the path guard: every assembly spelling is seen", () => {
+    const hits = (text: string) => PATH_ASSEMBLY.some((re) => re.test(text));
+    expect(hits("const p = `${root}/${name}`;")).toBe(true);
+    expect(hits("const p = `${this.paths.folder}/x.md`;")).toBe(true);
+    expect(hits('const p = root + "/" + name;')).toBe(true);
+    expect(hits("const p = folder + '/' + name;")).toBe(true);
+    expect(hits('const p = [dir, name].join("/");')).toBe(true);
+    expect(hits('const p = [this.paths.root, "a", name].join("/");')).toBe(true);
+    expect(hits('const key = a + "/" + b;')).toBe(false);
+    expect(hits('p.startsWith(foldedFolder + "/")')).toBe(false);
+    expect(hits('folder.split("/").join("/")')).toBe(false);
   });
 });

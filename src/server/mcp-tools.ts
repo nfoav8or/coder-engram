@@ -888,14 +888,7 @@ const listProjectsTool: Tool = {
     if (projects.length === 0) {
       return { text: "No projects yet.", structured: { projects: [], total: 0 } };
     }
-    const kept: string[] = [];
-    let used = 0;
-    for (const name of projects) {
-      const cost = kept.length === 0 ? name.length : name.length + 1; // + "\n"
-      if (used + cost > LIST_PROJECTS_MAX_CHARS) break;
-      kept.push(name);
-      used += cost;
-    }
+    const kept = projects.slice(0, blocksThatFit(projects, LIST_PROJECTS_MAX_CHARS, 1));
     const omitted = projects.length - kept.length;
     return {
       text:
@@ -1111,7 +1104,6 @@ const getNoteContextTool: Tool = {
       const end = Math.max(start, endLine0 + 1);
       return start === end ? `Line ${start}` : `Lines ${start}–${end}`;
     };
-    const headingLabel = chunkHeadingLabel;
     const noteSpan = `L${allChunks[0].startLine + 1}–${allChunks[allChunks.length - 1].endLine + 1}`;
     const scope =
       chunks.length === allChunks.length
@@ -1148,12 +1140,12 @@ const getNoteContextTool: Tool = {
     }
     const groupRange = (g: WindowGroup) =>
       rangeLabel(g.chunks[0].startLine, g.chunks[g.chunks.length - 1].endLine);
-    const groupLabel = (g: WindowGroup) => `[${groupRange(g)}] ${headingLabel(g.chunks[0])}`;
+    const groupLabel = (g: WindowGroup) => `[${groupRange(g)}] ${chunkHeadingLabel(g.chunks[0])}`;
 
     // Outline mode: a cheap structural map (one line per section, no body) so
     // the agent can target a ranged read instead of paging a full note.
     if (outline) {
-      const lines = groups.map((g) => `${groupRange(g)}  ${headingLabel(g.chunks[0])}`).join("\n");
+      const lines = groups.map((g) => `${groupRange(g)}  ${chunkHeadingLabel(g.chunks[0])}`).join("\n");
       const header = `${chunks[0].notePath} — outline of ${scope} (note spans ${noteSpan}):`;
       return clipContext(`${header}\n\n${lines}`, maxChars, "narrow with startLine/endLine");
     }

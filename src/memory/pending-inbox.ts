@@ -17,6 +17,7 @@
 import { MemoryPaths, resolveProjectPaths } from "./memory-types";
 import { scanMarkdownLines } from "../core/markdown-chunker";
 import { fnv1a32 } from "../utils/hash";
+import { escapeRegExp } from "../utils/text";
 
 /** The header written above the first entry when the inbox file is created. */
 export const INBOX_HEADER =
@@ -242,7 +243,7 @@ const FIELD_LINE = /^([A-Za-z][A-Za-z ]*?):\s?(.*)$/;
 
 /** Escape a literal heading prefix for use inside an anchored RegExp. */
 function headingPattern(prefix: string): RegExp {
-  return new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "m");
+  return new RegExp(`^${escapeRegExp(prefix)}`, "m");
 }
 
 /**

@@ -15,7 +15,7 @@ import { toMessage } from "../utils/errors";
 import { extractMetadata, NoteMetadata } from "../core/metadata-extractor";
 import { normalizeVaultRelativePath } from "../utils/paths";
 import { Logger, NULL_LOGGER } from "../utils/logger";
-import { foldForCompare, normalizeFolder } from "../utils/text";
+import { foldForCompare, normalizeFolder, isUnderFolderFolded } from "../utils/text";
 
 export interface ScanConfig {
   /** Allowlist of folders; empty means the entire vault. */
@@ -56,17 +56,6 @@ export type ScanResult = ScannedNote | UnchangedNote;
 
 export function isUnchangedNote(note: ScanResult): note is UnchangedNote {
   return "unchanged" in note && note.unchanged === true;
-}
-
-/**
- * True if `foldedPath` is inside `foldedFolder` (or equals it). Segment-boundary
- * aware. Both arguments must already be folded (case + Unicode form) — folding
- * is hoisted to the caller so a scan folds each invariant once, not once per
- * file-times-folder.
- */
-function isUnderFolderFolded(foldedPath: string, foldedFolder: string): boolean {
-  if (foldedFolder === "") return true;
-  return foldedPath === foldedFolder || foldedPath.startsWith(foldedFolder + "/");
 }
 
 /** Convert a glob pattern to a RegExp. `**` matches across slashes, `*` within a segment. */

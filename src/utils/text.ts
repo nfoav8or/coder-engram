@@ -73,3 +73,20 @@ export function normalizeFolder(folder: string): string {
 export function stripBom(text: string): string {
   return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
+
+/** Escape a literal for use inside a RegExp source. */
+export function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * True if `foldedPath` is `foldedFolder` or lies under it; an empty folder
+ * means the whole vault. Segment-boundary aware, so `Archive` does not match
+ * `Archived Notes/…`. Both arguments must already be folded (case + Unicode
+ * form): folding is the caller's, so a scan folds each invariant once rather
+ * than once per file-times-folder.
+ */
+export function isUnderFolderFolded(foldedPath: string, foldedFolder: string): boolean {
+  if (foldedFolder === "") return true;
+  return foldedPath === foldedFolder || foldedPath.startsWith(foldedFolder + "/");
+}
