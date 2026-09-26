@@ -239,3 +239,50 @@ describe("LexicalRetriever scoring pin", () => {
     });
   }
 });
+
+describe("LexicalRetriever filtered-subset cache", () => {
+  const resolver = (p: string) => `Projects/${p}`;
+  const corpus = (stamp: string): IndexedChunk[] => [
+    chunk({ id: "a1", notePath: "Projects/a/one.md", text: `alpha indexing ${stamp}` }),
+    chunk({ id: "a2", notePath: "Projects/a/two.md", text: "alpha retrieval pipeline" }),
+    chunk({ id: "b1", notePath: "Projects/b/one.md", text: "beta indexing vault" }),
+    chunk({ id: "c1", notePath: "Projects/c/one.md", text: "gamma indexing", tags: ["decision"] }),
+    chunk({ id: "d1", notePath: "Projects/d/one.md", text: "delta indexing" }),
+    chunk({ id: "e1", notePath: "Projects/e/one.md", text: "epsilon indexing" }),
+  ];
+  const ids = (r: ReturnType<LexicalRetriever["retrieve"]>) => r.map((x) => x.chunk.id);
+
+  it("answers alternating and repeated filters exactly as a fresh retriever would", () => {
+    const chunks = corpus("x");
+    const warm = new LexicalRetriever({ projectRootResolver: resolver });
+    const filters = [{ project: "a" }, { project: "b" }, { folder: "Projects/c" }, { tag: "decision" }, { project: "d" }, { project: "e" }];
+    // Six distinct filters exceed the cache, so this also crosses an eviction.
+    for (let round = 0; round < 3; round++) {
+      for (const f of filters) {
+        const fresh = new LexicalRetriever({ projectRootResolver: resolver });
+        expect(warm.retrieve({ query: "indexing", filters: f }, chunks)).toEqual(
+          fresh.retrieve({ query: "indexing", filters: f }, chunks),
+        );
+      }
+    }
+    expect(ids(warm.retrieve({ query: "indexing", filters: { project: "a" } }, chunks))).toEqual(["a1"]);
+    expect(ids(warm.retrieve({ query: "indexing", filters: { project: "b" } }, chunks))).toEqual(["b1"]);
+  });
+
+  it("does not serve a cached subset for a replaced corpus", () => {
+    const r = new LexicalRetriever({ projectRootResolver: resolver });
+    const before = corpus("kokako");
+    expect(ids(r.retrieve({ query: "kokako", filters: { project: "a" } }, before))).toEqual(["a1"]);
+    // A refresh hands the retriever a NEW array; the old subset must not answer.
+    const after = corpus("takahe");
+    expect(ids(r.retrieve({ query: "kokako", filters: { project: "a" } }, after))).toEqual([]);
+    expect(ids(r.retrieve({ query: "takahe", filters: { project: "a" } }, after))).toEqual(["a1"]);
+  });
+
+  it("returns nothing for a filter that matches no chunk, cached or not", () => {
+    const r = new LexicalRetriever({ projectRootResolver: resolver });
+    const chunks = corpus("x");
+    expect(r.retrieve({ query: "indexing", filters: { project: "zzz" } }, chunks)).toEqual([]);
+    expect(r.retrieve({ query: "indexing", filters: { project: "zzz" } }, chunks)).toEqual([]);
+  });
+});

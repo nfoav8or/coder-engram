@@ -4,7 +4,7 @@
 
 import { IndexedChunk } from "../indexing/index-manager";
 import { RetrievalFilters } from "./retriever";
-import { foldForCompare, normalizeFolder } from "../utils/text";
+import { foldForCompare, normalizeFolder, escapeRegExp, isUnderFolderFolded } from "../utils/text";
 
 const STOPWORDS = new Set([
   "the", "a", "an", "and", "or", "of", "to", "in", "is", "are", "was", "were",
@@ -63,10 +63,7 @@ export function tokenizeChunk(chunk: IndexedChunk): string[] {
  * normalization form, or a legitimately-scoped search silently returns nothing.
  */
 function isUnderFolder(path: string, folder: string): boolean {
-  const f = foldForCompare(normalizeFolder(folder));
-  if (f === "") return true;
-  const p = foldForCompare(path);
-  return p === f || p.startsWith(f + "/");
+  return isUnderFolderFolded(foldForCompare(path), foldForCompare(normalizeFolder(folder)));
 }
 
 /**
@@ -101,10 +98,6 @@ export function applyFilters(
   });
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /** A [start, end) span of a term match within a text. */
 export interface TermMatch {
   start: number;
@@ -118,6 +111,46 @@ export interface TermMatch {
  * "art" but not the "art" inside "start" — keeping snippet selection and UI
  * highlighting consistent with what BM25 actually scored.
  */
+/**
+ * The last few filtered subsets of one corpus, keyed by filter key, so a
+ * retriever answering the same filter — or two or three of them in turn —
+ * neither rescans the corpus nor rebuilds what it derived from the subset.
+ *
+ * Bounded to a handful of entries: an agent session scoped to a project
+ * repeats one filter, one scoped to a few alternates between them, and an
+ * ever-changing filter (sinceMtime) simply misses. Keyed by corpus identity as
+ * well as filter key, and entries for a replaced corpus are dropped on the
+ * next access, so a refresh's old chunk array is never kept alive here.
+ * `get` promotes a hit to most recent.
+ */
+export class SubsetCache<T> {
+  private entries: Array<{ corpus: IndexedChunk[]; key: string; value: T }> = [];
+
+  constructor(private readonly capacity = 4) {}
+
+  get(corpus: IndexedChunk[], key: string): T | undefined {
+    if (this.entries.length > 0 && this.entries[0].corpus !== corpus) {
+      this.entries = this.entries.filter((e) => e.corpus === corpus);
+    }
+    const i = this.entries.findIndex((e) => e.corpus === corpus && e.key === key);
+    if (i < 0) return undefined;
+    const [hit] = this.entries.splice(i, 1);
+    this.entries.push(hit);
+    return hit.value;
+  }
+
+  set(corpus: IndexedChunk[], key: string, value: T): T {
+    this.entries.push({ corpus, key, value });
+    if (this.entries.length > this.capacity) this.entries.shift();
+    return value;
+  }
+}
+
+/** The cache key for a query's filters: their JSON, `{}` when absent. */
+export function filterKeyOf(filters: RetrievalFilters | undefined): string {
+  return JSON.stringify(filters ?? {});
+}
+
 export function findTermMatches(text: string, terms: string[]): TermMatch[] {
   const clean = [...new Set(terms.map((t) => t.toLowerCase()).filter((t) => t.length > 0))];
   if (clean.length === 0) return [];

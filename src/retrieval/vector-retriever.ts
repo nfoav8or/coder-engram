@@ -17,7 +17,15 @@ import {
   RetrievalResult,
   DEFAULT_LIMIT,
 } from "./retriever";
-import { tokenize, tokenizeChunk, applyFilters, buildSnippet, diversifyByNote } from "./ranking";
+import {
+  tokenize,
+  tokenizeChunk,
+  applyFilters,
+  buildSnippet,
+  diversifyByNote,
+  SubsetCache,
+  filterKeyOf,
+} from "./ranking";
 
 export interface VectorRetrieverOptions {
   vectors: Map<string, VectorEntry>;
@@ -27,14 +35,29 @@ export interface VectorRetrieverOptions {
 export class VectorRetriever implements Retriever {
   readonly mode = "vector";
 
+  /** The last few filtered subsets, so a scoped query does not rescan the
+   * corpus before the dot products — the scan was most of a filtered query's
+   * cost, and in hybrid mode this side paid it a second time. */
+  private readonly subsets = new SubsetCache<IndexedChunk[]>();
+
   constructor(private readonly options: VectorRetrieverOptions) {}
+
+  private filteredFor(query: RetrievalQuery, chunks: IndexedChunk[]): IndexedChunk[] {
+    const key = filterKeyOf(query.filters);
+    const hit = this.subsets.get(chunks, key);
+    if (hit) return hit;
+    const filtered = applyFilters(chunks, query.filters, this.options.projectRootResolver);
+    // The whole corpus is returned by identity when nothing filters; caching
+    // that would only hold a second reference to it.
+    return filtered === chunks ? filtered : this.subsets.set(chunks, key, filtered);
+  }
 
   retrieve(query: RetrievalQuery, chunks: IndexedChunk[]): RetrievalResult[] {
     const qv = query.queryVector;
     if (!qv || qv.length === 0 || this.options.vectors.size === 0) return [];
 
     const limit = query.limit ?? DEFAULT_LIMIT;
-    const filtered = applyFilters(chunks, query.filters, this.options.projectRootResolver);
+    const filtered = this.filteredFor(query, chunks);
     if (filtered.length === 0) return [];
 
     const queryTerms = Array.from(new Set(tokenize(query.query)));

@@ -108,3 +108,39 @@ describe("VectorRetriever", () => {
     expect(results.length).toBe(1);
   });
 });
+
+describe("VectorRetriever filtered-subset cache", () => {
+  const resolver = (p: string) => `Projects/${p}`;
+  const q = (project: string) => ({ query: "x", queryVector: [1, 0, 0], filters: { project } });
+  const build = (stamp: string) => {
+    const chunks = [
+      chunk({ id: `a-${stamp}`, notePath: "Projects/a/one.md", text: "a" }),
+      chunk({ id: `b-${stamp}`, notePath: "Projects/b/one.md", text: "b" }),
+    ];
+    const vecs = new Map<string, VectorEntry>([
+      [`a-${stamp}`, entry([1, 0, 0])],
+      [`b-${stamp}`, entry([0.9, 0.1, 0])],
+    ]);
+    return { chunks, vecs };
+  };
+
+  it("answers alternating filters exactly as a fresh retriever would", () => {
+    const { chunks, vecs } = build("1");
+    const warm = new VectorRetriever({ vectors: vecs, projectRootResolver: resolver });
+    for (let i = 0; i < 6; i++) {
+      const project = i % 2 ? "a" : "b";
+      const fresh = new VectorRetriever({ vectors: vecs, projectRootResolver: resolver });
+      expect(warm.retrieve(q(project), chunks)).toEqual(fresh.retrieve(q(project), chunks));
+      expect(warm.retrieve(q(project), chunks).map((r) => r.chunk.id)).toEqual([`${project}-1`]);
+    }
+  });
+
+  it("does not serve a cached subset for a replaced corpus", () => {
+    const first = build("1");
+    const second = build("2");
+    const vectors = new Map([...first.vecs, ...second.vecs]);
+    const r = new VectorRetriever({ vectors, projectRootResolver: resolver });
+    expect(r.retrieve(q("a"), first.chunks).map((x) => x.chunk.id)).toEqual(["a-1"]);
+    expect(r.retrieve(q("a"), second.chunks).map((x) => x.chunk.id)).toEqual(["a-2"]);
+  });
+});
