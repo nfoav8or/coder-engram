@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.2] — 2026-09-25
+
+A security and data-safety release from the review cycle that followed 0.15.1.
+The two that matter: the path-taking readers could serve a review ledger's
+contents to a local MCP client that knew the ledger's fixed path, and a
+`metadata.json` rolled back by a sync conflict or a restore could load as a
+permanent empty index. **No index rebuild** — upgrading changes nothing about
+your data.
+
+### Fixed
+
+- **The path-taking readers no longer serve a review ledger.** Search and
+  `find_symbol` dropped `rejected-memory.md` and `superseded-memory.md` in
+  0.15.0, but `get_note_context`, `summarize_note` and `find_related_notes` read
+  the index by a caller-supplied path, so a client that knew the fixed ledger
+  path read every rejected proposal's text verbatim. All three now refuse a
+  ledger through the one refusal they share, and `get_recent_changes` no longer
+  reports a ledger's mtime as a changed note.
+- **Loading the persisted index is serialized with rebuilds.** `loadIndex` ran
+  outside the chain that serializes reindex and refresh, while the local server
+  started on a separate chain at startup — a connected client could call
+  `reindex_vault` mid-parse and the two passes would interleave on one index
+  manager, with the rebuild persisting the torn result. It now waits its turn
+  and, like every other pass, abandons a manager the settings replaced under it.
+- **A rolled-back `metadata.json` no longer loads as a permanent empty index.**
+  When the index is sharded, the old single chunk file is blanked to `[]`. A
+  `metadata.json` rolled back to a pre-sharding revision (a sync conflict, a
+  restore) with the shards left in place pointed the loader at that blank, and
+  it loaded as a valid index with zero chunks — permanently, since the
+  still-valid mtime map told every later refresh that nothing had changed, and
+  the next persist wrote `chunkCount: 0` over the only evidence the shards
+  existed. The recorded chunk count is now cross-checked against what was
+  loaded; a disagreement rebuilds. A persist that dies partway through several
+  shards can still load as a same-count mix of old and new chunks, healed by
+  the next refresh; a per-shard generation stamp is on the roadmap for a
+  release that changes the index format anyway.
+- **`joinVaultPath` keeps the promise in its docstring.** It refused a `..`
+  only when it unwound the path to nothing; `("Claude Code", "../secret")`
+  returned `secret`. The result must now stay under the first segment. No
+  caller passed it untrusted segments.
+
+### Changed
+
+- **Dev-dependency advisory.** `js-yaml` (transitive via ESLint; CPU-use on
+  empty merge keys) updated in the lockfile. The remaining advisory, in
+  Vitest's mocker (path traversal via redirect mocks during a test run), needs
+  a Vitest major and is dev-only; nothing from it ships in `main.js`.
+
 ## [0.15.1] — 2026-09-04
 
 A correctness release from the review cycle that followed 0.15.0: one boundary
@@ -2080,7 +2128,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.15.1...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.15.2...HEAD
+[0.15.2]: https://github.com/nfoav8or/coder-engram/releases/tag/0.15.2
 [0.15.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.15.1
 [0.15.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.15.0
 [0.14.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.14.1

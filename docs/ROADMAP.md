@@ -191,6 +191,7 @@ described in full in [CHANGELOG.md](../CHANGELOG.md); the short version:
 
 | Version | Fix |
 | --- | --- |
+| 0.15.2 | **Security and data safety, from the cycle after 0.15.1.** The path-taking readers (`get_note_context`, `summarize_note`, `find_related_notes`) served a review ledger to a client that knew its path — refused now, and `get_recent_changes` no longer reports a ledger. A rolled-back `metadata.json` loaded the blanked single chunk file as a permanent empty index — the recorded chunk count is cross-checked at load. `loadIndex` serialized with rebuilds; `joinVaultPath` enforces its root; js-yaml advisory cleared. No index rebuild. |
 | 0.15.1 | **Correctness, from the cycle after 0.15.0.** `supersedes` could name a pending proposal or a ledger (the inbox is under the memory root) and hide an unreviewed proposal on apply — refused now. `reindex_vault` rate-limited before its refusal; 413 message client-safe. Block-reference wikilinks resolve; CommonMark fence-length rule (a 3-backtick line no longer closes a 4-backtick block); UTF-16 text attachments decode by BOM; zip directory/entry bounds checks; `using namespace` is not a declaration. Term-major lexical scoring, byte-identical scores pinned by a golden test, 26–40% faster in A/B. No index rebuild. |
 | 0.15.0 | **Privacy and data safety, from four review cycles.** Four more exclusion fail-opens (leading `/` in a path pattern, `**` needing a directory on each side, a wrapped `tags:` list, a tag not covering its children — the last a deliberate widening, matching Obsidian, and the reason `INDEX_VERSION` is 8). A discarded proposal came back through search as unlabelled memory. Two append-overwrite races. An interrupted write's parked file is restored at load, proven on real Obsidian. Path redaction leaked after any separator the allowlist did not name; the Host check ignored the bound address for loopback spellings; project names are now NFC, stripped of control/format characters, bounded, and never a Windows device name. RTF CP1252, a malformed `\\bin`, one bad slide discarding a deck, a silent embeddings-cache discard, MMR 6× faster with identical output, concurrent shard load, retrieval mode on the control panel. Measured and declined: three query-path micro-optimizations and the all-unchanged refresh (2.1 ms at 9k chunks). |
 | 0.14.1 | Six fixes from the post-0.14.0 review loop, three of them silent. A heading line longer than the chunk window drove the per-piece budget to its floor and the body was sliced one character per chunk, so the note could not be found by searching for anything written in it. An ordinary `## ` line inside applied memory ended a retired section early, and a non-canonical `supersedes` path was keyed as typed while every consumer keyed the real note path — both made superseding report success and keep serving the retired memory. `tokenBudget` could be overrun nearly sixfold by one result, because nothing bounded the heading every result label embeds. Plus a truncation notice added on top of a cap rather than against it, a truncation that could split a surrogate pair, and `get_note_context` calling a fully-retired note "not indexed". The scale benchmark's corpus gained fenced code — it had none, so it could not see the symbol index it was being used to judge. **No `INDEX_VERSION` bump** (deliberate; see the release notes). |
@@ -241,7 +242,18 @@ sees it.
 
 ## In progress (unreleased)
 
-- Nothing unreleased — 0.15.1 has just been cut.
+- Nothing unreleased — 0.15.2 has just been cut.
+
+### What 0.15.2 carried
+
+- **A security and data-safety release**, described in full in
+  [CHANGELOG.md](../CHANGELOG.md). A ledger-content disclosure through the three
+  path-taking readers over the local server; a permanent empty-index path when
+  `metadata.json` is rolled back under a sharded index; the index load brought
+  under the pass serializer; `joinVaultPath` made to keep its contract; a
+  dev-only advisory cleared. Deferred with reasons: a per-shard generation stamp
+  (format change, waits for an `INDEX_VERSION` bump) and the Vitest mocker
+  advisory (test-runner major, nothing from it ships).
 
 ### What 0.15.1 carried
 
@@ -403,6 +415,7 @@ Standing work between releases: the review loop that produced 0.10.1–0.13.0 ke
 ## Deferred / future
 
 - **MCP revision 2026-07-28.** This server implements 2025-06-18 and negotiates it honestly (see docs/MCP_SERVER.md); the current revision has since moved twice (2025-11-25, then 2026-07-28). The newer revision is a base-protocol rewrite, not a tools change: it removes the `initialize`/`notifications/initialized` handshake and `ping` in favour of a stateless model where each request carries `io.modelcontextprotocol/protocolVersion` in `_meta`, requires a new `server/discover` RPC, and answers a version mismatch with `UnsupportedProtocolVersionError`. The tool surface is untouched — `tools/list` and `tools/call` still use `inputSchema`, `content`, `isError`, and `nextCursor` — so the work is confined to the protocol layer. **Not urgent:** the spec explicitly permits a server to implement both eras ("A server that wishes to support both legacy clients … and modern clients … MAY implement both behaviors"), and its own compatibility matrix has legacy-client/legacy-server working, which is what Claude Code does today.
+- **Per-shard generation stamp for the chunk index.** A persist that dies partway through several dirty shards leaves a same-count mix of old and new chunks that `load` cannot tell from a clean index (the count cross-check catches the rolled-back-metadata case, not this one). It heals on the next refresh, but startup does not force one. Stamping each shard with the persist generation and refusing a mix would close it; it changes the on-disk format, so it waits for a release that bumps `INDEX_VERSION` for other reasons.
 - Non-desktop support (currently `isDesktopOnly`).
 - Scanned-PDF OCR. The same delegation would need Text Extractor's PDF path, which its own README flags as unreliable.
 - Cost control for a first refresh over thousands of images: OCR is serial and expensive per cache miss, and capping the work per scan would mean partial-index semantics.
