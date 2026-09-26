@@ -454,9 +454,141 @@ describe("EmbeddingStore checkpoints and concurrency", () => {
     await resumed.load();
     const { provider, calls } = counting(new MockEmbeddingProvider());
     const result = await resumed.embedIndex(chunks, provider, { batchSize: 16 });
-    expect(result.reused).toBe(1024);
-    expect(result.embedded).toBe(1100 - 1024);
-    expect(calls()).toBe(Math.ceil((1100 - 1024) / 16));
+    // Everything that succeeded before the failure — the 1024-chunk
+    // checkpoint AND the 16 chunks after it — was paid for and is kept: the
+    // failure path writes the partial progress before raising. Only the 60
+    // that never came back are re-embedded.
+    expect(result.reused).toBe(1040);
+    expect(result.embedded).toBe(1100 - 1040);
+    expect(calls()).toBe(Math.ceil((1100 - 1040) / 16));
+  });
+
+  it("carries a vector across a rename instead of re-embedding identical text", async () => {
+    const adapter = new InMemoryVaultAdapter("v");
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    const before = [
+      { id: "Notes/old.md::0", text: "the kokako sings at dawn" },
+      { id: "Notes/old.md::1", text: "and the takahe walks at dusk" },
+      { id: "Notes/other.md::0", text: "unrelated" },
+    ];
+    await store.embedIndex(before, new MockEmbeddingProvider(), { batchSize: 16 });
+    const vectorsBefore = store.entriesMap();
+
+    // The note is renamed: same text, same ordinals, every id different.
+    const after = [
+      { id: "Notes/new.md::0", text: "the kokako sings at dawn" },
+      { id: "Notes/new.md::1", text: "and the takahe walks at dusk" },
+      { id: "Notes/other.md::0", text: "unrelated" },
+    ];
+    const { provider, calls } = counting(new MockEmbeddingProvider());
+    const result = await store.embedIndex(after, provider, { batchSize: 16 });
+    expect(result).toEqual({ embedded: 0, reused: 3, removed: 2 });
+    expect(calls()).toBe(0);
+    const vectorsAfter = store.entriesMap();
+    expect(Array.from(vectorsAfter.get("Notes/new.md::0")!.vec)).toEqual(
+      Array.from(vectorsBefore.get("Notes/old.md::0")!.vec),
+    );
+    expect(vectorsAfter.has("Notes/old.md::0")).toBe(false);
+  });
+
+  it("does not carry a vector across a rename when the text or the ordinal differs", async () => {
+    const adapter = new InMemoryVaultAdapter("v");
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    await store.embedIndex(
+      [
+        { id: "Notes/old.md::0", text: "alpha" },
+        { id: "Notes/old.md::1", text: "beta" },
+      ],
+      new MockEmbeddingProvider(),
+    );
+    const { provider, calls } = counting(new MockEmbeddingProvider());
+    // Ordinals swapped: same texts, different positions — not a rename.
+    const result = await store.embedIndex(
+      [
+        { id: "Notes/new.md::0", text: "beta" },
+        { id: "Notes/new.md::1", text: "alpha" },
+      ],
+      provider,
+    );
+    expect(result.embedded).toBe(2);
+    expect(calls()).toBeGreaterThan(0);
+  });
+
+  it("re-embeds on a rename a vector written before the second hash existed", async () => {
+    const adapter = new InMemoryVaultAdapter("v");
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    await store.embedIndex([{ id: "Notes/old.md::0", text: "alpha" }], new MockEmbeddingProvider());
+    // Strip h2 from the on-disk record, as a pre-release store would look.
+    const raw = JSON.parse(await adapter.read(FILE)) as { vectors: Record<string, { h2?: string }> };
+    for (const sv of Object.values(raw.vectors)) delete sv.h2;
+    await adapter.write(FILE, JSON.stringify(raw));
+    const legacy = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await legacy.load();
+    const { provider, calls } = counting(new MockEmbeddingProvider());
+    const result = await legacy.embedIndex([{ id: "Notes/new.md::0", text: "alpha" }], provider);
+    expect(result.embedded).toBe(1);
+    expect(calls()).toBe(1);
+  });
+
+  it("prunes vectors for chunks no longer indexed without a provider", async () => {
+    const adapter = new InMemoryVaultAdapter("v");
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER);
+    await store.load();
+    await store.embedIndex(makeChunks(3), new MockEmbeddingProvider());
+    expect(await store.pruneTo(new Set(["c0", "c2"]))).toBe(1);
+    expect(store.entriesMap().has("c1")).toBe(false);
+    const onDisk = JSON.parse(await adapter.read(FILE)) as { vectors: Record<string, unknown> };
+    expect(Object.keys(onDisk.vectors).sort()).toEqual(["c0", "c2"]);
+    // Nothing to prune → nothing written.
+    const stamp = await adapter.read(FILE);
+    expect(await store.pruneTo(new Set(["c0", "c2"]))).toBe(0);
+    expect(await adapter.read(FILE)).toBe(stamp);
+  });
+
+  it("loses nothing when a checkpoint queues behind a slow persist while other workers keep embedding", async () => {
+    // Sharded layout, slow shard writes, four workers: a checkpoint's write
+    // queues behind the previous one, and meanwhile the other workers embed
+    // more chunks and dirty their shards. The write used to read the dirty set
+    // when it finally ran — against the snapshot taken when it was queued — so
+    // those shards were written without the new vectors and un-marked. Gone,
+    // with the pass reporting success: 545 of 43,553 at concurrency 4.
+    class SlowWriteAdapter extends InMemoryVaultAdapter {
+      async write(path: string, content: string): Promise<void> {
+        await new Promise((r) => setTimeout(r, 1));
+        return super.write(path, content);
+      }
+    }
+    const adapter = new SlowWriteAdapter("v");
+    const store = new EmbeddingStore(adapter, FILE, NULL_LOGGER, { singleFileMaxVectors: 100 });
+    await store.load();
+    const chunks = makeChunks(2300);
+    const mock = new MockEmbeddingProvider();
+    const yielding: EmbeddingProvider = {
+      id: mock.id,
+      model: mock.model,
+      dimensions: mock.dimensions,
+      embed: async (texts) => {
+        await new Promise((r) => setTimeout(r, 0));
+        return mock.embed(texts);
+      },
+      isAvailable: async () => true,
+    };
+    const result = await store.embedIndex(chunks, yielding, { batchSize: 16, concurrency: 4 });
+    expect(result.embedded).toBe(2300);
+
+    const onDisk = new Set<string>();
+    for (let i = 0; i < 256; i++) {
+      const file = `Index/embeddings-${i.toString(16).padStart(2, "0")}.json`;
+      if (!(await adapter.exists(file))) continue;
+      for (const id of Object.keys(JSON.parse(await adapter.read(file)) as Record<string, unknown>)) onDisk.add(id);
+    }
+    expect(onDisk.size).toBe(2300);
+    const reloaded = new EmbeddingStore(adapter, FILE, NULL_LOGGER, { singleFileMaxVectors: 100 });
+    await reloaded.load();
+    expect(reloaded.entriesMap().size).toBe(2300);
   });
 
   it("caps in-flight batches at the configured concurrency", async () => {

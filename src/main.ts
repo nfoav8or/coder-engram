@@ -193,6 +193,7 @@ export default class EngramPlugin
           new Notice(`Embedding pass failed — search stays lexical. ${pass.detail ?? ""}`.trim());
           break;
         case "no-provider":
+        case "no-index":
         case "superseded":
           break; // nothing the user needs to act on
         default:

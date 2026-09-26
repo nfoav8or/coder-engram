@@ -78,7 +78,7 @@ export interface NoteSummary {
  * the provider was unreachable and nothing was computed.
  */
 export interface EmbedPassResult {
-  outcome: "embedded" | "no-provider" | "unavailable" | "failed" | "superseded";
+  outcome: "embedded" | "no-provider" | "no-index" | "unavailable" | "failed" | "superseded";
   embedded: number;
   reused: number;
   /** Provider id, or an error message — whatever makes the outcome actionable. */
@@ -824,11 +824,30 @@ export class EngramEngine {
     // Pessimistic until the pass completes: an early return or throw below
     // leaves vectors possibly missing, and null makes the next refresh retry.
     this.lastEmbeddedIdentity = null;
+    // No loaded chunk index means no chunk ids, and both branches below treat
+    // "id not in the set" as "remove its vector" — so a pass run before the
+    // index loads (an INDEX_VERSION bump keeps the vectors on purpose, and the
+    // rebuild that follows may still be pending when a settings edit fires
+    // this) would persist an empty store over a paid cache. Nothing to embed
+    // against yet; the rebuild's own pass will run against real ids.
+    if (!index.getIndex()) return { outcome: "no-index", embedded: 0, reused: 0 };
     try {
       if (!(await provider.isAvailable())) {
         this.logger.warn("Embedding provider unavailable; retrieval stays lexical", {
           provider: provider.id,
         });
+        // The pass will not run, but a note excluded since the last one must
+        // not keep its vector on disk while the provider is down: pruning
+        // needs no provider, only the current id set.
+        if (this.index === index) {
+          const store = this.embeddingStore;
+          try {
+            const removed = await store.pruneTo(new Set(index.getChunks().map((c) => c.id)));
+            if (removed > 0 && this.embeddingStore === store) this.retriever = this.buildRetriever();
+          } catch (err) {
+            this.logger.warn("Could not prune stale vectors", { error: toMessage(err) });
+          }
+        }
         return { outcome: "unavailable", embedded: 0, reused: 0, detail: provider.id };
       }
       // Snapshot the ARRAY so a concurrent index swap can't shift it mid-pass,

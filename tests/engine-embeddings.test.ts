@@ -133,6 +133,76 @@ describe("an embedding pass reports what actually happened", () => {
     expect(pass.embedded).toBe(0);
   });
 
+  it("does not touch the vector cache when no chunk index is loaded, reachable provider or not", async () => {
+    // Every branch of the pass treats "id not in the index" as "remove its
+    // vector", and an unloaded index has no ids — so a pass fired by a
+    // settings edit before the post-upgrade rebuild persisted an empty store
+    // over a paid cache. The vectors are kept across an INDEX_VERSION bump on
+    // purpose; this is the pass that used to defeat that.
+    let down = false;
+    const http = new FakeHttpClient().on(
+      () => true,
+      (r) => {
+        if (r.url.endsWith("/api/tags")) return down ? { status: 500, body: "" } : { status: 200, body: "{}" };
+        if (!r.url.includes("/api/embed")) return { status: 200, body: "{}" };
+        const inputs = (JSON.parse(r.body ?? "{}") as { input: string[] }).input ?? [];
+        return { status: 200, body: JSON.stringify({ embeddings: inputs.map(() => [0.1, 0.2, 0.3]) }) };
+      },
+    );
+    const adapter = new InMemoryVaultAdapter("v", { ...SEED });
+    let t = 10_000;
+    const first = new EngramEngine(adapter, ollama(), NULL_LOGGER, () => t++, { http });
+    await first.reindex();
+    expect((await first.syncEmbeddings()).outcome).toBe("embedded");
+    const file = first.getPaths().embeddingsFile;
+    const before = await adapter.read(file);
+    expect(before).toMatch(/Notes\/rag\.md/);
+
+    // A fresh engine that has not loaded or built an index — the state right
+    // after an upgrade that invalidated chunks.json.
+    for (const providerDown of [true, false]) {
+      down = providerDown;
+      const fresh = new EngramEngine(adapter, ollama(), NULL_LOGGER, () => t++, { http });
+      const pass = await fresh.syncEmbeddings();
+      expect(pass.outcome).toBe("no-index");
+      expect(await adapter.read(file)).toBe(before);
+    }
+  });
+
+  it("prunes an excluded note's vector even while the provider is unreachable", async () => {
+    // The pass that prunes vectors for chunks no longer indexed returned before
+    // running when the liveness check failed, so a note excluded at that
+    // moment kept its vector on disk until a later pass both ran and succeeded.
+    let down = false;
+    const http = new FakeHttpClient().on(
+      () => true,
+      (r) => {
+        if (r.url.endsWith("/api/tags")) return down ? { status: 500, body: "" } : { status: 200, body: "{}" };
+        if (!r.url.includes("/api/embed")) return { status: 200, body: "{}" };
+        const inputs = (JSON.parse(r.body ?? "{}") as { input: string[] }).input ?? [];
+        return { status: 200, body: JSON.stringify({ embeddings: inputs.map(() => [0.1, 0.2, 0.3]) }) };
+      },
+    );
+    const adapter = new InMemoryVaultAdapter("v", { ...SEED });
+    let t = 10_000;
+    const engine = new EngramEngine(adapter, ollama(), NULL_LOGGER, () => t++, { http });
+    await engine.reindex();
+    expect((await engine.syncEmbeddings()).outcome).toBe("embedded");
+    const file = engine.getPaths().embeddingsFile;
+    const onDisk = async () =>
+      Object.keys((JSON.parse(await adapter.read(file)) as { vectors: Record<string, unknown> }).vectors);
+    expect((await onDisk()).some((id) => id.startsWith("Notes/embeddings.md"))).toBe(true);
+
+    down = true;
+    engine.updateSettings({ ...ollama(), excludedPathPatterns: ["Notes/embeddings.md"] });
+    await engine.refresh();
+    expect(engine.getNoteChunks("Notes/embeddings.md")).toEqual([]);
+    const pass = await engine.syncEmbeddings();
+    expect(pass.outcome).toBe("unavailable");
+    expect((await onDisk()).some((id) => id.startsWith("Notes/embeddings.md"))).toBe(false);
+    expect((await onDisk()).some((id) => id.startsWith("Notes/rag.md"))).toBe(true);
+  });
+
   it("reports `failed` when the embed call itself throws", async () => {
     const http = new FakeHttpClient().on(
       () => true,

@@ -43,6 +43,17 @@ const CHECKPOINT_CHUNKS = 1024;
 interface StoredVector {
   /** Content hash of the chunk text this vector was computed from. */
   h: string;
+  /**
+   * A second, independent 32-bit hash of the same text. Present on every
+   * vector written since it was added; absent on older ones. It exists for
+   * one lookup: reusing a vector across a RENAME, where the chunk id changed
+   * but the text did not. Matching on `h` alone would make that a 32-bit
+   * comparison against every orphaned vector, and a full vault reorganisation
+   * puts tens of thousands of them on the other side; with both hashes and
+   * the chunk ordinal it is a 64-bit one. A vector without it is simply not
+   * eligible for that reuse and is re-embedded, as it always was.
+   */
+  h2?: string;
   /** Euclidean norm, precomputed at embed time. */
   n: number;
   /** Base64 of the vector's little-endian Float32Array bytes. */
@@ -125,6 +136,7 @@ function isVectorMap(value: unknown): value is Record<string, StoredVector> {
     if (typeof entry !== "object" || entry === null) return false;
     const stored = entry as Record<string, unknown>;
     if (typeof stored.h !== "string") return false;
+    if (stored.h2 !== undefined && typeof stored.h2 !== "string") return false;
     if (typeof stored.n !== "number" || !Number.isFinite(stored.n)) return false;
     if (typeof stored.v !== "string" || stored.v.length % 4 !== 0 || !BASE64_SHAPE.test(stored.v)) {
       return false;
@@ -189,6 +201,19 @@ interface EmbedIndexOptions {
  * build fresh chunk objects (tests) just miss the cache and pay the hash once.
  */
 const hashCache = new WeakMap<EmbedChunk, string>();
+
+/** The second hash for `StoredVector.h2`: the same function over a prefixed
+ * copy of the text, so its collisions are unrelated to `h`'s. */
+function chunkContentHash2(chunk: EmbedChunk): string {
+  return contentHash("\u0000h2\u0000" + chunk.text);
+}
+
+/** The ordinal part of a chunk id (`<path>::<n>`), "" when it has none. A
+ * rename keeps a note's chunk ordinals, so it narrows the rename lookup. */
+function ordinalOf(id: string): string {
+  const at = id.lastIndexOf("::");
+  return at < 0 ? "" : id.slice(at + 2);
+}
 
 function chunkContentHash(chunk: EmbedChunk): string {
   let h = hashCache.get(chunk);
@@ -456,6 +481,32 @@ export class EmbeddingStore {
   }
 
   /**
+   * Drop vectors for chunk ids no longer indexed, without a provider. The
+   * embed pass does this as a side effect, but it returns before running when
+   * the provider is unreachable — and a note excluded at that moment kept its
+   * vector on disk until a later pass both ran and succeeded. Returns the
+   * number removed; persists only when that is non-zero.
+   */
+  async pruneTo(currentIds: ReadonlySet<string>): Promise<number> {
+    if (!this.state) return 0;
+    const kept: Record<string, StoredVector> = {};
+    let removed = 0;
+    for (const [id, sv] of Object.entries(this.state.vectors)) {
+      if (currentIds.has(id)) {
+        kept[id] = sv;
+      } else {
+        removed++;
+        this.dirtyShards.add(shardOf(id));
+      }
+    }
+    if (removed === 0) return 0;
+    this.state = { ...this.state, vectors: kept };
+    this.decoded = null;
+    await this.persist();
+    return removed;
+  }
+
+  /**
    * Ensure every chunk has an up-to-date vector for `provider`, reusing cached
    * vectors whose content hash is unchanged, dropping vectors for removed
    * chunks, and recomputing everything if the provider identity changed.
@@ -482,27 +533,43 @@ export class EmbeddingStore {
     const toEmbed: Array<{ chunk: EmbedChunk; hash: string }> = [];
     let reused = 0;
 
+    // `removed` = previously-stored chunk ids that no longer exist in the vault,
+    // independent of whether their text changed or the provider identity moved.
+    const currentIds = new Set(chunks.map((c) => c.id));
+    const oldIds = this.state ? Object.keys(this.state.vectors) : [];
+    let removed = 0;
+    // Orphans of this identity, keyed for the rename lookup below. A renamed
+    // or moved note changes every one of its chunk ids while its text stays
+    // byte-identical; keyed by id alone, the store re-embedded it all — paid
+    // calls for vectors it already held.
+    const orphans = new Map<string, StoredVector>();
+    for (const id of oldIds) {
+      if (!currentIds.has(id)) {
+        removed++;
+        this.dirtyShards.add(shardOf(id));
+        const sv = prior[id];
+        if (sv?.h2) orphans.set(`${sv.h}:${sv.h2}:${ordinalOf(id)}`, sv);
+      }
+    }
+
     for (const chunk of chunks) {
       const h = chunkContentHash(chunk);
       const existing = prior[chunk.id];
       if (existing && existing.h === h) {
         nextVectors[chunk.id] = existing;
         reused++;
-      } else {
-        toEmbed.push({ chunk, hash: h });
+        continue;
       }
-    }
-
-    // `removed` = previously-stored chunk ids that no longer exist in the vault,
-    // independent of whether their text changed or the provider identity moved.
-    const currentIds = new Set(chunks.map((c) => c.id));
-    const oldIds = this.state ? Object.keys(this.state.vectors) : [];
-    let removed = 0;
-    for (const id of oldIds) {
-      if (!currentIds.has(id)) {
-        removed++;
-        this.dirtyShards.add(shardOf(id));
+      if (orphans.size > 0) {
+        const moved = orphans.get(`${h}:${chunkContentHash2(chunk)}:${ordinalOf(chunk.id)}`);
+        if (moved) {
+          nextVectors[chunk.id] = moved;
+          this.dirtyShards.add(shardOf(chunk.id));
+          reused++;
+          continue;
+        }
       }
+      toEmbed.push({ chunk, hash: h });
     }
     if (identityChanged) this.allShardsDirty = true;
     let dim = identityChanged ? 0 : this.state?.dim ?? 0;
@@ -550,6 +617,7 @@ export class EmbeddingStore {
             const id = batch[j].chunk.id;
             nextVectors[id] = {
               h: batch[j].hash,
+              h2: chunkContentHash2(batch[j].chunk),
               n: vectorNorm(f32),
               v: encodeVector(f32),
             };
@@ -582,7 +650,26 @@ export class EmbeddingStore {
     await Promise.all(
       Array.from({ length: Math.min(concurrency, Math.max(1, batches.length)) }, () => worker()),
     );
-    if (failures.length > 0) throw failures[0];
+    if (failures.length > 0) {
+      // What succeeded since the last checkpoint is paid for and held only in
+      // `nextVectors`; throwing without writing it re-bought it on the retry.
+      // Written only when something was embedded: with a changed identity and
+      // no successful batch there is nothing to keep, and writing an empty
+      // store under the new identity would discard the old identity's vectors
+      // for a provider the user may switch back to.
+      if (embedded > 0 && sinceCheckpoint > 0) {
+        this.state = { version: EMBED_STORE_VERSION, model: identity, dim, vectors: { ...nextVectors } };
+        this.decoded = null;
+        try {
+          await this.persist();
+        } catch (err) {
+          (opts.logger ?? this.logger).warn("Could not save partial embedding progress", {
+            error: toMessage(err),
+          });
+        }
+      }
+      throw failures[0];
+    }
 
     this.state = { version: EMBED_STORE_VERSION, model: identity, dim, vectors: nextVectors };
     this.decoded = null;
@@ -601,30 +688,49 @@ export class EmbeddingStore {
   /** Persists are chained: a checkpoint can land while a previous persist is
    * still writing shards, and interleaved writes would tear the layout. */
   private persist(): Promise<void> {
+    // The state and the dirty set are captured HERE, synchronously with the
+    // caller's `this.state = …`, not when the chained write finally runs. A
+    // checkpoint's write can queue behind a previous persist still writing
+    // shards; with concurrency above one, other workers keep embedding in the
+    // meantime and dirty shards whose vectors exist only in the live map — not
+    // in the snapshot this write carries. Reading the dirty set at write time
+    // wrote those shards from the stale snapshot and then cleared their flag,
+    // so the vectors added in between never reached disk: 545 of 43,553 lost
+    // at concurrency 4, reproducibly, with the pass reporting success. A shard
+    // dirtied after this capture stays marked for the next persist, which
+    // carries a state that has it.
+    const job = {
+      state: this.state,
+      dirty: new Set(this.dirtyShards),
+      writeAll: this.allShardsDirty,
+    };
+    this.dirtyShards.clear();
+    this.allShardsDirty = false;
     // Run after the previous persist settles either way: chaining only on
     // fulfilment would let one failed checkpoint reject every later persist
     // without running it, silently ending persistence for the session.
-    const run = () => this.doPersist();
+    const run = () => this.doPersist(job);
     this.persistChain = this.persistChain.then(run, run);
     return this.persistChain;
   }
 
-  private async doPersist(): Promise<void> {
-    if (!this.state) return;
-    const state = this.state;
+  private async doPersist(job: {
+    state: StoredEmbeddings | null;
+    dirty: Set<number>;
+    writeAll: boolean;
+  }): Promise<void> {
+    const state = job.state;
+    if (!state) return;
     const count = Object.keys(state.vectors).length;
     const layout = chooseLayout(this.layout, count, this.singleFileMaxVectors);
     const switching = layout !== this.layout;
     if (switching) {
       this.logger.info("Embeddings layout switch", { from: this.layout, to: layout, vectors: count });
     }
-    // Snapshot-and-clear up front so shards dirtied WHILE this persist writes
-    // stay marked for the next one; a failed persist falls back to
-    // rewrite-everything rather than silently under-writing.
-    const writeAll = switching || this.allShardsDirty;
-    const dirty = new Set(this.dirtyShards);
-    this.dirtyShards.clear();
-    this.allShardsDirty = false;
+    // A failed persist falls back to rewrite-everything rather than silently
+    // under-writing (see the catch below).
+    const writeAll = switching || job.writeAll;
+    const dirty = job.dirty;
     try {
       if (layout === "single") {
         await this.adapter.write(this.embeddingsFile, JSON.stringify(state));
