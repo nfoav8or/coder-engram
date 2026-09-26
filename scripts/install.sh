@@ -52,6 +52,13 @@ done
 say() { printf '%s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
+# The version is spliced into a URL path; only a release number or "latest"
+# may reach it, so a stray value cannot steer the download elsewhere.
+case "$VERSION" in
+  latest) ;;
+  *) [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "--version must be x.y.z (got: $VERSION)" ;;
+esac
+
 json_tool() {
   if command -v python3 >/dev/null 2>&1; then echo python3; return; fi
   if command -v jq >/dev/null 2>&1; then echo jq; return; fi
@@ -109,8 +116,15 @@ fi
 
 # --- download ----------------------------------------------------------------
 # CODER_ENGRAM_BASE_URL overrides the asset source (mirrors, testing).
+# The release host is https only, and a redirect may not step down from it:
+# `-L` follows a Location header across schemes by default, so without this a
+# redirect to plain http:// would be followed silently. An override keeps its
+# own scheme (a file:// or local-mirror source is legitimate) but still may
+# not be redirected off https.
+CURL_OPTS=(--proto '=https' --tlsv1.2)
 if [ -n "${CODER_ENGRAM_BASE_URL:-}" ]; then
   BASE="$CODER_ENGRAM_BASE_URL"
+  CURL_OPTS=(--proto-redir '=https')
   # Plain http:// silently drops TLS, which makes the whole download
   # MITM-able. Not refused — a local mirror or a file:// source is a
   # legitimate use, and the checksum step above is the real integrity control
@@ -125,11 +139,21 @@ else
 fi
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+STAGE=""
+PREV=""
+DEST=""
+# One exit path for every failure: drop the scratch dirs, and if the old
+# install had already been moved aside when something failed, put it back.
+cleanup() {
+  rm -rf "$TMP"
+  [ -n "$STAGE" ] && rm -rf "$STAGE"
+  if [ -n "$PREV" ] && [ -e "$PREV" ] && [ ! -e "$DEST" ]; then mv "$PREV" "$DEST"; fi
+}
+trap cleanup EXIT
 
 say "Downloading Coder Engram ($VERSION) ..."
 for a in "${ASSETS[@]}"; do
-  curl -fsSL "$BASE/$a" -o "$TMP/$a" || die "download failed: $BASE/$a"
+  curl -fsSL "${CURL_OPTS[@]}" "$BASE/$a" -o "$TMP/$a" || die "download failed: $BASE/$a"
 done
 
 # Verify against the release's checksum manifest.
@@ -169,7 +193,7 @@ if [ "$SKIP_VERIFY" = "1" ]; then
 else
   sha256_tool >/dev/null \
     || die "no sha256 tool found (sha256sum, shasum, or openssl) — refusing to install unverified. Install one, or pass --skip-verify to accept the risk."
-  curl -fsSL "$BASE/SHA256SUMS" -o "$TMP/SHA256SUMS" \
+  curl -fsSL "${CURL_OPTS[@]}" "$BASE/SHA256SUMS" -o "$TMP/SHA256SUMS" \
     || die "could not fetch SHA256SUMS from $BASE — refusing to install unverified. Releases before 0.6.0 predate it; for those, pass --skip-verify."
   for a in "${ASSETS[@]}"; do
     expected="$(awk -v f="$a" '$2 == f || $2 == "*" f {print $1}' "$TMP/SHA256SUMS" | head -1)"
@@ -182,11 +206,43 @@ else
 fi
 
 # --- install -----------------------------------------------------------------
-DEST="$VAULT/.obsidian/plugins/$PLUGIN_ID"
-mkdir -p "$DEST"
-for a in "${ASSETS[@]}"; do
-  cp "$TMP/$a" "$DEST/$a"
+# Staged, then swapped: the three assets are copied one at a time, and a
+# failure between two of them left a plugin that was half one version and
+# half another. The new directory is built beside the old one — carrying
+# everything already there, since data.json holds the settings and the server
+# token — and takes its place with two renames; cleanup restores the old
+# directory if the second never happens.
+PLUGINS_DIR="$VAULT/.obsidian/plugins"
+DEST="$PLUGINS_DIR/$PLUGIN_ID"
+[ -L "$DEST" ] && die "refusing to install through a symlink: $DEST"
+mkdir -p "$PLUGINS_DIR"
+# A run killed between the two renames below leaves the old install parked
+# under its .previous name and nothing at $DEST; installing fresh over that
+# would drop the settings and server token it holds. Put it back first. One
+# left beside a live $DEST was superseded by a later install and is removed.
+for parked in "$PLUGINS_DIR"/."$PLUGIN_ID".previous.*; do
+  [ -d "$parked" ] || continue
+  if [ ! -e "$DEST" ]; then
+    mv "$parked" "$DEST"
+    say "Restored the previous install an interrupted run left parked."
+  else
+    rm -rf "$parked"
+  fi
 done
+STAGE="$(mktemp -d "$PLUGINS_DIR/.$PLUGIN_ID.staging.XXXXXX")"
+# mktemp creates it 0700; the plugin directory should look like one mkdir made.
+chmod 755 "$STAGE"
+if [ -d "$DEST" ]; then cp -a "$DEST/." "$STAGE/"; fi
+for a in "${ASSETS[@]}"; do
+  cp "$TMP/$a" "$STAGE/$a"
+done
+if [ -d "$DEST" ]; then
+  PREV="$PLUGINS_DIR/.$PLUGIN_ID.previous.$$"
+  mv "$DEST" "$PREV"
+fi
+mv "$STAGE" "$DEST"
+STAGE=""
+if [ -n "$PREV" ]; then rm -rf "$PREV"; PREV=""; fi
 say "Installed to $DEST"
 
 # --- enable (opt-in) ---------------------------------------------------------
@@ -206,7 +262,17 @@ if plugin not in plugins:
         json.dump(plugins, f, indent=2)
 PYEOF
       say "Enabled in community-plugins.json — restart Obsidian to load it." ;;
-    *) say "note: --enable needs python3; enable it in Settings -> Community plugins instead." ;;
+    jq)
+      tmp_json="$CP_JSON.tmp.$$"
+      if [ -f "$CP_JSON" ]; then
+        jq --arg p "$PLUGIN_ID" 'if index($p) then . else . + [$p] end' "$CP_JSON" > "$tmp_json" \
+          || { rm -f "$tmp_json"; die "could not update $CP_JSON (is it valid JSON?)"; }
+      else
+        jq -n --arg p "$PLUGIN_ID" '[$p]' > "$tmp_json" || { rm -f "$tmp_json"; die "jq failed"; }
+      fi
+      mv "$tmp_json" "$CP_JSON"
+      say "Enabled in community-plugins.json — restart Obsidian to load it." ;;
+    *) say "note: --enable needs python3 or jq; enable it in Settings -> Community plugins instead." ;;
   esac
 else
   say "Next: open Obsidian -> Settings -> Community plugins -> enable \"Coder Engram\"."

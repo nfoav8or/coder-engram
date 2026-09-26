@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -168,6 +168,56 @@ describe.skipIf(!HAVE_TOOLS)("scripts/install.sh", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("keeps data.json and leaves no staging directory behind when upgrading in place", () => {
+    const { release, vault } = scaffold();
+    const dest = join(vault, ".obsidian", "plugins", "coder-engram");
+    mkdirSync(dest, { recursive: true });
+    writeFileSync(join(dest, "data.json"), '{"serverToken":"keep-me"}');
+    writeFileSync(join(dest, "main.js"), "// old bundle\n");
+    const run = runInstaller(release, vault);
+    expect(run.status).toBe(0);
+    expect(readFileSync(join(dest, "data.json"), "utf8")).toBe('{"serverToken":"keep-me"}');
+    expect(readFileSync(join(dest, "main.js"), "utf8")).toBe("// pretend bundle\n");
+    const leftovers = readdirSync(join(vault, ".obsidian", "plugins")).filter((n) => n.startsWith("."));
+    expect(leftovers).toEqual([]);
+  });
+
+  it("restores an install an interrupted run left parked, so data.json survives", () => {
+    const { release, vault } = scaffold();
+    const plugins = join(vault, ".obsidian", "plugins");
+    const parked = join(plugins, ".coder-engram.previous.4242");
+    mkdirSync(parked, { recursive: true });
+    writeFileSync(join(parked, "data.json"), '{"serverToken":"keep-me"}');
+    const run = runInstaller(release, vault);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toMatch(/Restored the previous install/);
+    expect(readFileSync(join(plugins, "coder-engram", "data.json"), "utf8")).toBe('{"serverToken":"keep-me"}');
+    expect(existsSync(parked)).toBe(false);
+    expect(readdirSync(plugins).filter((n) => n.startsWith("."))).toEqual([]);
+  });
+
+  it("refuses to install through a symlinked plugin directory", () => {
+    const { root, release, vault } = scaffold();
+    const elsewhere = join(root, "elsewhere");
+    mkdirSync(elsewhere);
+    mkdirSync(join(vault, ".obsidian", "plugins"), { recursive: true });
+    symlinkSync(elsewhere, join(vault, ".obsidian", "plugins", "coder-engram"));
+    const run = runInstaller(release, vault);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toMatch(/symlink/);
+    expect(existsSync(join(elsewhere, "main.js"))).toBe(false);
+  });
+
+  it("refuses a --version that is not a release number", () => {
+    const { release, vault } = scaffold();
+    for (const bad of ["../../x", "9.9.9?x=1", "v9.9.9", "latest; echo"]) {
+      const run = runInstaller(release, vault, ["--version", bad]);
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toMatch(/--version must be x\.y\.z/);
+    }
+    expect(installedFiles(vault)).toEqual([]);
   });
 
   it("refuses a target that is not an Obsidian vault", () => {
