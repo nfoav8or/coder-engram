@@ -177,6 +177,27 @@ describe("size-adaptive sharded chunk persistence", () => {
     expect(reloaded?.chunks.some((c) => c.notePath === "Notes/n0.md")).toBe(true);
   });
 
+  it("rebuilds when the metadata no longer names the shards its chunks live in, instead of loading the blanked single file as an empty index", async () => {
+    // A metadata.json rolled back to a pre-sharding revision (sync conflict,
+    // restore) while the shard files stayed: `layout` is gone, so load read
+    // the single file — blanked to "[]" at the switch — and accepted a valid
+    // empty index. noteMtimes still said every note was unchanged, so refresh
+    // never re-chunked anything and its next persist recorded chunkCount: 0.
+    const adapter = new InMemoryVaultAdapter("v", seedNotes(15));
+    const mgr = new IndexManager(adapter, PATHS, opts);
+    const scanner = new VaultScanner(adapter);
+    await mgr.build(await scanner.scan(scanConfig()));
+    await mgr.persist();
+    expect(await adapter.read(PATHS.chunksFile)).toBe("[]");
+
+    const meta = JSON.parse(await adapter.read(PATHS.metadataFile)) as Record<string, unknown>;
+    delete meta.layout;
+    delete meta.shardCount;
+    await adapter.write(PATHS.metadataFile, JSON.stringify(meta));
+
+    expect(await new IndexManager(adapter, PATHS, opts).load()).toBeNull();
+  });
+
   it("a persist that dies mid layout switch leaves a loadable index either side of the metadata write", async () => {
     const adapter = new FaultyAdapter("v", seedNotes(5));
     const mgr = new IndexManager(adapter, PATHS, opts);

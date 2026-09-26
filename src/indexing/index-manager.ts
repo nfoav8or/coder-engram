@@ -609,6 +609,22 @@ export class IndexManager {
         this.logger.warn("Index holds malformed chunks; rebuild required");
         return null;
       }
+      // The recorded count is the one cross-check between the metadata and
+      // the chunk files it names. Without it, a metadata.json rolled back to a
+      // pre-sharding revision (a sync conflict, a restore) while the shards
+      // stayed put pointed `layout` at the single file — which a layout switch
+      // blanks to "[]" — and that loaded as a valid EMPTY index. Permanently:
+      // the still-valid noteMtimes said every note was unchanged, so refresh
+      // never re-chunked, and its next persist wrote chunkCount: 0 over the
+      // only evidence the shards existed. A count that disagrees is damage,
+      // and damage rebuilds.
+      if (metadata.chunkCount !== chunks.length) {
+        this.logger.warn("Index chunk count disagrees with its files; rebuild required", {
+          recorded: metadata.chunkCount,
+          loaded: chunks.length,
+        });
+        return null;
+      }
       this.layout = metadata.layout === "sharded" ? "sharded" : "single";
       this.dirtyShards.clear();
       this.allShardsDirty = false;
