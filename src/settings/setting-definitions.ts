@@ -222,7 +222,9 @@ export function buildSettingDefinitions(ctx: DefinitionContext): SettingDefiniti
         },
         {
           name: "Excluded folders",
-          desc: "Denylist of folders to skip.",
+          desc:
+            "Denylist of folders to skip, as vault paths from the root (Private, or Work/Private). " +
+            "To skip a folder of that name at any depth, use an excluded path pattern: **/Private/**",
           control: { type: "textarea", key: "excludedFolders", rows: 3 },
         },
         {

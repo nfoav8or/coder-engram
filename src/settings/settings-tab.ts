@@ -17,6 +17,7 @@ import { App, Plugin, PluginSettingTab, Notice, SettingDefinitionItem } from "ob
 import { EngramSettings } from "./settings";
 import { debounce } from "../utils/debounce";
 import { buildSettingDefinitions, readSettingValue, writeSettingValue } from "./setting-definitions";
+import { isLoopbackHost } from "../server/net";
 
 export interface SettingsHost {
   settings: EngramSettings;
@@ -156,6 +157,27 @@ export class EngramSettingTab extends PluginSettingTab {
       new Notice("Non-localhost binding allowed. The server can now expose memory to your network.");
     } else if (key === "allowDirectWrites" && value === true) {
       new Notice("Direct writes enabled. Memory files can now be modified without review.");
+    } else if (key === "embeddingEndpoint" && typeof value === "string") {
+      // The key travels in the Authorization header and the note text in the
+      // body; over plain http to anything but this machine both are readable
+      // on the wire. Not refused — an internal gateway is a legitimate setup —
+      // but never silent.
+      const endpoint = value.trim();
+      if (/^http:\/\//i.test(endpoint)) {
+        let host = "";
+        try {
+          host = new URL(endpoint).hostname;
+        } catch {
+          host = "";
+        }
+        if (host !== "" && !isLoopbackHost(host)) {
+          new Notice(
+            "Warning: a plain http:// embedding endpoint sends your API key and note text unencrypted to " +
+              host +
+              ". Use https:// unless the endpoint is on this machine.",
+          );
+        }
+      }
     } else if (key === "server.host" && typeof value === "string") {
       const host = value.trim();
       if (host !== "" && host !== "127.0.0.1" && host !== "localhost") {
