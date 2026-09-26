@@ -101,6 +101,13 @@ describe("joinVaultPath", () => {
   it("rejects a segment that tries to escape", () => {
     expect(() => joinVaultPath("Claude Code", "../..")).toThrow(PathSecurityError);
   });
+  it("rejects an escape that lands on a well-formed sibling path, not only one that unwinds to nothing", () => {
+    expect(() => joinVaultPath("Claude Code", "../secret")).toThrow(PathSecurityError);
+    expect(() => joinVaultPath("Claude Code", "sub/../../x")).toThrow(PathSecurityError);
+    expect(() => joinVaultPath("Claude Code", "Memory", "../../Notes/x.md")).toThrow(PathSecurityError);
+    // A `..` that stays under the root is ordinary normalization.
+    expect(joinVaultPath("Claude Code", "a/../b")).toBe("Claude Code/b");
+  });
 });
 
 describe("isInsideRoot", () => {

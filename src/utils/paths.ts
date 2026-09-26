@@ -76,11 +76,18 @@ export function normalizeVaultRelativePath(input: string): string {
 
 /**
  * Join and normalize path segments into a single safe vault-relative path.
- * Throws if the combined result would escape the root.
+ * Throws if the combined result would escape the first segment, which is the
+ * root the caller is joining under: normalizing alone only refused a `..` that
+ * unwound the whole path to nothing, so `("Claude Code", "../secret")` came
+ * back as a well-formed `secret` — outside the root, and nothing said so.
  */
 export function joinVaultPath(...segments: string[]): string {
-  const joined = segments.filter((s) => s !== undefined && s !== null && s !== "").join("/");
-  return normalizeVaultRelativePath(joined);
+  const parts = segments.filter((s) => s !== undefined && s !== null && s !== "");
+  const joined = normalizeVaultRelativePath(parts.join("/"));
+  if (parts.length > 1 && !isInsideRoot(parts[0], joined)) {
+    throw new PathSecurityError(`Path escapes "${parts[0]}": "${parts.join("/")}"`);
+  }
+  return joined;
 }
 
 /**
