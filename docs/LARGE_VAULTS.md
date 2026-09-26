@@ -189,3 +189,21 @@ embeddings opt-in.
 - Is IndexedDB categorically off the table, or acceptable as an optional cache location
   for users whose sync clients choke on `Index/`? (This doc assumes off the table.)
 - Real-vault recall eval corpus: which vault/queries should gate the IVF ship decision?
+
+## Measured at 45k chunks (post-0.15.2)
+
+A 6,000-note synthetic corpus in the shape of `tests/scale.bench.ts` — 43,553 chunks, 10.5% carrying symbols — measured under `node --expose-gc` with heap deltas taken around each step (deterministic corpus; the deltas were byte-identical across three runs, timings are medians):
+
+| step | value |
+| --- | --- |
+| `IndexManager.build` | 194 ms |
+| `persist` (switches to 256 shards, 50.2 MB on disk) | 265 ms |
+| fresh `load` (startup) | 115 ms — JSON.parse ≈100 ms, validation ≈8.5 ms |
+| retained heap after `load`: the `IndexedChunk[]` | 62.6 MB |
+| retained after the first lexical query: corpus stats | **294.4 MB** |
+| embeddings, dim 768: base64 strings kept in the store | 177.3 MB |
+| embeddings, dim 768: decoded `Float32Array`s | 127.6 MB |
+| link graph | 3.5 MB |
+| total | ≈1,031 MB |
+
+Two things stand out. The lexical corpus stats are a `Map<string, number>` and three `Set<string>` per chunk (1.5 M tf entries, 1.6 M posting entries over 10,777 terms); the same information as interned term ids in parallel typed arrays projects to about 19 MB — a ~275 MB cut, the largest single saving available and a data-structure swap with no change to the BM25 arithmetic. It is the next piece of retrieval work (see ROADMAP). Second, both copies of every vector are resident: `EmbeddingStore.state` keeps the base64 strings for persisting while the retriever holds the decoded arrays, and in hybrid mode the decode happens when the retriever is built, at startup, not at the first search. Releasing the strings after decode and re-encoding from the arrays on persist would return ~177 MB; below the 20% bar on its own at this scale, so it follows the stats rewrite. Startup itself is not the problem: 115 ms to load 45k chunks.

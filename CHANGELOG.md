@@ -7,6 +7,136 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.3] — 2026-09-26
+
+Three review cycles in one patch release. The one that should not wait: with
+`embeddingConcurrency` above 1 — the setting recommended for a local Ollama — a
+checkpoint could silently drop vectors other workers had just embedded, with
+the pass reporting success. Around it: filtered search 93–98% faster in every
+mode, a renamed note keeps its vectors, a failed embed pass keeps what it paid
+for, an installer that stages and swaps, and two link-graph fixes. **No index
+rebuild** — upgrading changes nothing about your data. If you have embedded
+with more than one worker, `reindex_vault` (or an edit to any affected note)
+re-embeds the few chunks the old checkpoint lost.
+
+### Fixed
+
+- **A link to a note's alias resolves in the link graph.** Obsidian resolves
+  `[[Foo]]` against a note's frontmatter `aliases:` as well as its name; the
+  graph only knew names, so a note referenced mostly by alias reported no
+  backlinks and `find_related_notes` dropped the link as unresolved.
+- **Link keys fold Unicode form.** A link to `Café` typed composed did not
+  find the file macOS stores decomposed; the key now folds NFC and case, as
+  every other name comparison does.
+- **The architecture test reads the specifier shapes it used to miss.** A
+  backtick-quoted `require(\`obsidian\`)` or a computed `import(name)` in a
+  core file passed the layering rule unseen; both are refused now (nothing in
+  the tree loads a module by a computed name). The vault-path rule also sees
+  `root + "/" + name` and `[folder, name].join("/")`, not only the template
+  literal; a boundary comparison such as `startsWith(folder + "/")` stays
+  allowed.
+- **Vectors are no longer lost when embedding with more than one worker.**
+  With `embeddingConcurrency` above 1 — the setting the code itself recommends
+  for a local Ollama — a checkpoint's write could queue behind the previous
+  one; while it waited, the other workers kept embedding and marked their
+  shards dirty, and when the write ran it took the dirty set as it stood then
+  but wrote from the snapshot taken when it was queued, then cleared the
+  flags. The vectors added in between never reached disk and the pass reported
+  success: 545 of 43,553 lost at concurrency 4, reproducibly. The state and the
+  dirty set are now captured together at the moment a persist is requested.
+  Found by measuring, not by a report — a vault embedded this way has a few
+  chunks that silently fall back to lexical scoring; `reindex_vault` or any
+  edit to the affected notes re-embeds them.
+- **Renaming or moving a note no longer re-embeds it.** Vectors were reused by
+  chunk id, and a chunk id carries the note path, so a rename changed every id
+  and every chunk of the note was sent to the provider again for byte-identical
+  text — paid calls for vectors the store already held. A vector is now
+  written with a second, independent hash, and an orphaned vector whose two
+  hashes and chunk ordinal match a new chunk's is carried across (a 64-bit
+  comparison, since a full reorganisation puts tens of thousands of orphans on
+  the other side). Vectors written before this release lack the second hash
+  and are re-embedded on a rename as before; everything written from now on
+  moves with its note.
+- **A failed embed pass keeps what it paid for.** Progress was checkpointed
+  every 1,024 chunks; on a provider failure, batches that had succeeded since
+  the last checkpoint were held only in memory and thrown away, then bought
+  again on the retry. They are now written before the error is raised.
+- **An embed pass with no loaded chunk index leaves the vector cache alone.**
+  Every branch of the pass treats a chunk id missing from the index as a
+  vector to remove, and an unloaded index has no ids — so a pass fired by a
+  settings edit before the post-upgrade rebuild persisted an empty store over
+  a paid cache, defeating the deliberate choice to keep vectors across an
+  `INDEX_VERSION` bump. The pass now reports `no-index` and does nothing until
+  a rebuild has run.
+- **A note excluded while the provider is unreachable loses its vector
+  anyway.** The pass that prunes vectors for chunks no longer indexed returned
+  before running when the provider's liveness check failed, so an excluded
+  note's vector stayed on disk until a later pass both ran and succeeded — with
+  auto-indexing off and an idle vault, indefinitely. Pruning needs no
+  provider and now runs on that path too.
+
+### Performance
+
+- **A filtered lexical query no longer rescans the corpus on every call.**
+  Search scoped to a project, folder or tag ran `applyFilters` over every
+  chunk each time (83–88% of a filtered query's cost), and the stats for the
+  subset were kept for one filter only, so an agent alternating between two
+  projects rebuilt them on every call. The retriever now keeps the last four
+  filtered subsets with their stats and skips the scan on a hit. Measured with
+  alternating trials, identical results: at 15,000 chunks a repeated project
+  filter went from 10.0 ms to 0.4 ms per query and two alternating filters
+  from 19.6 ms to 0.4 ms; at 40,000 chunks from 27.9 ms to 1.0 ms and 55.2 ms
+  to 1.2 ms. The unfiltered path is unchanged. Entries for a replaced corpus
+  are dropped, so a refresh's old chunk array is never kept alive.
+- **Vector and hybrid search share the same subset cache.** The vector side
+  ran its own full-corpus `applyFilters` scan per query, so a filtered hybrid
+  search paid it twice. Both retrievers now use one small cache class; at
+  15,000 chunks a project-scoped vector query went from 9.6 ms to 0.5 ms and
+  hybrid from 19.9 ms to 1.3 ms (alternating filters 28.0 → 1.7 ms); at
+  40,000 chunks hybrid from 54.1 ms to 3.4 ms. Identical results, unfiltered
+  path unchanged.
+- **Measured and declined**, so the next reader need not repeat it: three
+  cosine-loop rewrites (pre-normalised dot, unrolling, iterating the vector map
+  instead of the chunks) were all within ±2% at 15k–40k vectors and dims
+  384–1536; keeping the per-note chunk map across refreshes saved 22–33% of a
+  refresh whose whole cost is ~1 ms at 2,000 notes; and the checkpoint during a
+  first bulk embed re-serialises the whole vector map at each of ~15 stops at
+  15k vectors (about 1.5 s total at dim 384), which is small beside the
+  provider round-trips it protects — a paid embed lost to a crash costs more
+  than the checkpoints do.
+
+### Security
+
+- **A plain-http embedding endpoint off this machine is warned about.** The
+  OpenAI-compatible provider accepted any URL; over `http://` to a non-loopback
+  host the API key and note text travel unencrypted. The settings tab now says
+  so when such an endpoint is entered. Not refused: an internal gateway is a
+  legitimate setup.
+- **The installer is staged, checked and swapped.** `scripts/install.sh` now
+  refuses a `--version` that is not `x.y.z` before it reaches the download
+  URL; pins the release download to https with no scheme downgrade on redirect
+  (an override source keeps its own scheme but still may not be redirected off
+  https); refuses to install through a symlinked plugin directory; and builds
+  the new install beside the old one — carrying `data.json`, which holds the
+  settings and the server token — then swaps it in with two renames, restoring
+  the old directory if the second never happens — and a later run finds an
+  install a killed run left parked and puts it back rather than installing
+  fresh over its settings. The three assets used to be
+  copied in one at a time, so a failure between two left a plugin that was
+  half one version. `--enable` now works with `jq` when `python3` is absent,
+  as the tool probe always implied.
+
+### Changed
+
+- **The excluded-folders setting says what it matches.** An entry is a vault
+  path from the root (`Private`, or `Work/Private`), not every folder of that
+  name; the description now says so and names the pattern (`**/Private/**`)
+  that covers any depth. Behaviour is unchanged.
+- `list_projects` clips its listing through the shared budget helper instead
+  of its own loop; `escapeRegExp` and the segment-boundary folder predicate
+  each live once, in `utils/text.ts`, instead of twice. A whole-repo scan
+  found no dead export, unused local, or skipped test.
+
 ## [0.15.2] — 2026-09-25
 
 A security and data-safety release from the review cycle that followed 0.15.1.
@@ -2128,7 +2258,8 @@ First working local memory + lexical RAG layer.
 - Direct memory writes disabled by default; append-only enabled by default.
 - No cloud services or API keys required for the default experience.
 
-[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.15.2...HEAD
+[Unreleased]: https://github.com/nfoav8or/coder-engram/compare/0.15.3...HEAD
+[0.15.3]: https://github.com/nfoav8or/coder-engram/releases/tag/0.15.3
 [0.15.2]: https://github.com/nfoav8or/coder-engram/releases/tag/0.15.2
 [0.15.1]: https://github.com/nfoav8or/coder-engram/releases/tag/0.15.1
 [0.15.0]: https://github.com/nfoav8or/coder-engram/releases/tag/0.15.0
